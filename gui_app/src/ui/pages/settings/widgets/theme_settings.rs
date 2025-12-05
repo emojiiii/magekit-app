@@ -33,49 +33,66 @@ impl RenderOnce for ThemeSettingsCard {
         let on_change = self.on_theme_change;
         
         // 获取主题颜色
-        let bg_color = cx.theme().background;
-        let border_color = cx.theme().border;
-        let text_color = cx.theme().foreground;
-        let muted_color = cx.theme().muted_foreground;
+        let theme = cx.theme();
+        let card_bg = theme.secondary;
+        let border_color = theme.border;
+        let text_color = theme.foreground;
+        let muted_color = theme.muted_foreground;
+        let _accent_color = theme.accent;
         
         // 获取所有可用主题
         let themes = ThemeRegistry::global(cx).sorted_themes();
         
-        Section::new("外观设置")
-            .icon("🎨")
-            .description("选择应用程序的主题外观")
+        Section::new("🎨 外观")
             .child(
                 div()
-                    .p(px(16.0))
+                    .p(px(20.0))
                     .rounded(px(12.0))
-                    .bg(bg_color)
+                    .bg(card_bg)
                     .border_1()
                     .border_color(border_color)
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(12.0))
+                            .gap(px(16.0))
+                            // 当前主题信息
                             .child(
                                 div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(text_color)
-                                    .child("主题")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(12.0))
+                                    .child(
+                                        div()
+                                            .text_2xl()
+                                            .child("🖌️")
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(2.0))
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(text_color)
+                                                    .child(format!("当前: {}", current_theme_name))
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(muted_color)
+                                                    .child(format!("{} 个主题可用", themes.len()))
+                                            )
+                                    )
                             )
+                            // 主题网格
                             .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted_color)
-                                    .child(format!("当前主题: {} ({} 个主题可用)", current_theme_name, themes.len()))
-                            )
-                            .child(
-                                // 主题网格
                                 div()
                                     .flex()
                                     .flex_wrap()
                                     .gap(px(8.0))
-                                    .mt(px(4.0))
                                     .children(
                                         themes.iter().map(|theme_config| {
                                             let theme_name = theme_config.name.clone();
@@ -135,51 +152,51 @@ impl ThemeButton {
 
 impl RenderOnce for ThemeButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let primary = cx.theme().primary;
+        let accent = cx.theme().accent;
+        
         let bg = if self.selected {
-            primary
-        } else if self.is_dark {
-            cx.theme().muted
+            accent
         } else {
-            cx.theme().secondary
+            cx.theme().background
         };
         
         let border_color = if self.selected {
-            primary
+            accent
         } else {
             cx.theme().border
         };
         
         let text_color = if self.selected {
-            cx.theme().primary_foreground
+            cx.theme().accent_foreground
         } else {
             cx.theme().foreground
         };
         
-        // 创建主题预览图标
-        let preview_icon = if self.is_dark { "🌙" } else { "☀️" };
+        // 用 emoji 替代 Icon
+        let icon = if self.is_dark { "🌙" } else { "☀️" };
         
         let mut el = div()
             .id(SharedString::from(format!("theme-{}", self.name)))
             .flex()
-            .flex_col()
             .items_center()
-            .justify_center()
-            .gap(px(4.0))
+            .gap(px(8.0))
             .px(px(12.0))
-            .py(px(10.0))
-            .min_w(px(90.0))
+            .py(px(8.0))
             .rounded(px(8.0))
             .bg(bg)
-            .border_2()
+            .border_1()
             .border_color(border_color)
             .cursor_pointer()
             .hover(|style| style.opacity(0.8))
-            .child(div().text_base().child(preview_icon))
+            .child(
+                div()
+                    .text_sm()
+                    .child(icon)
+            )
             .child(
                 div()
                     .text_xs()
-                    .font_weight(if self.selected { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                    .font_weight(if self.selected { FontWeight::BOLD } else { FontWeight::MEDIUM })
                     .text_color(text_color)
                     .text_ellipsis()
                     .max_w(px(80.0))

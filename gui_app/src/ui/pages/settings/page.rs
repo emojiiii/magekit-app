@@ -1,7 +1,6 @@
 //! 设置页面主组件
 
 use gpui::*;
-use gpui_component::input::InputState;
 use gpui_component::{ActiveTheme, Theme, ThemeRegistry};
 use crate::app::AppState;
 use magekit_shared::types::Theme as AppTheme;
@@ -18,7 +17,6 @@ use super::widgets::{
 pub struct SettingsPage {
     app_state: Arc<AppState>,
     // 下载设置
-    download_path_input: Entity<InputState>,
     download_path: String,
     max_concurrent: usize,
     embed_metadata: bool,
@@ -36,7 +34,7 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(app_state: Arc<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 从 AppState 加载配置
         let config = app_state.config();
         let download_path = config.download.default_output_path.to_string_lossy().to_string();
@@ -46,11 +44,6 @@ impl SettingsPage {
         
         Self {
             app_state,
-            download_path_input: cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder("~/Downloads/MageKit")
-                    .default_value(&download_path)
-            }),
             download_path,
             max_concurrent: config.download.max_concurrent_downloads,
             embed_metadata: config.download.embed_metadata,
@@ -122,14 +115,11 @@ impl SettingsPage {
             
             if let Some(path) = selected_path {
                 let path_str = path.to_string_lossy().to_string();
+                
+                // 更新 SettingsPage
                 let _ = this.update(cx, |this, cx| {
-                    this.download_path = path_str.clone();
+                    this.download_path = path_str;
                     this.has_changes = true;
-                    // 更新输入框
-                    this.download_path_input.update(cx, |_state, _cx| {
-                        // InputState 可能需要不同的方法来设置值
-                        // 这里暂时只更新内部状态
-                    });
                     this.save_settings(cx);
                     cx.notify();
                 });
@@ -189,8 +179,9 @@ impl SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 使用主题颜色
-        let title_color = cx.theme().foreground;
-        let desc_color = cx.theme().muted_foreground;
+        let theme = cx.theme();
+        let title_color = theme.foreground;
+        let desc_color = theme.muted_foreground;
         
         div()
             .id("settings-page")
@@ -209,7 +200,7 @@ impl Render for SettingsPage {
                             .flex()
                             .flex_col()
                             .p(px(24.0))
-                            .gap(px(24.0))
+                            .gap(px(20.0))
                             // 页面标题
                             .child(
                                 div()
@@ -227,7 +218,7 @@ impl Render for SettingsPage {
                                             .flex_col()
                                             .child(
                                                 div()
-                                                    .text_2xl()
+                                                    .text_xl()
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(title_color)
                                                     .child("设置")
@@ -249,7 +240,7 @@ impl Render for SettingsPage {
                             )
                             // 下载设置
                             .child(
-                                DownloadSettingsCard::new(&self.download_path_input, self.max_concurrent)
+                                DownloadSettingsCard::new(&self.download_path, self.max_concurrent)
                                     .on_browse(cx.listener(|this, _ev, window, cx| {
                                         this.browse_download_path(window, cx);
                                     }))

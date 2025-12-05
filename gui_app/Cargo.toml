@@ -50,3 +50,6 @@ which = "7"
 
 # 文件对话框
 rfd = "0.15"
+
+# HTTP 客户端（用于加载远程图片）
+reqwest_client = { workspace = true }

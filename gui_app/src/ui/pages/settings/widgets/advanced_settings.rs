@@ -58,15 +58,14 @@ impl RenderOnce for AdvancedSettingsCard {
         let auto_check = self.settings.auto_check_updates;
         let debug_mode = self.settings.debug_mode;
         
-        let card_bg = cx.theme().secondary;
-        let border_color = cx.theme().border;
+        let theme = cx.theme();
+        let card_bg = theme.secondary;
+        let border_color = theme.border;
         
-        Section::new("高级设置")
-            .icon("⚙️")
-            .description("高级选项和调试功能")
+        Section::new("⚙️ 高级")
             .child(
                 div()
-                    .p(px(16.0))
+                    .p(px(20.0))
                     .rounded(px(12.0))
                     .bg(card_bg)
                     .border_1()
@@ -79,6 +78,7 @@ impl RenderOnce for AdvancedSettingsCard {
                             .child(
                                 SettingsToggleItem::new("auto-updates", "自动检查更新")
                                     .description("启动时自动检查工具和应用更新")
+                                    .emoji("🔄")
                                     .checked(auto_check)
                                     .border_bottom(true)
                                     .when_some(self.on_toggle_updates, |el, handler| {
@@ -89,6 +89,7 @@ impl RenderOnce for AdvancedSettingsCard {
                             .child(
                                 SettingsToggleItem::new("debug-mode", "调试模式")
                                     .description("启用详细日志和调试信息")
+                                    .emoji("🐛")
                                     .checked(debug_mode)
                                     .when_some(self.on_toggle_debug, |el, handler| {
                                         el.on_toggle(move |checked, window, cx| handler(&checked, window, cx))
@@ -105,6 +106,7 @@ pub struct SettingsToggleItem {
     id: String,
     label: String,
     description: Option<String>,
+    emoji: Option<&'static str>,
     checked: bool,
     border_bottom: bool,
     on_toggle: Option<Box<dyn Fn(bool, &mut Window, &mut App) + 'static>>,
@@ -116,6 +118,7 @@ impl SettingsToggleItem {
             id: id.into(),
             label: label.into(),
             description: None,
+            emoji: None,
             checked: false,
             border_bottom: false,
             on_toggle: None,
@@ -124,6 +127,11 @@ impl SettingsToggleItem {
 
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = Some(desc.into());
+        self
+    }
+
+    pub fn emoji(mut self, emoji: &'static str) -> Self {
+        self.emoji = Some(emoji);
         self
     }
 
@@ -154,30 +162,43 @@ impl RenderOnce for SettingsToggleItem {
             .flex()
             .items_center()
             .justify_between()
-            .py(px(12.0))
+            .py(px(14.0))
             .when(self.border_bottom, |el| {
                 el.border_b_1().border_color(border_color)
             })
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(title_color)
-                            .child(self.label)
-                    )
-                    .when_some(self.description, |el, desc| {
+                    .items_center()
+                    .gap(px(8.0))
+                    // emoji 图标
+                    .when_some(self.emoji, |el, emoji| {
                         el.child(
                             div()
-                                .text_xs()
-                                .text_color(muted_color)
-                                .child(desc)
+                                .text_lg()
+                                .child(emoji)
                         )
                     })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(title_color)
+                                    .child(self.label)
+                            )
+                            .when_some(self.description, |el, desc| {
+                                el.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted_color)
+                                        .child(desc)
+                                )
+                            })
+                    )
             )
             .child({
                 let switch_id: SharedString = self.id.into();

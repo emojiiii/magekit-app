@@ -10,14 +10,13 @@ pub struct AboutSection;
 
 impl RenderOnce for AboutSection {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let card_bg = cx.theme().secondary;
-        let border_color = cx.theme().border;
-        let title_color = cx.theme().foreground;
-        let muted_color = cx.theme().muted_foreground;
+        let theme = cx.theme();
+        let card_bg = theme.secondary;
+        let border_color = theme.border;
+        let title_color = theme.foreground;
+        let muted_color = theme.muted_foreground;
         
-        Section::new("关于")
-            .icon("ℹ️")
-            .description("应用程序信息")
+        Section::new("ℹ️ 关于")
             .child(
                 div()
                     .p(px(16.0))
@@ -29,11 +28,11 @@ impl RenderOnce for AboutSection {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(12.0))
-                            .child(AboutItem::new("应用名称", "MageKit 视频下载器", muted_color, title_color))
-                            .child(AboutItem::new("版本", env!("CARGO_PKG_VERSION"), muted_color, title_color))
-                            .child(AboutItem::new("构建类型", if cfg!(debug_assertions) { "Debug" } else { "Release" }, muted_color, title_color))
-                            .child(AboutItem::new("框架", "GPUI + Rust", muted_color, title_color))
+                            .gap(px(10.0))
+                            .child(AboutItem::new("🎬 应用名称", "MageKit 视频下载器", muted_color, title_color))
+                            .child(AboutItem::new("📦 版本", env!("CARGO_PKG_VERSION"), muted_color, title_color))
+                            .child(AboutItem::new("🔧 构建类型", if cfg!(debug_assertions) { "Debug" } else { "Release" }, muted_color, title_color))
+                            .child(AboutItem::new("⚡ 框架", "GPUI + Rust", muted_color, title_color))
                     )
             )
     }

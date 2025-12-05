@@ -3,15 +3,12 @@
 //! 提供带标题和描述的内容区块
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use gpui_component::ActiveTheme;
 
 /// 区块组件 - 带标题和描述的内容区域
 #[derive(IntoElement)]
 pub struct Section {
     title: String,
-    description: Option<String>,
-    icon: Option<String>,
     children: Vec<AnyElement>,
 }
 
@@ -19,20 +16,8 @@ impl Section {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
-            description: None,
-            icon: None,
             children: Vec::new(),
         }
-    }
-
-    pub fn description(mut self, desc: impl Into<String>) -> Self {
-        self.description = Some(desc.into());
-        self
-    }
-
-    pub fn icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon = Some(icon.into());
-        self
     }
 
     pub fn child(mut self, child: impl IntoElement) -> Self {
@@ -53,7 +38,6 @@ impl Section {
 impl RenderOnce for Section {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let title_color = cx.theme().foreground;
-        let desc_color = cx.theme().muted_foreground;
         
         div()
             .flex()
@@ -62,29 +46,10 @@ impl RenderOnce for Section {
             .child(
                 // 标题区域
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(title_color)
-                            .when_some(self.icon.clone(), |el, icon| {
-                                el.child(format!("{} {}", icon, self.title))
-                            })
-                            .when(self.icon.is_none(), |el| {
-                                el.child(self.title.clone())
-                            })
-                    )
-                    .when_some(self.description, |el, desc| {
-                        el.child(
-                            div()
-                                .text_sm()
-                                .text_color(desc_color)
-                                .child(desc)
-                        )
-                    })
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(title_color)
+                    .child(self.title)
             )
             .children(self.children)
     }

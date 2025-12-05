@@ -257,14 +257,18 @@ impl Render for NotificationContainer {
         // 清理过期通知
         self.cleanup_expired();
 
-        // 渲染通知栈
+        // 渲染通知栈 - 居中显示
         div()
             .absolute()
-            .bottom(px(16.0))
-            .right(px(16.0))
-            .w(px(360.0))
+            .top(px(80.0))
+            .left_0()
+            .right_0()
+            .flex()
+            .flex_col()
+            .items_center()
             .child(
                 v_flex()
+                    .w(px(400.0))
                     .gap_2()
                     .children(self.notifications.iter().rev().take(self.max_visible).map(|notification| {
                         render_notification_toast_inline(notification, bg, fg, muted, border, primary, success, warning, danger)
