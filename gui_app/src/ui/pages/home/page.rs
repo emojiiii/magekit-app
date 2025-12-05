@@ -387,10 +387,8 @@ impl HomePage {
         window.refresh();
         tracing::info!("📍 已跳转到任务页面");
         
-        self.download_state = DownloadState::Downloading { 
-            progress: 0.0, 
-            speed: "准备中...".to_string() 
-        };
+        // 注意：不修改首页状态，保持 Ready 状态
+        // 下载进度在任务列表页显示
         cx.notify();
         
         let app_state = self.app_state.clone();
@@ -439,8 +437,10 @@ impl HomePage {
         let db = downloaded_bytes.clone();
         let tb = total_bytes.clone();
         
-        // 进度回调
+        // 进度回调 - 添加调试日志
         let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = Arc::new(move |percent, speed, downloaded, total| {
+            tracing::info!("📥 回调收到进度: {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
+                percent * 100.0, speed, downloaded, total);
             pp.store((percent * 100.0) as u32, std::sync::atomic::Ordering::Relaxed);
             ps.store(speed, std::sync::atomic::Ordering::Relaxed);
             db.store(downloaded, std::sync::atomic::Ordering::Relaxed);
@@ -454,6 +454,7 @@ impl HomePage {
             format_id,
             options,
             progress_callback,
+            video_title.clone(),
         );
         
         // 克隆用于更新任务状态
@@ -461,7 +462,7 @@ impl HomePage {
         let _runtime_for_update = app_state.runtime.clone();
         
         // 使用 cx.spawn 来轮询检查下载结果和更新进度
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, _cx| {
             // 首先将任务状态更新为 Downloading
             {
                 let tasks = tasks_for_update.clone();
@@ -475,9 +476,12 @@ impl HomePage {
                 }).await;
             }
             
-            // 轮询等待后台线程完成
+            // 轮询等待后台线程完成 (start_download)
+            tracing::info!("🔄 开始轮询下载进度 (start_download)");
+            let mut poll_count = 0u32;
             loop {
                 if handle.is_finished() {
+                    tracing::info!("🏁 下载线程已完成");
                     break;
                 }
                 
@@ -487,9 +491,14 @@ impl HomePage {
                 let downloaded = downloaded_bytes.load(std::sync::atomic::Ordering::Relaxed);
                 let total = total_bytes.load(std::sync::atomic::Ordering::Relaxed);
                 
-                let speed_str = format_speed(speed);
+                // 每 5 次轮询打印一次日志
+                poll_count += 1;
+                if poll_count % 5 == 0 {
+                    tracing::info!("🔄 轮询 #{}: 进度={:.1}%, 速度={} B/s, 已下载={} B, 总大小={} B", 
+                        poll_count, percent * 100.0, speed, downloaded, total);
+                }
                 
-                // 更新任务列表中的进度
+                // 更新任务列表中的进度（不更新首页状态）
                 {
                     let tasks = tasks_for_update.clone();
                     smol::unblock(move || {
@@ -502,14 +511,6 @@ impl HomePage {
                         }
                     }).await;
                 }
-                
-                let _ = this.update(cx, |this, cx| {
-                    this.download_state = DownloadState::Downloading {
-                        progress: percent,
-                        speed: speed_str,
-                    };
-                    cx.notify();
-                });
                 
                 Timer::after(std::time::Duration::from_millis(200)).await;
             }
@@ -546,19 +547,15 @@ impl HomePage {
                 }
             }).await;
             
-            // 注意：下载完成后不更新首页状态
-            // 因为用户已经跳转到任务页了，首页保持 Ready 状态
-            let _ = this.update(cx, |_this, cx| {
-                match result {
-                    Ok(path) => {
-                        tracing::info!("✅ 下载完成: {}", path.display());
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ 下载失败: {}", e);
-                    }
+            // 日志输出（不更新首页状态）
+            match result {
+                Ok(path) => {
+                    tracing::info!("✅ 下载完成: {}", path.display());
                 }
-                cx.notify();
-            });
+                Err(e) => {
+                    tracing::error!("❌ 下载失败: {}", e);
+                }
+            }
         }).detach();
     }
     
@@ -613,24 +610,7 @@ impl HomePage {
         tracing::info!("  嵌入封面: {}", self.options.embed_thumbnail);
         tracing::info!("  下载字幕: {}", self.options.download_subtitles);
         
-        // 导航到任务页 - 先调用 navigate 释放 cx 借用
-        {
-            let mut navigate = use_navigate(cx);
-            navigate("/tasks".into());
-        }
-        window.refresh();
-        tracing::info!("📍 已跳转到任务页面");
-        
-        self.download_state = DownloadState::Downloading { 
-            progress: 0.0, 
-            speed: "准备中...".to_string() 
-        };
-        cx.notify();
-        
-        let app_state = self.app_state.clone();
-        let output_dir = std::path::PathBuf::from(&self.output_path);
-        
-        // 判断是否是音频格式
+        // 判断是否是音频格式（在修改状态前判断）
         let is_audio_only = match &self.download_state {
             DownloadState::Ready(info) => {
                 info.formats.iter()
@@ -640,6 +620,21 @@ impl HomePage {
             }
             _ => false,
         };
+        
+        // 导航到任务页 - 先调用 navigate 释放 cx 借用
+        {
+            let mut navigate = use_navigate(cx);
+            navigate("/tasks".into());
+        }
+        window.refresh();
+        tracing::info!("📍 已跳转到任务页面");
+        
+        // 注意：不修改首页状态，保持 Ready 状态
+        // 下载进度在任务列表页显示
+        cx.notify();
+        
+        let app_state = self.app_state.clone();
+        let output_dir = std::path::PathBuf::from(&self.output_path);
         
         // 创建任务 ID
         let task_id = uuid::Uuid::new_v4();
@@ -678,6 +673,7 @@ impl HomePage {
         
         // 进度回调
         let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = Arc::new(move |percent, speed, downloaded, total| {
+            tracing::info!("📥 [with_format] 进度回调: percent={:.3}, speed={}, downloaded={}, total={}", percent, speed, downloaded, total);
             pp.store((percent * 100.0) as u32, std::sync::atomic::Ordering::Relaxed);
             ps.store(speed, std::sync::atomic::Ordering::Relaxed);
             db.store(downloaded, std::sync::atomic::Ordering::Relaxed);
@@ -691,13 +687,14 @@ impl HomePage {
             format_id,
             options,
             progress_callback,
+            video_title.clone(),
         );
         
         // 克隆用于更新任务状态
         let tasks_for_update = app_state.tasks.clone();
         
         // 使用 cx.spawn 来轮询检查下载结果和更新进度
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, _cx| {
             // 首先将任务状态更新为 Downloading
             {
                 let tasks = tasks_for_update.clone();
@@ -710,9 +707,12 @@ impl HomePage {
                 }).await;
             }
             
-            // 轮询等待后台线程完成
+            // 轮询等待后台线程完成 (start_download_with_format)
+            tracing::info!("🔄 开始轮询下载进度 (start_download_with_format)");
+            let mut poll_count = 0u32;
             loop {
                 if handle.is_finished() {
+                    tracing::info!("🏁 下载线程已完成");
                     break;
                 }
                 
@@ -722,9 +722,14 @@ impl HomePage {
                 let downloaded = downloaded_bytes.load(std::sync::atomic::Ordering::Relaxed);
                 let total = total_bytes.load(std::sync::atomic::Ordering::Relaxed);
                 
-                let speed_str = format_speed(speed);
+                // 每 5 次轮询打印一次日志
+                poll_count += 1;
+                if poll_count % 5 == 0 {
+                    tracing::info!("🔄 轮询 #{}: 进度={:.1}%, 速度={} B/s, 已下载={} B, 总大小={} B", 
+                        poll_count, percent * 100.0, speed, downloaded, total);
+                }
                 
-                // 更新任务列表中的进度
+                // 更新任务列表中的进度（不更新首页状态）
                 {
                     let tasks = tasks_for_update.clone();
                     smol::unblock(move || {
@@ -737,14 +742,6 @@ impl HomePage {
                         }
                     }).await;
                 }
-                
-                let _ = this.update(cx, |this, cx| {
-                    this.download_state = DownloadState::Downloading {
-                        progress: percent,
-                        speed: speed_str,
-                    };
-                    cx.notify();
-                });
                 
                 Timer::after(std::time::Duration::from_millis(200)).await;
             }
@@ -781,19 +778,15 @@ impl HomePage {
                 }
             }).await;
             
-            // 注意：下载完成后不更新首页状态
-            // 因为用户已经跳转到任务页了，首页保持 Ready 状态
-            let _ = this.update(cx, |_this, cx| {
-                match result {
-                    Ok(path) => {
-                        tracing::info!("✅ 下载完成: {}", path.display());
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ 下载失败: {}", e);
-                    }
+            // 日志输出（不更新首页状态）
+            match result {
+                Ok(path) => {
+                    tracing::info!("✅ 下载完成: {}", path.display());
                 }
-                cx.notify();
-            });
+                Err(e) => {
+                    tracing::error!("❌ 下载失败: {}", e);
+                }
+            }
         }).detach();
     }
     

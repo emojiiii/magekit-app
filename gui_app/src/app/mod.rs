@@ -1,0 +1,26 @@
+//! 应用程序状态管理
+//!
+//! 负责管理整个应用的状态，包括工具管理器实例、任务列表、配置等。
+//! 
+//! 模块结构：
+//! - `types` - 类型定义
+//! - `utils` - 工具函数
+//! - `state` - 核心状态结构
+//! - `tools` - 工具管理功能
+//! - `download` - 下载功能
+//! - `tasks` - 任务管理功能
+
+mod types;
+mod utils;
+mod state;
+mod tools;
+mod download;
+mod tasks;
+
+// 重新导出公共类型
+pub use types::{ToolStatus, DownloadVideoOptions};
+pub use state::{AppState, GlobalAppState};
+
+// 内部使用的类型（如果外部需要可以添加到上面）
+#[allow(unused_imports)]
+pub(crate) use types::{AppEvent, NotificationMessage, NotificationType};

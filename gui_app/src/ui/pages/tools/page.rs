@@ -51,36 +51,46 @@ impl ToolsPage {
         self.is_checking = true;
         self.error_message = None;
         
-        tracing::info!("🔍 刷新工具状态...");
+        tracing::info!("🔍 刷新工具状态（后台线程）...");
         
-        // 同步检测工具状态
-        let yt_dlp_status = self.app_state.check_tool_status_sync(ToolType::YtDlp);
-        let ffmpeg_status = self.app_state.check_tool_status_sync(ToolType::Ffmpeg);
+        let app_state = self.app_state.clone();
         
-        tracing::info!("🔍 yt-dlp 状态: {:?}", yt_dlp_status);
-        tracing::info!("🔍 ffmpeg 状态: {:?}", ffmpeg_status);
-        
-        // 更新工具状态
-        for tool in &mut self.tools {
-            let status = match tool.tool_type {
-                ToolType::YtDlp => &yt_dlp_status,
-                ToolType::Ffmpeg => &ffmpeg_status,
-            };
+        // 在后台线程中执行工具检测，避免阻塞主线程
+        cx.spawn(async move |this, cx| {
+            // 使用 smol::unblock 在后台线程中执行同步检测
+            let (yt_dlp_status, ffmpeg_status) = smol::unblock(move || {
+                let yt_dlp = app_state.check_tool_status_sync(ToolType::YtDlp);
+                let ffmpeg = app_state.check_tool_status_sync(ToolType::Ffmpeg);
+                (yt_dlp, ffmpeg)
+            }).await;
             
-            tool.state = match status {
-                ToolStatus::NotInstalled => ToolInstallState::NotInstalled,
-                ToolStatus::Installed { version, is_system } => {
-                    ToolInstallState::Installed { 
-                        version: version.clone(),
-                        is_system: *is_system,
-                    }
+            tracing::info!("🔍 yt-dlp 状态: {:?}", yt_dlp_status);
+            tracing::info!("🔍 ffmpeg 状态: {:?}", ffmpeg_status);
+            
+            // 更新 UI
+            let _ = this.update(cx, |this, cx| {
+                for tool in &mut this.tools {
+                    let status = match tool.tool_type {
+                        ToolType::YtDlp => &yt_dlp_status,
+                        ToolType::Ffmpeg => &ffmpeg_status,
+                    };
+                    
+                    tool.state = match status {
+                        ToolStatus::NotInstalled => ToolInstallState::NotInstalled,
+                        ToolStatus::Installed { version, is_system } => {
+                            ToolInstallState::Installed { 
+                                version: version.clone(),
+                                is_system: *is_system,
+                            }
+                        }
+                    };
                 }
-            };
-        }
-        
-        self.is_checking = false;
-        tracing::info!("🔍 工具状态刷新完成");
-        cx.notify();
+                
+                this.is_checking = false;
+                tracing::info!("🔍 工具状态刷新完成");
+                cx.notify();
+            });
+        }).detach();
     }
 
     fn install_tool(&mut self, tool_type: ToolType, cx: &mut Context<Self>) {
