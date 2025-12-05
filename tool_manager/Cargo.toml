@@ -1,0 +1,29 @@
+[package]
+name = "magekit-tool-manager"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# 内部依赖
+magekit-shared = { path = "../shared" }
+
+# 外部依赖
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
+url = { workspace = true }
+tracing = { workspace = true }
+toml = { workspace = true }
+
+# 异步运行时和进程管理
+async-trait = "0.1"
+futures-util = "0.3"
+
+# 系统工具查找
+which = "4.0"

@@ -1,0 +1,46 @@
+[package]
+name = "magekit-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "magekit"
+path = "src/main.rs"
+
+[dependencies]
+# 内部依赖
+magekit-shared = { path = "../shared" }
+magekit-tool-manager = { path = "../tool_manager" }
+
+# GPUI dependencies
+gpui = { workspace = true }
+gpui-component = { workspace = true }
+gpui-router = "0.2.7"
+
+# 异步运行时
+tokio = { workspace = true }
+smol = "2"
+
+# 错误处理
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 配置
+toml = { workspace = true }
+dirs = { workspace = true }
+
+# 日志
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# 工具检测
+which = "7"
