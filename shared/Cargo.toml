@@ -14,3 +14,4 @@ thiserror = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+toml = { workspace = true }

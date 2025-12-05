@@ -187,10 +187,12 @@ impl ToolsPage {
                                         ToolInstallState::Installed { version: version.clone(), is_system: *is_system }
                                     }
                                 };
+                                tracing::info!("✅ 安装成功: {}", tool.name);
                             }
                             Err(e) => {
                                 tool.state = ToolInstallState::Failed(e.to_string());
                                 this.error_message = Some(format!("安装 {} 失败: {}", tool.name, e));
+                                tracing::error!("❌ 安装失败: {}: {}", tool.name, e);
                             }
                         }
                         break;
@@ -201,8 +203,14 @@ impl ToolsPage {
         }).detach();
     }
 
-    fn delete_tool(&mut self, tool_type: ToolType, cx: &mut Context<Self>) {
+    fn delete_tool(&mut self, tool_type: ToolType, _window: &mut Window, cx: &mut Context<Self>) {
         tracing::info!("🗑️ 删除工具: {:?}", tool_type);
+        
+        // 获取工具名称用于日志
+        let tool_name = self.tools.iter()
+            .find(|t| t.tool_type == tool_type)
+            .map(|t| t.name)
+            .unwrap_or("unknown");
         
         match self.app_state.delete_tool_sync(tool_type) {
             Ok(_) => {
@@ -213,11 +221,11 @@ impl ToolsPage {
                         break;
                     }
                 }
-                tracing::info!("✅ 工具删除成功");
+                tracing::info!("✅ 工具 {} 删除成功", tool_name);
             }
             Err(e) => {
                 self.error_message = Some(format!("删除失败: {}", e));
-                tracing::error!("❌ 工具删除失败: {}", e);
+                tracing::error!("❌ 工具 {} 删除失败: {}", tool_name, e);
             }
         }
         cx.notify();
@@ -538,9 +546,9 @@ impl ToolsPage {
                                         Button::new(delete_btn_id)
                                             .label("删除")
                                             .danger()
-                                            .on_click(cx.listener(move |this, _ev, _window, cx| {
+                                            .on_click(cx.listener(move |this, _ev, window, cx| {
                                                 tracing::info!("🗑️ 点击删除按钮: {:?}", tool_type);
-                                                this.delete_tool(tool_type, cx);
+                                                this.delete_tool(tool_type, window, cx);
                                             }))
                                     )
                                 })

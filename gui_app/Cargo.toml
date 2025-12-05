@@ -44,3 +44,6 @@ uuid = { workspace = true }
 
 # 工具检测
 which = "7"
+
+# 文件对话框
+rfd = "0.15"

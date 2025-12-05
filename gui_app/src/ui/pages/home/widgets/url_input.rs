@@ -3,7 +3,6 @@
 //! 提供视频链接输入和解析功能
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Disableable;
@@ -14,7 +13,6 @@ pub struct UrlInputCard {
     input_state: Entity<InputState>,
     is_loading: bool,
     is_empty: bool,
-    on_paste: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_parse: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -24,7 +22,6 @@ impl UrlInputCard {
             input_state: input_state.clone(),
             is_loading: false,
             is_empty: true,
-            on_paste: None,
             on_parse: None,
         }
     }
@@ -36,11 +33,6 @@ impl UrlInputCard {
 
     pub fn empty(mut self, empty: bool) -> Self {
         self.is_empty = empty;
-        self
-    }
-
-    pub fn on_paste(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_paste = Some(Box::new(handler));
         self
     }
 
@@ -83,13 +75,7 @@ impl RenderOnce for UrlInputCard {
                             )
                     )
                     .child({
-                        let mut btn = Button::new("paste-btn").label("粘贴");
-                        if let Some(handler) = self.on_paste {
-                            btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
-                        }
-                        btn
-                    })
-                    .child({
+                        // 蓝色解析按钮
                         let mut btn = Button::new("parse-btn")
                             .primary()
                             .label(button_label)

@@ -225,6 +225,74 @@ pub fn get_available_space(path: &Path) -> Result<u64> {
     Ok(1024 * 1024 * 1024)
 }
 
+/// 获取配置文件路径
+pub fn get_config_file_path() -> Result<PathBuf> {
+    let config_dir = get_app_config_dir()?;
+    Ok(config_dir.join(CONFIG_FILE_NAME))
+}
+
+/// 保存应用配置到文件
+pub fn save_app_config(config: &crate::types::AppConfig) -> Result<()> {
+    let config_path = get_config_file_path()?;
+    
+    let toml_string = toml::to_string_pretty(config)
+        .context("Failed to serialize config to TOML")?;
+    
+    std::fs::write(&config_path, toml_string)
+        .context("Failed to write config file")?;
+    
+    tracing::info!("Configuration saved to: {:?}", config_path);
+    Ok(())
+}
+
+/// 从文件加载应用配置
+pub fn load_app_config() -> Result<crate::types::AppConfig> {
+    let config_path = get_config_file_path()?;
+    
+    if !config_path.exists() {
+        tracing::info!("Config file not found, using defaults: {:?}", config_path);
+        return Ok(crate::types::AppConfig::default());
+    }
+    
+    let content = std::fs::read_to_string(&config_path)
+        .context("Failed to read config file")?;
+    
+    let config: crate::types::AppConfig = toml::from_str(&content)
+        .context("Failed to parse config file")?;
+    
+    tracing::info!("Configuration loaded from: {:?}", config_path);
+    Ok(config)
+}
+
+/// 加载应用配置，如果不存在则创建默认配置文件
+pub fn load_app_config_or_default() -> crate::types::AppConfig {
+    let config_path = match get_config_file_path() {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!("Failed to get config file path: {}", e);
+            return crate::types::AppConfig::default();
+        }
+    };
+    
+    if config_path.exists() {
+        // 配置文件存在，尝试加载
+        match load_app_config() {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::warn!("Failed to load config, using defaults: {}", e);
+                crate::types::AppConfig::default()
+            }
+        }
+    } else {
+        // 配置文件不存在，创建默认配置
+        let default_config = crate::types::AppConfig::default();
+        if let Err(e) = save_app_config(&default_config) {
+            tracing::warn!("Failed to save default config: {}", e);
+        }
+        default_config
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,8 +2,8 @@
 //!
 //! 实现任务队列和并发控制，支持任务优先级管理。
 
-use magekit_shared::{TaskId, TaskState, TaskStatus, DownloadOptions};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use magekit_shared::{TaskId, DownloadOptions};
+use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock, Semaphore};

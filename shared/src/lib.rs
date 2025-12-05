@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 #![warn(clippy::all)]
 #![allow(clippy::type_complexity)]
 

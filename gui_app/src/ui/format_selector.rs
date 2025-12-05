@@ -320,11 +320,11 @@ impl Render for FormatSelector {
         // 获取主题颜色
         let theme = cx.theme();
         let bg = theme.background;
-        let fg = theme.foreground;
-        let muted = theme.muted_foreground;
+        let _fg = theme.foreground;
+        let _muted = theme.muted_foreground;
         let border = theme.border;
-        let primary = theme.primary;
-        let primary_fg = theme.primary_foreground;
+        let _primary = theme.primary;
+        let _primary_fg = theme.primary_foreground;
 
         // 渲染主内容
         v_flex()
@@ -390,7 +390,7 @@ impl FormatSelector {
     fn render_resolution_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        let border = theme.border;
+        let _border = theme.border;
         let current_res = self.resolution;
 
         v_flex()
@@ -483,8 +483,8 @@ impl FormatSelector {
     fn render_subtitle_options(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        let border = theme.border;
-        let bg = theme.background;
+        let _border = theme.border;
+        let _bg = theme.background;
         let enabled = self.subtitle_options.enabled;
         let embed = self.subtitle_options.embed;
         let auto_gen = self.subtitle_options.auto_generated;

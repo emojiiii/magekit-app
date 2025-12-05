@@ -8,7 +8,6 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use magekit_shared::types::DownloadOptions;
 use std::sync::Arc;
-use std::collections::HashMap;
 
 /// 批量URL项
 #[derive(Debug, Clone)]
@@ -271,7 +270,7 @@ impl Render for BatchPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bg = theme.background;
-        let fg = theme.foreground;
+        let _fg = theme.foreground;
         let border = theme.border;
 
         v_flex()
@@ -369,7 +368,7 @@ impl BatchPanel {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let border = theme.border;
-        let bg = theme.muted;
+        let _bg = theme.muted;
 
         v_flex()
             .p_4()
@@ -568,7 +567,7 @@ impl BatchPanel {
     /// 渲染底部
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let muted = theme.muted_foreground;
+        let _muted = theme.muted_foreground;
         let border = theme.border;
 
         let has_items = !self.items.is_empty();

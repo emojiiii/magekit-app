@@ -1,12 +1,11 @@
-use crate::error::{DownloadError, DownloadResult, ToolManagerError};
+use crate::error::{DownloadError, DownloadResult};
 use magekit_shared::{VideoFormat, VideoInfo, DownloadOptions, TaskId};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::{Command, Child};
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 /// 视频下载器
 #[derive(Clone)]
@@ -26,7 +25,7 @@ impl VideoDownloader {
 
     /// 获取视频信息
     pub async fn get_video_info(&self, url: &str) -> DownloadResult<VideoInfo> {
-        tracing::info!("Getting video info for URL: {}", url);
+        tracing::info!("🔍 获取视频信息，URL: {}", url);
 
         let output = Command::new(&self.yt_dlp_path)
             .arg("--dump-json")
@@ -40,6 +39,7 @@ impl VideoDownloader {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!("❌ yt-dlp 获取视频信息失败: {}", stderr);
             return Err(DownloadError::extraction_failed(
                 url,
                 stderr.to_string(),
@@ -47,12 +47,20 @@ impl VideoDownloader {
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
+        tracing::debug!("📄 yt-dlp 返回 JSON 长度: {} 字节", json_str.len());
+        
         let video_data: VideoInfoData = serde_json::from_str(&json_str)
-            .map_err(|e| DownloadError::extraction_failed(
-                url,
-                format!("Failed to parse JSON: {}", e),
-            ))?;
+            .map_err(|e| {
+                tracing::error!("❌ JSON 解析失败: {}", e);
+                DownloadError::extraction_failed(
+                    url,
+                    format!("Failed to parse JSON: {}", e),
+                )
+            })?;
 
+        tracing::info!("✅ 视频信息获取成功: {} - {}", video_data.id, video_data.title);
+        tracing::debug!("📊 格式数量: {}, 时长: {:?}秒", video_data.formats.len(), video_data.duration);
+        
         Ok(video_data.into())
     }
 
@@ -64,18 +72,29 @@ impl VideoDownloader {
         options: DownloadOptions,
         progress_tx: mpsc::Sender<DownloadProgress>,
     ) -> DownloadResult<PathBuf> {
-        tracing::info!("Starting download for task {}: {}", task_id, url);
+        tracing::info!("📥 开始下载任务 {}", task_id);
+        tracing::info!("  URL: {}", url);
+        tracing::info!("  输出目录: {:?}", options.output_path);
+        tracing::info!("  格式: {}", options.format_id);
 
         let mut cmd = Command::new(&self.yt_dlp_path);
 
         // 基本参数
+        let output_template = options.output_path.join(
+            options.output_template.as_deref().unwrap_or("%(title)s.%(ext)s")
+        );
+        
         cmd.arg(url)
            .arg("--format")
            .arg(&options.format_id)
            .arg("--output")
-           .arg(options.output_path.join(
-               options.output_template.as_deref().unwrap_or("%(title)s.%(ext)s")
-           ).to_string_lossy().as_ref());
+           .arg(output_template.to_string_lossy().as_ref())
+           // 添加进度相关参数
+           .arg("--newline")  // 确保每行进度都输出
+           .arg("--progress")  // 显示进度条
+           .arg("--print").arg("after_move:filepath");  // 最终文件路径输出到 stdout
+        
+        tracing::debug!("  输出模板: {:?}", output_template);
 
         // 元数据选项
         if options.embed_metadata {
@@ -143,40 +162,85 @@ impl VideoDownloader {
     ) -> DownloadResult<PathBuf> {
         use tokio::io::{AsyncBufReadExt, BufReader};
 
+        // 同时读取 stdout 和 stderr
+        let stdout = child.stdout.take().ok_or_else(|| {
+            DownloadError::internal("Failed to capture stdout".to_string())
+        })?;
         let stderr = child.stderr.take().ok_or_else(|| {
             DownloadError::internal("Failed to capture stderr".to_string())
         })?;
-        let mut reader = BufReader::new(stderr);
-        let mut line = String::new();
+        
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut stderr_reader = BufReader::new(stderr);
+        
+        let mut stdout_line = String::new();
+        let mut stderr_line = String::new();
 
         let mut output_path: Option<PathBuf> = None;
+        let mut final_path_from_print: Option<PathBuf> = None;
 
+        // 使用 select 同时读取两个流
         loop {
-            let bytes_read = reader.read_line(&mut line).await
-                .map_err(|e| DownloadError::internal(format!("Failed to read stderr: {}", e)))?;
+            tokio::select! {
+                result = stdout_reader.read_line(&mut stdout_line) => {
+                    match result {
+                        Ok(0) => {}, // stdout EOF
+                        Ok(_) => {
+                            let trimmed = stdout_line.trim();
+                            if !trimmed.is_empty() {
+                                tracing::debug!("[yt-dlp stdout] {}", trimmed);
+                                
+                                // --print after_move:filepath 的输出会在 stdout
+                                // 这通常是最终的文件路径
+                                if !trimmed.starts_with('[') && !trimmed.contains('%') {
+                                    let potential_path = PathBuf::from(trimmed);
+                                    // 检查是否像文件路径
+                                    if trimmed.contains('/') || trimmed.contains('.') {
+                                        tracing::info!("📁 从 stdout 检测到文件路径: {:?}", potential_path);
+                                        final_path_from_print = Some(potential_path);
+                                    }
+                                }
+                            }
+                            stdout_line.clear();
+                        }
+                        Err(e) => {
+                            tracing::warn!("Error reading stdout: {}", e);
+                        }
+                    }
+                }
+                result = stderr_reader.read_line(&mut stderr_line) => {
+                    match result {
+                        Ok(0) => break, // stderr EOF, 进程可能结束
+                        Ok(_) => {
+                            let trimmed = stderr_line.trim();
+                            if !trimmed.is_empty() {
+                                tracing::debug!("[yt-dlp stderr] {}", trimmed);
+                            }
 
-            if bytes_read == 0 {
-                break;
-            }
+                            // 解析下载进度信息
+                            if let Some(progress) = self.parse_progress_line(&stderr_line) {
+                                let _ = progress_tx.send(DownloadProgress::Progress {
+                                    task_id,
+                                    percent: progress.percent,
+                                    speed: progress.speed,
+                                    eta: progress.eta,
+                                }).await;
+                            }
 
-            // 解析下载进度信息
-            if let Some(progress) = self.parse_progress_line(&line) {
-                let _ = progress_tx.send(DownloadProgress::Progress {
-                    task_id,
-                    percent: progress.percent,
-                    speed: progress.speed,
-                    eta: progress.eta,
-                }).await;
-            }
+                            // 解析输出文件路径 - 支持多种格式
+                            if let Some(path) = self.extract_output_path(&stderr_line) {
+                                tracing::info!("📁 从 stderr 检测到输出文件: {:?}", path);
+                                output_path = Some(path);
+                            }
 
-            // 解析输出文件路径
-            if line.contains("[download] Destination:") {
-                if let Some(path) = self.extract_output_path(&line) {
-                    output_path = Some(path);
+                            stderr_line.clear();
+                        }
+                        Err(e) => {
+                            tracing::warn!("Error reading stderr: {}", e);
+                        }
+                    }
                 }
             }
-
-            line.clear();
         }
 
         // 等待进程完成
@@ -186,14 +250,23 @@ impl VideoDownloader {
             ))?;
 
         if !status.success() {
+            tracing::error!("❌ yt-dlp 进程退出码: {:?}", status.code());
             return Err(DownloadError::download_failed(
                 "unknown",
                 format!("Process exited with code: {:?}", status.code()),
             ));
         }
 
-        output_path.ok_or_else(|| {
-            DownloadError::internal("Could not determine output file path".to_string())
+        // 优先使用 --print 输出的路径，否则使用从 stderr 检测到的路径
+        let final_path = final_path_from_print.or(output_path);
+        
+        match &final_path {
+            Some(path) => tracing::info!("✅ 下载完成，输出文件: {:?}", path),
+            None => tracing::warn!("⚠️ 下载完成但未检测到输出文件路径"),
+        }
+
+        final_path.ok_or_else(|| {
+            DownloadError::internal("无法确定输出文件路径".to_string())
         })
     }
 
@@ -264,13 +337,42 @@ impl VideoDownloader {
 
     /// 从yt-dlp输出中提取文件路径
     fn extract_output_path(&self, line: &str) -> Option<PathBuf> {
-        // 格式: [download] Destination: /path/to/file.mp4
-        if let Some(start) = line.find("[download] Destination:") {
-            let path_part = &line[start + 23..]; // "[download] Destination:" 的长度
-            Some(PathBuf::from(path_part.trim()))
-        } else {
-            None
+        // 支持多种 yt-dlp 输出格式:
+        // [download] Destination: /path/to/file.mp4
+        // [Merger] Merging formats into "/path/to/file.mp4"
+        // [ExtractAudio] Destination: /path/to/file.mp3
+        // [download] /path/to/file.mp4 has already been downloaded
+        // [ffmpeg] Merging formats into "/path/to/file.webm"
+        
+        if let Some(start) = line.find("Destination:") {
+            let path_part = &line[start + 12..]; // "Destination:" 的长度
+            return Some(PathBuf::from(path_part.trim()));
         }
+        
+        // 处理 [Merger] Merging formats into "path" 格式
+        if line.contains("Merging formats into") {
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line.rfind('"') {
+                    if end > start {
+                        let path_str = &line[start + 1..end];
+                        return Some(PathBuf::from(path_str));
+                    }
+                }
+            }
+        }
+        
+        // 处理 "has already been downloaded" 格式
+        if line.contains("has already been downloaded") {
+            // [download] /path/to/file.mp4 has already been downloaded
+            if let Some(start) = line.find("[download]") {
+                let rest = &line[start + 10..].trim();
+                if let Some(end) = rest.find(" has already been downloaded") {
+                    return Some(PathBuf::from(&rest[..end]));
+                }
+            }
+        }
+        
+        None
     }
 }
 
@@ -315,6 +417,7 @@ struct VideoInfoData {
     uploader: Option<String>,
     upload_date: Option<String>,
     thumbnail: Option<String>,
+    #[serde(default)]
     formats: Vec<FormatData>,
     webpage_url: String,
 }
@@ -328,7 +431,84 @@ struct FormatData {
     filesize: Option<u64>,
     vcodec: Option<String>,
     acodec: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_quality")]
     quality: Option<String>,
+}
+
+/// 自定义反序列化器，处理 quality 字段可能是数字或字符串的情况
+fn deserialize_quality<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    
+    struct QualityVisitor;
+    
+    impl<'de> Visitor<'de> for QualityVisitor {
+        type Value = Option<String>;
+        
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string, number, or null")
+        }
+        
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+        
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_any(QualityVisitor)
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+        
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value))
+        }
+        
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+        
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+        
+        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+    }
+    
+    deserializer.deserialize_option(QualityVisitor)
 }
 
 impl From<VideoInfoData> for VideoInfo {

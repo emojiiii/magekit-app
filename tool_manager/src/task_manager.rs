@@ -1,14 +1,12 @@
 use crate::downloader::{DownloadProgress, VideoDownloader};
-use crate::error::{DownloadError, DownloadResult, ToolManagerError, ToolManagerResult};
+use crate::error::{DownloadError, DownloadResult, ToolManagerResult};
 use crate::storage::ToolStorage;
-use crate::task_persistence::{TaskPersistence, PersistedTask};
-use crate::task_queue::{TaskQueue, QueuedTask, TaskPriority, QueueEvent, QueueStats};
+use crate::task_persistence::TaskPersistence;
+use crate::task_queue::{TaskQueue, QueuedTask, TaskPriority, QueueStats};
 use crate::{updater::UpdateInfo, config::ConfigManager};
 use magekit_shared::{TaskStatus, TaskState, TaskUpdate, VideoInfo, DownloadOptions, TaskId};
 use magekit_shared::{UpdateChannel, generate_output_path};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock, Mutex};
 use uuid::Uuid;

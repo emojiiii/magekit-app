@@ -1,7 +1,6 @@
 //! 关于区块组件
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use crate::ui::widgets::Section;
 
 /// 关于信息卡片

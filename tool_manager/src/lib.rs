@@ -1,5 +1,6 @@
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 #![warn(clippy::all)]
+#![allow(dead_code)]
 
 //! # MageKit Tool Manager
 //!

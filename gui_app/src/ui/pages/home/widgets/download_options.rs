@@ -3,7 +3,6 @@
 //! 提供下载配置选项
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use crate::ui::widgets::Checkbox;
 
 /// 下载选项数据

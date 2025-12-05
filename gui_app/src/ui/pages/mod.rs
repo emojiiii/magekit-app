@@ -5,7 +5,9 @@
 pub mod home;
 pub mod tools;
 pub mod settings;
+pub mod tasks;
 
 pub use home::HomePage;
 pub use tools::ToolsPage;
 pub use settings::SettingsPage;
+pub use tasks::TasksPage;

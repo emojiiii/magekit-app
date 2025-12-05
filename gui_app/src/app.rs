@@ -5,10 +5,9 @@
 use anyhow::Result;
 use gpui::Global;
 use magekit_shared::{AppConfig, TaskStatus, TaskUpdate, DownloadOptions, TaskId};
+use magekit_shared::{load_app_config_or_default, save_app_config};
 use magekit_tool_manager::ToolManager;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::runtime::Runtime;
@@ -73,6 +72,41 @@ pub enum ToolStatus {
     Installed { version: Option<String>, is_system: bool },
 }
 
+/// 视频下载选项
+#[derive(Debug, Clone, Default)]
+pub struct DownloadVideoOptions {
+    pub embed_metadata: bool,
+    pub embed_thumbnail: bool,
+    pub download_subtitles: bool,
+    pub audio_only: bool,
+}
+
+/// 解析大小字符串 (如 "1.5MiB", "500KiB") 为字节数
+fn parse_size_string(s: &str) -> u64 {
+    let s = s.trim();
+    if s.is_empty() || s == "N/A" || s == "~" {
+        return 0;
+    }
+    
+    // 移除可能的单位后缀
+    let (num_part, multiplier) = if s.ends_with("GiB") || s.ends_with("GB") {
+        (s.trim_end_matches("GiB").trim_end_matches("GB"), 1024 * 1024 * 1024)
+    } else if s.ends_with("MiB") || s.ends_with("MB") {
+        (s.trim_end_matches("MiB").trim_end_matches("MB"), 1024 * 1024)
+    } else if s.ends_with("KiB") || s.ends_with("KB") {
+        (s.trim_end_matches("KiB").trim_end_matches("KB"), 1024)
+    } else if s.ends_with("B") {
+        (s.trim_end_matches("B"), 1)
+    } else if s.ends_with("/s") {
+        // 速度格式，递归处理
+        return parse_size_string(s.trim_end_matches("/s"));
+    } else {
+        (s, 1)
+    };
+    
+    num_part.trim().parse::<f64>().unwrap_or(0.0) as u64 * multiplier
+}
+
 impl AppState {
     /// 创建新的应用状态 (同步版本)
     pub fn new_sync() -> Result<Self> {
@@ -84,8 +118,9 @@ impl AppState {
         // 创建事件通道
         let (event_tx, event_rx) = mpsc::channel(1000);
 
-        // 使用默认配置
-        let config = AppConfig::default();
+        // 从文件加载配置（如果失败则使用默认配置）
+        let config = load_app_config_or_default();
+        tracing::info!("Loaded config: download_path={:?}", config.download.default_output_path);
         let config = Arc::new(RwLock::new(config));
 
         // 创建工具管理器
@@ -120,6 +155,13 @@ impl AppState {
         let mut config = self.config.write().await;
         *config = new_config.clone();
         
+        // 保存配置到文件
+        if let Err(e) = save_app_config(&new_config) {
+            tracing::error!("Failed to save config to file: {}", e);
+        } else {
+            tracing::info!("Config saved successfully");
+        }
+        
         // 发送配置变更事件
         let _ = self.event_tx.send(AppEvent::ConfigChanged(new_config)).await;
         
@@ -135,7 +177,7 @@ impl AppState {
             .unwrap_or_default()
             .join("downloads");
 
-        let options_with_path = DownloadOptions {
+        let _options_with_path = DownloadOptions {
             output_path,
             ..download_options
         };
@@ -364,6 +406,275 @@ impl AppState {
             .map_err(|e| anyhow::anyhow!("删除工具失败: {}", e))
     }
 
+    /// 获取视频信息 (在后台线程中运行，返回 JoinHandle)
+    /// 这个方法会在后台调用 yt-dlp --dump-json 获取视频信息
+    pub fn get_video_info_in_background(&self, url: String) -> std::thread::JoinHandle<Result<magekit_shared::VideoInfo>> {
+        let runtime = self.runtime.clone();
+        let tool_manager = self.tool_manager.clone();
+        
+        std::thread::spawn(move || {
+            runtime.block_on(async {
+                tool_manager.get_video_info(&url).await
+                    .map_err(|e| anyhow::anyhow!("获取视频信息失败: {}", e))
+            })
+        })
+    }
+
+    /// 下载视频（在后台线程中运行，带进度回调）
+    /// progress_callback: fn(progress_percent, speed_bytes_per_sec, downloaded_bytes, total_bytes)
+    pub fn download_video_in_background(
+        &self,
+        url: String,
+        output_dir: std::path::PathBuf,
+        format_id: String,
+        options: DownloadVideoOptions,
+        progress_callback: std::sync::Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync>,
+    ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
+        let storage = self.tool_manager.storage.clone();
+        
+        std::thread::spawn(move || {
+            // 获取 yt-dlp 路径
+            let yt_dlp_path = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
+            
+            // 如果应用内没有安装，尝试使用系统的
+            let yt_dlp_path = if yt_dlp_path.exists() {
+                yt_dlp_path
+            } else {
+                which::which("yt-dlp")
+                    .map_err(|_| anyhow::anyhow!("yt-dlp 未安装，请先在工具页面安装"))?
+            };
+            
+            // 构建命令
+            let mut cmd = std::process::Command::new(&yt_dlp_path);
+            cmd.arg(&url)
+               .arg("--format").arg(&format_id)
+               .arg("--output").arg(output_dir.join("%(title)s.%(ext)s"))
+               .arg("--newline")  // 每行输出进度，便于解析
+               .arg("--progress-template").arg("download:%(progress._percent_str)s %(progress._speed_str)s %(progress._downloaded_bytes_str)s %(progress._total_bytes_str)s");
+            
+            // 元数据选项
+            if options.embed_metadata {
+                cmd.arg("--embed-metadata");
+            }
+            if options.embed_thumbnail {
+                cmd.arg("--embed-thumbnail");
+            }
+            
+            // 音频选项
+            if options.audio_only {
+                cmd.arg("--extract-audio");
+                cmd.arg("--audio-format").arg("mp3");
+            }
+            
+            // 字幕选项
+            if options.download_subtitles {
+                cmd.arg("--write-subs");
+                cmd.arg("--write-auto-subs");
+            }
+            
+            // 获取 ffmpeg 路径
+            let ffmpeg_path = storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
+            if ffmpeg_path.exists() {
+                cmd.arg("--ffmpeg-location").arg(&ffmpeg_path);
+            } else if let Ok(system_ffmpeg) = which::which("ffmpeg") {
+                cmd.arg("--ffmpeg-location").arg(system_ffmpeg);
+            }
+            
+            // 启动进程
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+            
+            tracing::info!("🚀 启动 yt-dlp 命令: {:?}", cmd);
+            
+            let mut child = cmd.spawn()
+                .map_err(|e| anyhow::anyhow!("启动 yt-dlp 失败: {}", e))?;
+            
+            // 读取 stderr 来获取进度
+            let stderr = child.stderr.take()
+                .ok_or_else(|| anyhow::anyhow!("无法获取 stderr"))?;
+            
+            // 同时读取 stdout
+            let stdout = child.stdout.take()
+                .ok_or_else(|| anyhow::anyhow!("无法获取 stdout"))?;
+            
+            use std::io::BufRead;
+            let stderr_reader = std::io::BufReader::new(stderr);
+            let stdout_reader = std::io::BufReader::new(stdout);
+            
+            let mut output_file: Option<std::path::PathBuf> = None;
+            let mut all_lines: Vec<String> = Vec::new();
+            
+            // 在单独线程中读取 stdout
+            let stdout_handle = std::thread::spawn(move || {
+                let mut stdout_lines: Vec<String> = Vec::new();
+                for line in stdout_reader.lines() {
+                    if let Ok(line) = line {
+                        tracing::debug!("[yt-dlp stdout] {}", line);
+                        stdout_lines.push(line);
+                    }
+                }
+                stdout_lines
+            });
+            
+            // 在主线程中读取 stderr
+            for line in stderr_reader.lines() {
+                if let Ok(line) = line {
+                    tracing::debug!("[yt-dlp stderr] {}", line);
+                    all_lines.push(line.clone());
+                    
+                    // 解析进度信息
+                    if line.starts_with("download:") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 4 {
+                            // 解析百分比
+                            let percent_str = parts[0].strip_prefix("download:").unwrap_or("0%");
+                            let percent: f32 = percent_str.trim_end_matches('%')
+                                .parse()
+                                .unwrap_or(0.0);
+                            
+                            // 解析速度
+                            let speed = parse_size_string(parts[1]);
+                            
+                            // 解析已下载
+                            let downloaded = parse_size_string(parts[2]);
+                            
+                            // 解析总大小
+                            let total = parse_size_string(parts[3]);
+                            
+                            progress_callback(percent, speed, downloaded, total);
+                        }
+                    }
+                    
+                    // 检测输出文件 - 支持多种格式
+                    // [download] Destination: /path/to/file.mp4
+                    if line.contains("Destination:") {
+                        if let Some(path) = line.split("Destination:").nth(1) {
+                            let path = path.trim();
+                            tracing::info!("📁 检测到输出路径 (Destination): {}", path);
+                            output_file = Some(std::path::PathBuf::from(path));
+                        }
+                    }
+                    
+                    // [Merger] Merging formats into "/path/to/file.mp4"
+                    // [ffmpeg] Merging formats into "/path/to/file.webm"
+                    if line.contains("Merging formats into") {
+                        if let Some(start) = line.find('"') {
+                            if let Some(end) = line.rfind('"') {
+                                if end > start {
+                                    let path = &line[start + 1..end];
+                                    tracing::info!("📁 检测到输出路径 (Merger): {}", path);
+                                    output_file = Some(std::path::PathBuf::from(path));
+                                }
+                            }
+                        }
+                    }
+                    
+                    // [download] /path/to/file.mp4 has already been downloaded
+                    if line.contains("has already been downloaded") {
+                        if let Some(start) = line.find("[download]") {
+                            let rest = &line[start + 10..].trim();
+                            if let Some(end) = rest.find(" has already been downloaded") {
+                                let path = &rest[..end];
+                                tracing::info!("📁 检测到输出路径 (already downloaded): {}", path);
+                                output_file = Some(std::path::PathBuf::from(path));
+                            }
+                        }
+                    }
+                    
+                    // [ExtractAudio] Destination: /path/to/file.mp3
+                    // 已经被上面的 "Destination:" 处理
+                }
+            }
+            
+            // 获取 stdout 线程的结果
+            let stdout_lines = stdout_handle.join().unwrap_or_default();
+            
+            // 如果还没有找到输出文件，检查 stdout 中的输出
+            // yt-dlp 的 --print 选项会输出到 stdout
+            if output_file.is_none() {
+                for line in &stdout_lines {
+                    let trimmed = line.trim();
+                    // 检查是否像是文件路径
+                    if !trimmed.is_empty() 
+                        && !trimmed.starts_with('[') 
+                        && !trimmed.contains('%')
+                        && (trimmed.contains('/') || trimmed.contains('.'))
+                    {
+                        let path = std::path::PathBuf::from(trimmed);
+                        // 检查文件是否存在
+                        if path.exists() {
+                            tracing::info!("📁 从 stdout 检测到输出路径: {}", trimmed);
+                            output_file = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // 等待进程完成
+            let status = child.wait()
+                .map_err(|e| anyhow::anyhow!("等待 yt-dlp 完成失败: {}", e))?;
+            
+            if !status.success() {
+                // 收集最后几行错误信息
+                let error_context: Vec<String> = all_lines.iter()
+                    .filter(|l| l.contains("ERROR") || l.contains("error") || l.contains("警告") || l.contains("Warning"))
+                    .map(|s| s.clone())
+                    .collect();
+                let error_msg = if error_context.is_empty() {
+                    let last_lines: Vec<String> = all_lines.iter().rev().take(5).map(|s| s.clone()).collect::<Vec<_>>().into_iter().rev().collect();
+                    format!("下载失败，退出码: {:?}\n最后输出:\n{}", 
+                        status.code(),
+                        last_lines.join("\n"))
+                } else {
+                    format!("下载失败，退出码: {:?}\n错误信息:\n{}", 
+                        status.code(),
+                        error_context.join("\n"))
+                };
+                tracing::error!("❌ {}", error_msg);
+                return Err(anyhow::anyhow!("{}", error_msg));
+            }
+            
+            // 如果仍然没有找到输出文件，尝试在输出目录中查找最新文件
+            if output_file.is_none() {
+                tracing::warn!("⚠️ 未从 yt-dlp 输出中检测到文件路径，尝试在输出目录查找最新文件...");
+                
+                if let Ok(entries) = std::fs::read_dir(&output_dir) {
+                    let mut newest_file: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
+                    for entry in entries.flatten() {
+                        if let Ok(metadata) = entry.metadata() {
+                            if metadata.is_file() {
+                                if let Ok(modified) = metadata.modified() {
+                                    if newest_file.is_none() || modified > newest_file.as_ref().unwrap().1 {
+                                        newest_file = Some((entry.path(), modified));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some((path, _)) = newest_file {
+                        tracing::info!("📁 找到最新文件: {:?}", path);
+                        output_file = Some(path);
+                    }
+                }
+            }
+            
+            // 返回输出文件路径
+            match output_file {
+                Some(path) => {
+                    tracing::info!("✅ 下载完成: {:?}", path);
+                    Ok(path)
+                }
+                None => {
+                    let msg = format!("无法确定输出文件路径\n输出目录: {:?}\nyt-dlp 输出共 {} 行", 
+                        output_dir, all_lines.len());
+                    tracing::error!("❌ {}", msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+            }
+        })
+    }
+
     /// 安装工具 (使用内部 Tokio 运行时) - 阻塞版本，不推荐使用
     #[allow(dead_code)]
     pub fn install_tool_blocking(&self, tool_type: magekit_shared::ToolType) -> Result<()> {
@@ -461,13 +772,13 @@ impl AppState {
                     task.state = state.clone();
 
                     // 发送状态变更通知
-                    let notification_type = match state {
+                    let _notification_type = match state {
                         magekit_shared::TaskState::Completed => NotificationType::Success,
                         magekit_shared::TaskState::Failed(_) => NotificationType::Error,
                         _ => NotificationType::Info,
                     };
 
-                    let message = match state {
+                    let _message = match state {
                         magekit_shared::TaskState::Completed => "下载完成".to_string(),
                         magekit_shared::TaskState::Failed(ref error) => format!("下载失败: {}", error),
                         _ => format!("任务状态变更为: {:?}", state),

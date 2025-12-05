@@ -93,13 +93,13 @@ magekit-app/
 
 ## 🎯 功能实现计划
 
-### 阶段 1: 工具管理 - 让 yt-dlp/ffmpeg 真正工作 (高优先级)
+### 阶段 1: 工具管理 - 让 yt-dlp/ffmpeg 真正工作 ✅ 已完成
 
 **目标**: 实现工具自动安装、检测、更新功能
 
 #### 1.1 ToolsPage 功能实现
 
-当前状态: ✅ 基础功能已完成
+当前状态: ✅ 全部完成
 
 - [x] **检测系统已安装的工具**
 
@@ -108,199 +108,270 @@ magekit-app/
   - ✅ 更新 ToolInfo 状态 (ToolInstallState)
   - ✅ 区分系统安装和应用安装的工具 (`is_system` 字段)
 
-- [ ] **实现工具自动下载**
+- [x] **实现工具自动下载**
 
-  - 连接 `tool_manager/src/updater.rs` 的下载逻辑
-  - 从 GitHub Releases 下载 yt-dlp
-  - 从官方源下载 ffmpeg（或使用预编译包）
-  - 显示下载进度
+  - ✅ 连接 `tool_manager/src/updater.rs` 的下载逻辑
+  - ✅ 从 GitHub Releases 下载 yt-dlp
+  - ✅ 使用 brew 安装 ffmpeg（macOS）
+  - ✅ 显示实时下载进度（百分比、速度、已下载/总大小）
+  - ✅ 下载过程不阻塞 UI（使用 smol::unblock）
 
-- [ ] **工具版本更新检查**
-  - 检查远程最新版本
-  - 比较本地版本
-  - 提供更新选项
+- [x] **工具管理功能**
+  - ✅ 删除已安装的工具（非系统工具）
+  - ✅ 红色危险按钮样式
+  - ✅ 版本号显示（ffmpeg/yt-dlp 版本解析）
+
+**技术实现亮点**:
+
+- 使用 `AtomicU64` 在后台线程和 UI 之间共享下载进度
+- 使用 `smol::unblock()` 避免阻塞主线程
+- 使用 `reqwest` 的 streaming API 实现流式下载
+- 进度回调使用特殊标记 (`speed = u64::MAX`) 表示进入安装阶段
 
 **涉及文件**:
 
 - `gui_app/src/ui/pages/tools/page.rs` - 页面逻辑 ✅
+- `gui_app/src/ui/pages/tools/widgets/tool_card.rs` - 工具卡片组件 ✅
 - `gui_app/src/app.rs` - AppState 工具检测方法 ✅
-- `tool_manager/src/updater.rs` - 下载更新逻辑
-- `tool_manager/src/storage.rs` - 工具存储路径
+- `tool_manager/src/updater.rs` - 下载更新逻辑 ✅
+- `tool_manager/src/storage.rs` - 工具存储和删除 ✅
 
 ---
 
-### 阶段 2: 视频信息获取 - URL 解析功能 (高优先级)
+### 阶段 2: 视频信息获取 - URL 解析功能 ✅ 已完成
 
 **目标**: 输入 URL 能获取视频信息
 
 #### 2.1 HomePage 解析功能
 
-当前状态: `on_parse()` 返回硬编码的模拟数据
+当前状态: ✅ 全部完成
 
-- [ ] **连接 VideoDownloader.get_video_info()**
+- [x] **连接 VideoDownloader.get_video_info()**
 
-  - 调用 yt-dlp --dump-json 获取视频信息
-  - 解析返回的 JSON 数据
-  - 处理各种错误情况（无效 URL、网络错误等）
+  - ✅ 调用 yt-dlp --dump-json 获取视频信息
+  - ✅ 解析返回的 JSON 数据
+  - ✅ 处理各种错误情况（无效 URL、网络错误等）
 
-- [ ] **异步任务处理**
+- [x] **异步任务处理**
 
-  - 使用 GPUI 的异步机制
-  - 显示加载状态 (DownloadState::Fetching)
-  - 错误处理和用户提示
+  - ✅ 使用后台线程 + smol::unblock 避免阻塞主线程
+  - ✅ 显示加载状态 (DownloadState::Fetching)
+  - ✅ 错误处理和用户提示
 
-- [ ] **视频信息展示**
-  - 显示视频标题、时长、上传者
-  - 显示缩略图（如果可用）
-  - 显示可用的格式列表
+- [x] **视频信息展示**
+  - ✅ 显示视频标题、时长、上传者
+  - ✅ 格式化时长显示 (HH:MM:SS)
+  - ✅ 缩略图 URL 获取（显示待实现）
+
+**技术实现亮点**:
+
+- 在 `AppState` 中添加 `get_video_info_in_background()` 方法
+- 使用 `smol::unblock()` 将同步阻塞操作移到线程池
+- 将 shared 的 `VideoInfo` 转换为 GUI 的简化版 `VideoInfo`
+- 时长格式化函数 `format_duration()`
 
 **涉及文件**:
 
-- `gui_app/src/ui/pages/home/page.rs` - 页面逻辑
-- `gui_app/src/app.rs` - AppState 方法调用
-- `tool_manager/src/downloader.rs` - get_video_info()
+- `gui_app/src/ui/pages/home/page.rs` - 页面逻辑 ✅
+- `gui_app/src/app.rs` - AppState 方法调用 ✅
+- `tool_manager/src/downloader.rs` - get_video_info() ✅
 
 ---
 
-### 阶段 3: 视频下载功能 - 核心功能 (高优先级)
+### 阶段 3: 视频下载功能 - 核心功能 ✅ 已完成
 
 **目标**: 实现完整的视频下载流程
 
 #### 3.1 下载任务创建
 
-- [ ] **格式选择**
+- [x] **格式选择**
 
-  - 解析视频可用格式
-  - 用户选择画质/格式
-  - 构建 DownloadOptions
+  - ✅ 预设画质选项（最佳、1080p、720p、480p、仅音频）
+  - ✅ 用户选择画质/格式
+  - ✅ 构建 yt-dlp format 参数
 
-- [ ] **启动下载任务**
-  - 调用 ToolManager.start_download()
-  - 创建 TaskHandle
-  - 添加到任务队列
+- [x] **启动下载任务**
+  - ✅ 调用 `download_video_in_background()` 执行下载
+  - ✅ 后台线程运行 yt-dlp 进程
+  - ✅ 支持下载选项（元数据、缩略图、字幕）
 
 #### 3.2 下载进度监控
 
-- [ ] **实时进度更新**
+- [x] **实时进度更新**
 
-  - 从 yt-dlp 输出解析进度
-  - 更新 UI 进度条
-  - 显示下载速度、剩余时间
+  - ✅ 从 yt-dlp 输出解析进度（使用 --progress-template）
+  - ✅ 更新 UI 进度条
+  - ✅ 显示下载速度
 
-- [ ] **任务状态同步**
-  - 连接 ToolManagerEvent 到 UI
-  - 使用 mpsc channel 传递更新
-  - 处理任务完成/失败状态
+- [x] **任务状态同步**
+  - ✅ 使用 AtomicU32/AtomicU64 共享进度
+  - ✅ cx.spawn 轮询更新 UI
+  - ✅ 处理任务完成/失败状态
 
-#### 3.3 任务管理
+#### 3.3 任务管理（基础版）
 
-- [ ] **暂停/恢复下载**
+- [ ] **暂停/恢复下载** - 待后续实现
+- [ ] **取消下载** - 待后续实现
 
-  - 实现 yt-dlp 进程控制
-  - 保存断点信息
-  - 恢复下载
+**技术实现亮点**:
 
-- [ ] **取消下载**
-  - 终止 yt-dlp 进程
-  - 清理临时文件
-  - 更新任务状态
+- 在 `AppState` 中添加 `download_video_in_background()` 方法
+- 使用 `std::process::Command` 同步运行 yt-dlp
+- 解析 yt-dlp 的 `--progress-template` 输出获取进度
+- `parse_size_string()` 函数解析大小字符串（如 "1.5MiB"）
+- `format_speed()` 函数格式化下载速度显示
+- `DownloadVideoOptions` 结构体封装下载选项
 
 **涉及文件**:
 
-- `gui_app/src/ui/pages/home/page.rs` - 下载 UI
-- `gui_app/src/app.rs` - start_download() 方法
-- `tool_manager/src/task_manager.rs` - 任务管理
-- `tool_manager/src/downloader.rs` - 下载执行
+- `gui_app/src/ui/pages/home/page.rs` - 下载 UI 和进度更新 ✅
+- `gui_app/src/app.rs` - download_video_in_background() ✅
 
 ---
 
-### 阶段 4: 任务列表页面 (中优先级)
+### 阶段 4: 任务列表页面 ✅ 已完成
 
 **目标**: 显示所有下载任务，支持任务管理
 
 #### 4.1 创建 TasksPage
 
-当前状态: 使用静态的 tasks_page() 函数
+当前状态: ✅ 已完成基础框架
 
-- [ ] **创建有状态的 TasksPage 组件**
+- [x] **创建有状态的 TasksPage 组件**
 
-  - 在 `pages/tasks/` 目录下创建
-  - 订阅 AppState 的任务列表
-  - 实时更新显示
+  - ✅ 在 `pages/tasks/` 目录下创建完整结构
+  - ✅ 连接 AppState 获取任务列表
+  - ✅ 支持任务筛选（全部/下载中/已完成/失败）
 
-- [ ] **任务列表展示**
+- [x] **任务列表展示**
 
-  - 显示所有任务（进行中、已完成、失败）
-  - 显示任务详情（文件名、大小、进度）
-  - 支持任务分组/筛选
+  - ✅ TaskItem 组件显示单个任务详情
+  - ✅ 显示任务状态、进度条、下载速度
+  - ✅ 空状态提示界面
 
-- [ ] **任务操作**
-  - 暂停/恢复单个任务
-  - 删除任务
-  - 重试失败任务
-  - 打开下载目录
+- [x] **任务操作（已完成）**
+
+  - ✅ 暂停/恢复按钮（更新任务状态）
+  - ✅ 取消/删除按钮（更新并移除任务）
+  - ✅ 打开文件夹按钮（跨平台支持）
+  - ✅ 清空已完成任务
+
+- [x] **任务状态同步**
+  - ✅ 下载开始时创建任务并添加到列表
+  - ✅ 下载进度实时更新到任务列表
+  - ✅ 下载完成/失败时更新任务状态
+  - ✅ TasksPage 每秒自动刷新任务状态
+
+**技术实现亮点**:
+
+- `TasksPage` 有状态组件，支持任务筛选
+- `TaskItem` 使用 `IntoElement` trait 实现可复用组件
+- 使用 `gpui_component` 的 `Sizable` trait 控制按钮大小
+- 相对宽度进度条 `w(relative(progress_percent))`
+- 定时器自动刷新任务列表 (`cx.spawn` + `Timer::after`)
+- 使用 `blocking_write()`/`blocking_read()` 在同步上下文访问 RwLock
+- 跨平台打开文件夹 (`open`/`explorer`/`xdg-open`)
 
 **涉及文件**:
 
-- `gui_app/src/ui/pages/tasks/` (新建)
-- `gui_app/src/ui/layout.rs` - 添加路由
-- `tool_manager/src/task_manager.rs`
+- `gui_app/src/ui/pages/tasks/mod.rs` - 模块导出 ✅
+- `gui_app/src/ui/pages/tasks/page.rs` - TasksPage 组件 ✅
+- `gui_app/src/ui/pages/tasks/widgets/mod.rs` - 小组件模块 ✅
+- `gui_app/src/ui/pages/tasks/widgets/task_item.rs` - TaskItem 组件 ✅
+- `gui_app/src/ui/pages/mod.rs` - 添加 tasks 模块导出 ✅
+- `gui_app/src/ui/main_window.rs` - 路由集成 ✅
+- `gui_app/src/ui/pages/home/page.rs` - 下载时创建任务 ✅
 
 ---
 
-### 阶段 5: 设置持久化 (中优先级)
+### 阶段 5: 设置持久化 ✅ 已完成
 
 **目标**: 用户设置能保存和加载
 
 #### 5.1 SettingsPage 功能完善
 
-当前状态: UI 已完成，设置不持久化
+当前状态: ✅ 全部完成
 
-- [ ] **配置文件读写**
+- [x] **配置文件读写**
 
-  - 使用 tool_manager 的 ConfigManager
-  - 保存用户设置到本地文件
-  - 应用启动时加载配置
+  - ✅ 在 shared/src/utils.rs 添加 load_app_config() 和 save_app_config()
+  - ✅ 配置文件路径: ~/Library/Application Support/MageKit/config.toml
+  - ✅ 首次运行自动创建默认配置文件
+  - ✅ 应用启动时自动加载已保存配置
+  - ✅ 修改设置后自动保存到文件
 
-- [ ] **设置项实现**
+- [x] **设置项实现**
 
-  - 下载路径选择（实现文件夹选择对话框）
-  - 最大并发数
-  - 自动更新检查
-  - 代理设置
+  - ✅ 下载路径选择（使用 rfd crate 实现文件夹选择对话框）
+  - ✅ 最大并发数设置
+  - ✅ 嵌入元数据/缩略图选项
+  - ✅ 自动更新检查开关
+  - ✅ 调试模式开关
 
-- [ ] **设置同步到 AppState**
-  - 修改设置后更新 AppState.config
-  - 通知相关组件配置变更
+- [x] **设置同步到 AppState**
+  - ✅ SettingsPage 从 AppState 读取初始配置
+  - ✅ 修改设置后更新 AppState.config
+  - ✅ AppState.update_config() 自动保存到文件
+
+**技术实现亮点**:
+
+- 使用 `rfd` crate 实现跨平台原生文件夹选择对话框
+- 使用 `toml` crate 序列化/反序列化配置
+- 使用 `smol::unblock()` 避免文件对话框阻塞 UI
+- 配置自动保存，无需手动点击保存按钮
 
 **涉及文件**:
 
-- `gui_app/src/ui/pages/settings/page.rs`
-- `gui_app/src/app.rs` - update_config()
-- `tool_manager/src/config.rs`
+- `shared/Cargo.toml` - 添加 toml 依赖 ✅
+- `shared/src/utils.rs` - 配置文件读写函数 ✅
+- `gui_app/Cargo.toml` - 添加 rfd 依赖 ✅
+- `gui_app/src/ui/pages/settings/page.rs` - 连接 AppState ✅
+- `gui_app/src/app.rs` - 加载/保存配置 ✅
 
 ---
 
-### 阶段 6: 通知系统 (中优先级)
+### 阶段 6: 通知系统 ✅ 已完成
 
 **目标**: 用户操作反馈
 
 #### 6.1 Toast 通知
 
-- [ ] **集成 notification.rs**
+当前状态: ✅ 已完成
 
-  - 下载开始/完成/失败通知
-  - 错误提示
-  - 操作确认
+- [x] **集成 gpui_component 内置通知系统**
 
-- [ ] **系统通知**
-  - 下载完成时发送系统通知
+  - ✅ 使用 `window.push_notification()` 推送通知
+  - ✅ 支持 Info、Success、Warning、Error 四种类型
+  - ✅ 通知自动淡出
+
+- [x] **下载状态通知**
+
+  - ✅ 下载开始通知
+  - ✅ 下载完成通知（Success 类型）
+  - ✅ 下载失败通知（Error 类型）
+
+- [x] **工具管理通知**
+
+  - ✅ 工具安装成功通知
+  - ✅ 工具安装失败通知
+  - ✅ 工具删除成功/失败通知
+
+- [ ] **系统通知** (待后续实现)
+  - 下载完成时发送系统级通知
   - 可配置通知选项
+
+**技术实现亮点**:
+
+- 使用 `gpui_component::notification::{Notification, NotificationType}` 内置组件
+- 使用 `gpui_component::WindowExt` trait 的 `push_notification()` 方法
+- MainWindow 已集成 `Root::render_notification_layer()` 渲染通知层
+- 在 `cx.spawn` 闭包中通过 `this.update()` 获取 window 发送通知
 
 **涉及文件**:
 
-- `gui_app/src/ui/notification.rs` (已有代码待集成)
-- `gui_app/src/ui/main_window.rs`
+- `gui_app/src/ui/pages/home/page.rs` - 下载通知 ✅
+- `gui_app/src/ui/pages/tools/page.rs` - 工具安装/删除通知 ✅
+- `gui_app/src/ui/main_window.rs` - 通知层渲染 (已有) ✅
 
 ---
 
@@ -397,28 +468,33 @@ pub async fn start_download(&self, url: String) -> Result<TaskId> {
 
 | 阶段 | 功能       | 状态      | 完成度 |
 | ---- | ---------- | --------- | ------ |
-| 1    | 工具管理   | ⏳ 待开始 | 0%     |
-| 2    | 视频解析   | ⏳ 待开始 | 0%     |
-| 3    | 视频下载   | ⏳ 待开始 | 0%     |
-| 4    | 任务列表   | ⏳ 待开始 | 0%     |
-| 5    | 设置持久化 | ⏳ 待开始 | 0%     |
-| 6    | 通知系统   | ⏳ 待开始 | 0%     |
+| 1    | 工具管理   | ✅ 已完成 | 100%   |
+| 2    | 视频解析   | ✅ 已完成 | 100%   |
+| 3    | 视频下载   | ✅ 已完成 | 95%    |
+| 4    | 任务列表   | ✅ 已完成 | 95%    |
+| 5    | 设置持久化 | ✅ 已完成 | 100%   |
+| 6    | 通知系统   | ✅ 已完成 | 90%    |
 | 7    | 高级功能   | ⏳ 待开始 | 0%     |
 
 ---
 
 ## 🚀 下一步行动
 
-**立即开始**: 阶段 1 - 工具管理
+**当前任务**: 阶段 7 - 高级功能
 
-1. 在 `ToolsPage` 中调用 `ToolManager.ensure_tools()` 检测工具状态
-2. 实现工具下载进度显示
-3. 测试 yt-dlp 和 ffmpeg 的自动安装
+1. ✅ 阶段 1-6 全部完成
+2. 核心功能已具备，可以进入高级功能开发
 
-完成工具管理后，用户才能使用后续的下载功能。
+下一步可选任务：
+
+- 批量下载/播放列表支持
+- 格式转换
+- 下载历史
+- 系统通知
+- 性能优化
 
 ---
 
 **最后更新**: 2025-12-05
-**版本**: v0.3.0-dev
-**状态**: UI 框架完成，功能待实现
+**版本**: v0.10.0-dev
+**状态**: 阶段 1-6 完成，核心功能就绪

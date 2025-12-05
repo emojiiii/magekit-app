@@ -6,11 +6,9 @@ use gpui::*;
 use gpui::prelude::FluentBuilder;
 use gpui_component::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::scroll::Scrollable;
 use gpui_router::{IntoLayout, NavLink, Outlet};
 use crate::app::GlobalAppState;
 use crate::ui::pages::{HomePage, ToolsPage, SettingsPage};
-use std::sync::Arc;
 
 // ============================================================================
 // 页面包装器组件

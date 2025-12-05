@@ -8,7 +8,6 @@ use gpui_component::*;
 use gpui_component::button::{Button, ButtonVariants};
 use magekit_shared::types::{DownloadOptions, VideoInfo, VideoFormat};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -300,7 +299,7 @@ impl Render for DownloadPanel {
 impl DownloadPanel {
     /// 渲染主内容
     fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let _theme = cx.theme();
         
         div()
             .flex()
@@ -445,7 +444,7 @@ impl DownloadPanel {
 
     /// 渲染就绪状态（已获取视频信息）
     fn render_ready_state(&self, info: VideoInfo, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let _theme = cx.theme();
         
         div()
             .flex()

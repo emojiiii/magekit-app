@@ -1,9 +1,7 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
 use magekit_shared::{get_temp_dir, ToolType, UpdateChannel};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::process::Stdio;
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::process::Command;

@@ -285,12 +285,12 @@ impl PlaylistPanel {
     /// 渲染就绪状态
     fn render_ready(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let fg = theme.foreground;
-        let muted = theme.muted_foreground;
+        let _fg = theme.foreground;
+        let _muted = theme.muted_foreground;
 
         let playlist = self.playlist.as_ref().unwrap();
-        let selected_count = self.selected_ids.len();
-        let total_count = playlist.entries.len();
+        let _selected_count = self.selected_ids.len();
+        let _total_count = playlist.entries.len();
 
         v_flex()
             .gap_4()
@@ -549,7 +549,7 @@ fn render_playlist_item_inline(
     fg: Hsla,
     muted: Hsla,
     border: Hsla,
-    primary: Hsla,
+    _primary: Hsla,
     accent: Hsla,
 ) -> impl IntoElement {
     let bg = if is_selected { accent.opacity(0.1) } else { Hsla::transparent_black() };

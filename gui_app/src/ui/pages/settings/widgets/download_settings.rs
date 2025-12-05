@@ -1,7 +1,6 @@
 //! 下载设置组件
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Disableable;

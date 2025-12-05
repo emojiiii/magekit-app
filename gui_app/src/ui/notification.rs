@@ -622,8 +622,8 @@ impl Render for ConfirmDialog {
         let bg = theme.background;
         let fg = theme.foreground;
         let muted = theme.muted_foreground;
-        let danger = theme.danger;
-        let border = theme.border;
+        let _danger = theme.danger;
+        let _border = theme.border;
 
         if !self.visible {
             return div().into_any_element();
