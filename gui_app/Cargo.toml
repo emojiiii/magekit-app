@@ -42,6 +42,9 @@ tracing-subscriber = { workspace = true }
 # UUID
 uuid = { workspace = true }
 
+# 同步原语
+parking_lot = "0.12"
+
 # 工具检测
 which = "7"
 

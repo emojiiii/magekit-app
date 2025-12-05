@@ -4,6 +4,8 @@
 
 use anyhow::Result;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use magekit_shared::TaskId;
 
 use super::state::AppState;
 use super::types::DownloadVideoOptions;
@@ -23,10 +25,32 @@ impl AppState {
         })
     }
 
+    /// 取消下载任务
+    pub fn cancel_download_task(&self, task_id: TaskId) {
+        let flags = self.download_cancel_flags.lock();
+        tracing::info!("🔍 尝试取消任务: {}, 当前有 {} 个活跃下载", task_id, flags.len());
+        for (id, _) in flags.iter() {
+            tracing::info!("   - 活跃下载 ID: {}", id);
+        }
+        if let Some(flag) = flags.get(&task_id) {
+            tracing::info!("🛑 设置取消标志: {}", task_id);
+            flag.store(true, Ordering::SeqCst);
+        } else {
+            tracing::warn!("⚠️ 未找到任务的取消标志: {}", task_id);
+        }
+    }
+
+    /// 清理下载任务的取消标志
+    pub fn cleanup_download_task(&self, task_id: TaskId) {
+        let mut flags = self.download_cancel_flags.lock();
+        flags.remove(&task_id);
+    }
+
     /// 下载视频（在后台线程中运行，带进度回调）
     /// progress_callback: fn(progress_percent, speed_bytes_per_sec, downloaded_bytes, total_bytes)
     pub fn download_video_in_background(
         &self,
+        task_id: TaskId,
         url: String,
         output_dir: std::path::PathBuf,
         format_id: String,
@@ -35,6 +59,14 @@ impl AppState {
         _title: Option<String>,  // 保留备用
     ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
         let storage = self.tool_manager.storage.clone();
+        
+        // 创建取消标志
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut flags = self.download_cancel_flags.lock();
+            flags.insert(task_id, cancel_flag.clone());
+            tracing::info!("📝 注册取消标志: {}, 当前共 {} 个活跃下载", task_id, flags.len());
+        }
         
         std::thread::spawn(move || {
             // 获取 yt-dlp 路径
@@ -108,6 +140,9 @@ impl AppState {
             let mut child = cmd.spawn()
                 .map_err(|e| anyhow::anyhow!("启动 yt-dlp 失败: {}", e))?;
             
+            let child_id = child.id();
+            tracing::info!("📝 yt-dlp 进程 PID: {}", child_id);
+            
             let stdout = child.stdout.take()
                 .ok_or_else(|| anyhow::anyhow!("无法获取 stdout"))?;
             let stderr = child.stderr.take()
@@ -117,9 +152,9 @@ impl AppState {
             let stdout_reader = std::io::BufReader::new(stdout);
             let stderr_reader = std::io::BufReader::new(stderr);
             
-            let mut output_file: Option<std::path::PathBuf> = None;
-            let mut all_lines: Vec<String> = Vec::new();
-            let mut last_total: u64 = 0;
+            let output_file: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> = Arc::new(std::sync::Mutex::new(None));
+            let all_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let last_total: Arc<std::sync::atomic::AtomicU64> = Arc::new(std::sync::atomic::AtomicU64::new(0));
             
             // 在单独线程中读取 stderr
             let stderr_handle = std::thread::spawn(move || {
@@ -133,68 +168,110 @@ impl AppState {
                 stderr_lines
             });
             
-            // 读取 stdout
-            for line in stdout_reader.lines() {
-                if let Ok(line) = line {
-                    tracing::info!("[yt-dlp] {}", line);
-                    all_lines.push(line.clone());
-                    
-                    // 解析进度信息
-                    if line.contains("[download]") && line.contains("%") && !line.contains("Destination") {
-                        let percent = extract_percent(&line);
-                        let total = extract_total_size(&line);
-                        let speed = extract_speed(&line);
+            // 在单独线程中读取 stdout
+            let output_file_clone = output_file.clone();
+            let all_lines_clone = all_lines.clone();
+            let last_total_clone = last_total.clone();
+            let progress_callback_clone = progress_callback.clone();
+            
+            let stdout_handle = std::thread::spawn(move || {
+                for line in stdout_reader.lines() {
+                    if let Ok(line) = line {
+                        tracing::info!("[yt-dlp] {}", line);
+                        all_lines_clone.lock().unwrap().push(line.clone());
                         
-                        if total > 0 {
-                            last_total = total;
+                        // 解析进度信息
+                        if line.contains("[download]") && line.contains("%") && !line.contains("Destination") {
+                            let percent = extract_percent(&line);
+                            let total = extract_total_size(&line);
+                            let speed = extract_speed(&line);
+                            
+                            if total > 0 {
+                                last_total_clone.store(total, Ordering::Relaxed);
+                            }
+                            let current_total = last_total_clone.load(Ordering::Relaxed);
+                            let effective_total = if total > 0 { total } else { current_total };
+                            let downloaded = ((percent / 100.0) * effective_total as f32) as u64;
+                            
+                            tracing::info!("📊 进度: {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
+                                percent, speed, downloaded, effective_total);
+                            progress_callback_clone(percent / 100.0, speed, downloaded, effective_total);
                         }
-                        let effective_total = if total > 0 { total } else { last_total };
-                        let downloaded = ((percent / 100.0) * effective_total as f32) as u64;
                         
-                        tracing::info!("📊 进度: {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
-                            percent, speed, downloaded, effective_total);
-                        progress_callback(percent / 100.0, speed, downloaded, effective_total);
-                    }
-                    
-                    // 检测输出文件路径
-                    if line.contains("Destination:") {
-                        if let Some(path) = line.split("Destination:").nth(1) {
-                            let path = path.trim();
-                            tracing::info!("📁 检测到输出路径 (Destination): {}", path);
-                            output_file = Some(std::path::PathBuf::from(path));
+                        // 检测输出文件路径
+                        if line.contains("Destination:") {
+                            if let Some(path) = line.split("Destination:").nth(1) {
+                                let path = path.trim();
+                                tracing::info!("📁 检测到输出路径 (Destination): {}", path);
+                                *output_file_clone.lock().unwrap() = Some(std::path::PathBuf::from(path));
+                            }
                         }
-                    }
-                    
-                    if line.contains("Merging formats into") {
-                        if let Some(start) = line.find('"') {
-                            if let Some(end) = line.rfind('"') {
-                                if end > start {
-                                    let path = &line[start + 1..end];
-                                    tracing::info!("📁 检测到输出路径 (Merger): {}", path);
-                                    output_file = Some(std::path::PathBuf::from(path));
+                        
+                        if line.contains("Merging formats into") {
+                            if let Some(start) = line.find('"') {
+                                if let Some(end) = line.rfind('"') {
+                                    if end > start {
+                                        let path = &line[start + 1..end];
+                                        tracing::info!("📁 检测到输出路径 (Merger): {}", path);
+                                        *output_file_clone.lock().unwrap() = Some(std::path::PathBuf::from(path));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if line.contains("has already been downloaded") {
+                            if let Some(start) = line.find("[download]") {
+                                let rest = &line[start + 10..].trim();
+                                if let Some(end) = rest.find(" has already been downloaded") {
+                                    let path = &rest[..end];
+                                    tracing::info!("📁 检测到输出路径 (already downloaded): {}", path);
+                                    *output_file_clone.lock().unwrap() = Some(std::path::PathBuf::from(path));
                                 }
                             }
                         }
                     }
-                    
-                    if line.contains("has already been downloaded") {
-                        if let Some(start) = line.find("[download]") {
-                            let rest = &line[start + 10..].trim();
-                            if let Some(end) = rest.find(" has already been downloaded") {
-                                let path = &rest[..end];
-                                tracing::info!("📁 检测到输出路径 (already downloaded): {}", path);
-                                output_file = Some(std::path::PathBuf::from(path));
-                            }
-                        }
+                }
+            });
+            
+            // 主线程循环检查取消标志
+            loop {
+                // 检查是否被取消
+                if cancel_flag.load(Ordering::SeqCst) {
+                    tracing::info!("🛑 检测到取消信号，终止下载进程 PID: {}", child_id);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(anyhow::anyhow!("下载已取消"));
+                }
+                
+                // 检查进程是否结束
+                match child.try_wait() {
+                    Ok(Some(_status)) => {
+                        // 进程已结束
+                        break;
+                    }
+                    Ok(None) => {
+                        // 进程仍在运行，等待一会儿
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Err(e) => {
+                        tracing::error!("检查进程状态失败: {}", e);
+                        break;
                     }
                 }
             }
             
+            // 等待 stdout 读取线程完成
+            let _ = stdout_handle.join();
             let _stderr_lines = stderr_handle.join().unwrap_or_default();
             
+            // 获取收集到的数据
+            let output_file_result = output_file.lock().unwrap().clone();
+            let all_lines_result = all_lines.lock().unwrap().clone();
+            
             // 如果没找到输出文件，尝试从输出中查找
-            if output_file.is_none() {
-                for line in &all_lines {
+            let mut final_output_file = output_file_result;
+            if final_output_file.is_none() {
+                for line in &all_lines_result {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() 
                         && !trimmed.starts_with('[') 
@@ -204,7 +281,7 @@ impl AppState {
                         let path = std::path::PathBuf::from(trimmed);
                         if path.exists() {
                             tracing::info!("📁 从输出检测到文件路径: {}", trimmed);
-                            output_file = Some(path);
+                            final_output_file = Some(path);
                             break;
                         }
                     }
@@ -216,12 +293,12 @@ impl AppState {
                 .map_err(|e| anyhow::anyhow!("等待 yt-dlp 完成失败: {}", e))?;
             
             if !status.success() {
-                let error_context: Vec<String> = all_lines.iter()
+                let error_context: Vec<String> = all_lines_result.iter()
                     .filter(|l| l.contains("ERROR") || l.contains("error") || l.contains("警告") || l.contains("Warning"))
                     .map(|s| s.clone())
                     .collect();
                 let error_msg = if error_context.is_empty() {
-                    let last_lines: Vec<String> = all_lines.iter().rev().take(5).map(|s| s.clone()).collect::<Vec<_>>().into_iter().rev().collect();
+                    let last_lines: Vec<String> = all_lines_result.iter().rev().take(5).map(|s| s.clone()).collect::<Vec<_>>().into_iter().rev().collect();
                     format!("下载失败，退出码: {:?}\n最后输出:\n{}", status.code(), last_lines.join("\n"))
                 } else {
                     format!("下载失败，退出码: {:?}\n错误信息:\n{}", status.code(), error_context.join("\n"))
@@ -231,7 +308,7 @@ impl AppState {
             }
             
             // 如果仍然没有找到输出文件，尝试在输出目录中查找最新文件
-            if output_file.is_none() {
+            if final_output_file.is_none() {
                 tracing::warn!("⚠️ 未从 yt-dlp 输出中检测到文件路径，尝试在输出目录查找最新文件...");
                 
                 if let Ok(entries) = std::fs::read_dir(&output_dir) {
@@ -249,19 +326,19 @@ impl AppState {
                     }
                     if let Some((path, _)) = newest_file {
                         tracing::info!("📁 找到最新文件: {:?}", path);
-                        output_file = Some(path);
+                        final_output_file = Some(path);
                     }
                 }
             }
             
-            match output_file {
+            match final_output_file {
                 Some(path) => {
                     tracing::info!("✅ 下载完成: {:?}", path);
                     Ok(path)
                 }
                 None => {
                     let msg = format!("无法确定输出文件路径\n输出目录: {:?}\nyt-dlp 输出共 {} 行", 
-                        output_dir, all_lines.len());
+                        output_dir, all_lines_result.len());
                     tracing::error!("❌ {}", msg);
                     Err(anyhow::anyhow!("{}", msg))
                 }

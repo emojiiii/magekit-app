@@ -3401,6 +3401,7 @@ dependencies = [
  "gpui-router",
  "magekit-shared",
  "magekit-tool-manager",
+ "parking_lot",
  "rfd",
  "serde",
  "serde_json",

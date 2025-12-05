@@ -535,6 +535,7 @@ impl RenderOnce for VideoPreviewReady {
                                 .flex()
                                 .flex_wrap()
                                 .gap(px(10.0))
+                                .pt(px(6.0))  // 给勾选标记留出空间
                                 .children(combined_formats.into_iter().map({
                                     let selected = selected.clone();
                                     let on_select = on_select.clone();
@@ -568,10 +569,10 @@ impl RenderOnce for VideoPreviewReady {
                                                 el.child(
                                                     div()
                                                         .absolute()
-                                                        .top(px(-4.0))
-                                                        .right(px(-4.0))
-                                                        .w(px(18.0))
-                                                        .h(px(18.0))
+                                                        .top(px(4.0))
+                                                        .right(px(4.0))
+                                                        .w(px(16.0))
+                                                        .h(px(16.0))
                                                         .rounded_full()
                                                         .bg(rgb(0x22c55e))
                                                         .flex()
@@ -654,6 +655,7 @@ impl RenderOnce for VideoPreviewReady {
                                 .flex()
                                 .flex_wrap()
                                 .gap(px(10.0))
+                                .pt(px(6.0))  // 给勾选标记留出空间
                                 .children(video_only_formats.into_iter().map({
                                     let selected = selected.clone();
                                     let on_select = on_select.clone();
@@ -687,10 +689,10 @@ impl RenderOnce for VideoPreviewReady {
                                                 el.child(
                                                     div()
                                                         .absolute()
-                                                        .top(px(-4.0))
-                                                        .right(px(-4.0))
-                                                        .w(px(18.0))
-                                                        .h(px(18.0))
+                                                        .top(px(4.0))
+                                                        .right(px(4.0))
+                                                        .w(px(16.0))
+                                                        .h(px(16.0))
                                                         .rounded_full()
                                                         .bg(rgb(0x22c55e))
                                                         .flex()
@@ -728,10 +730,15 @@ impl RenderOnce for VideoPreviewReady {
                         )
                 )
             })
-            // 🎵 仅音频格式（分离源时隐藏，因为会自动带音频）
-            .when(!audio_only_formats.is_empty() && !is_separated_source, |el| {
+            // 🎵 仅音频格式（始终显示，允许用户单独下载音频）
+            .when(!audio_only_formats.is_empty(), |el| {
                 let selected = selected_audio.clone();
                 let on_select = on_select_audio.clone();
+                let hint = if is_separated_source {
+                    "可单独下载音频"
+                } else {
+                    "可单独下载"
+                };
                 el.child(
                     div()
                         .flex()
@@ -753,7 +760,7 @@ impl RenderOnce for VideoPreviewReady {
                                     div()
                                         .text_xs()
                                         .text_color(hint_color)
-                                        .child("可单独下载")
+                                        .child(hint)
                                 )
                         )
                         .child(
@@ -761,6 +768,7 @@ impl RenderOnce for VideoPreviewReady {
                                 .flex()
                                 .flex_wrap()
                                 .gap(px(10.0))
+                                .pt(px(6.0))  // 给勾选标记留出空间
                                 .children(audio_only_formats.into_iter().map({
                                     let selected = selected.clone();
                                     let on_select = on_select.clone();
@@ -794,10 +802,10 @@ impl RenderOnce for VideoPreviewReady {
                                                 el.child(
                                                     div()
                                                         .absolute()
-                                                        .top(px(-4.0))
-                                                        .right(px(-4.0))
-                                                        .w(px(18.0))
-                                                        .h(px(18.0))
+                                                        .top(px(4.0))
+                                                        .right(px(4.0))
+                                                        .w(px(16.0))
+                                                        .h(px(16.0))
                                                         .rounded_full()
                                                         .bg(rgb(0x22c55e))
                                                         .flex()

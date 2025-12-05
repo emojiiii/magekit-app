@@ -448,6 +448,7 @@ impl HomePage {
         
         // 在后台线程中运行下载
         let handle = app_state.download_video_in_background(
+            task_id,
             url,
             output_dir,
             format_id,
@@ -459,6 +460,9 @@ impl HomePage {
         // 克隆用于更新任务状态
         let tasks_for_update = app_state.tasks.clone();
         let _runtime_for_update = app_state.runtime.clone();
+        
+        // 克隆 app_state 用于清理取消标志
+        let app_state_for_cleanup = app_state.clone();
         
         // 使用 cx.spawn 来轮询检查下载结果和更新进度
         cx.spawn(async move |_this, _cx| {
@@ -518,6 +522,9 @@ impl HomePage {
             let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
                 handle.join().unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
             }).await;
+            
+            // 清理取消标志
+            app_state_for_cleanup.cleanup_download_task(task_id);
             
             // 更新任务状态
             let tasks = tasks_for_update.clone();
@@ -745,6 +752,7 @@ impl HomePage {
         
         // 在后台线程中运行下载
         let handle = app_state.download_video_in_background(
+            task_id,
             url,
             output_dir,
             format_id,
@@ -755,6 +763,9 @@ impl HomePage {
         
         // 克隆用于更新任务状态
         let tasks_for_update = app_state.tasks.clone();
+        
+        // 克隆 app_state 用于清理取消标志
+        let app_state_for_cleanup = app_state.clone();
         
         // 使用 cx.spawn 来轮询检查下载结果和更新进度
         cx.spawn(async move |_this, _cx| {
@@ -813,6 +824,9 @@ impl HomePage {
             let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
                 handle.join().unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
             }).await;
+            
+            // 清理取消标志
+            app_state_for_cleanup.cleanup_download_task(task_id);
             
             // 更新任务状态
             let tasks = tasks_for_update.clone();

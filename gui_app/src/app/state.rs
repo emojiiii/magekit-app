@@ -9,8 +9,10 @@ use magekit_shared::{load_app_config_or_default, save_app_config};
 use magekit_tool_manager::ToolManager;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::{mpsc, RwLock};
 use tokio::runtime::Runtime;
+use parking_lot::Mutex;
 
 use super::types::AppEvent;
 
@@ -33,6 +35,8 @@ pub struct AppState {
     pub event_tx: mpsc::Sender<AppEvent>,
     /// Tokio 运行时 (用于异步任务)
     pub runtime: Arc<Runtime>,
+    /// 下载取消标志 (task_id -> cancel_flag)
+    pub download_cancel_flags: Arc<Mutex<HashMap<TaskId, Arc<AtomicBool>>>>,
 }
 
 impl AppState {
@@ -64,6 +68,7 @@ impl AppState {
             event_rx,
             event_tx,
             runtime,
+            download_cancel_flags: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

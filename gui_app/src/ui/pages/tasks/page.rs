@@ -199,6 +199,9 @@ impl TasksPage {
     fn cancel_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("取消任务: {}", task_id);
         
+        // 首先调用取消下载进程
+        self.app_state.cancel_download_task(task_id);
+        
         // 更新本地状态
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             task.state = TaskState::Cancelled;
@@ -209,6 +212,9 @@ impl TasksPage {
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             smol::unblock(move || {
+                // 清理取消标志
+                app_state.cleanup_download_task(task_id);
+                
                 let mut tasks = app_state.tasks.blocking_write();
                 if let Some(task) = tasks.get_mut(&task_id) {
                     task.state = TaskState::Cancelled;
@@ -228,6 +234,9 @@ impl TasksPage {
     fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("删除任务: {}", task_id);
         
+        // 首先取消下载进程（如果还在运行）
+        self.app_state.cancel_download_task(task_id);
+        
         // 从本地列表中移除
         self.tasks.retain(|t| t.id != task_id);
         
@@ -235,6 +244,9 @@ impl TasksPage {
         let app_state = self.app_state.clone();
         cx.spawn(async move |_this, _cx| {
             smol::unblock(move || {
+                // 清理取消标志
+                app_state.cleanup_download_task(task_id);
+                
                 let mut tasks = app_state.tasks.blocking_write();
                 tasks.remove(&task_id);
             }).await;
