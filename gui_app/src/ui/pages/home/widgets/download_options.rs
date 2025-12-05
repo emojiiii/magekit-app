@@ -3,6 +3,7 @@
 //! 提供下载配置选项
 
 use gpui::*;
+use gpui_component::ActiveTheme;
 use crate::ui::widgets::Checkbox;
 
 /// 下载选项数据
@@ -68,21 +69,25 @@ impl DownloadOptionsCard {
 }
 
 impl RenderOnce for DownloadOptionsCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        
         div()
             .flex()
             .flex_col()
             .gap(px(12.0))
             .p(px(16.0))
-            .bg(rgb(0x18181b))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(0xfafafa))
+                    .text_color(title_color)
                     .child("⚙️ 下载选项")
             )
             .child(
@@ -148,8 +153,14 @@ impl OutputPathCard {
 }
 
 impl RenderOnce for OutputPathCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         use gpui_component::button::{Button, ButtonVariants};
+
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let input_bg = cx.theme().muted;
+        let muted_color = cx.theme().muted_foreground;
 
         div()
             .flex_1()
@@ -157,15 +168,15 @@ impl RenderOnce for OutputPathCard {
             .flex_col()
             .gap(px(12.0))
             .p(px(16.0))
-            .bg(rgb(0x18181b))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(0xfafafa))
+                    .text_color(title_color)
                     .child("📁 保存位置")
             )
             .child(
@@ -180,12 +191,12 @@ impl RenderOnce for OutputPathCard {
                             .px(px(12.0))
                             .flex()
                             .items_center()
-                            .bg(rgb(0x09090b))
+                            .bg(input_bg)
                             .border_1()
-                            .border_color(rgb(0x3f3f46))
+                            .border_color(border_color)
                             .rounded(px(6.0))
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(muted_color)
                             .overflow_hidden()
                             .child(self.path)
                     )

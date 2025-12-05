@@ -4,6 +4,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 
 /// 区块组件 - 带标题和描述的内容区域
 #[derive(IntoElement)]
@@ -50,7 +51,10 @@ impl Section {
 }
 
 impl RenderOnce for Section {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let title_color = cx.theme().foreground;
+        let desc_color = cx.theme().muted_foreground;
+        
         div()
             .flex()
             .flex_col()
@@ -65,7 +69,7 @@ impl RenderOnce for Section {
                         div()
                             .text_base()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(0xfafafa))
+                            .text_color(title_color)
                             .when_some(self.icon.clone(), |el, icon| {
                                 el.child(format!("{} {}", icon, self.title))
                             })
@@ -77,7 +81,7 @@ impl RenderOnce for Section {
                         el.child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0xa1a1aa))
+                                .text_color(desc_color)
                                 .child(desc)
                         )
                     })

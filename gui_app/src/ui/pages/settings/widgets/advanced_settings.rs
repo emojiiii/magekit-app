@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 use gpui_component::switch::Switch;
 use crate::ui::widgets::Section;
 
@@ -53,9 +54,12 @@ impl AdvancedSettingsCard {
 }
 
 impl RenderOnce for AdvancedSettingsCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let auto_check = self.settings.auto_check_updates;
         let debug_mode = self.settings.debug_mode;
+        
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
         
         Section::new("高级设置")
             .icon("⚙️")
@@ -64,9 +68,9 @@ impl RenderOnce for AdvancedSettingsCard {
                 div()
                     .p(px(16.0))
                     .rounded(px(12.0))
-                    .bg(rgb(0x18181b))
+                    .bg(card_bg)
                     .border_1()
-                    .border_color(rgb(0x3f3f46))
+                    .border_color(border_color)
                     .child(
                         div()
                             .flex()
@@ -140,8 +144,11 @@ impl SettingsToggleItem {
 }
 
 impl RenderOnce for SettingsToggleItem {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let checked = self.checked;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
 
         div()
             .flex()
@@ -149,7 +156,7 @@ impl RenderOnce for SettingsToggleItem {
             .justify_between()
             .py(px(12.0))
             .when(self.border_bottom, |el| {
-                el.border_b_1().border_color(rgb(0x3f3f46))
+                el.border_b_1().border_color(border_color)
             })
             .child(
                 div()
@@ -160,14 +167,14 @@ impl RenderOnce for SettingsToggleItem {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(0xfafafa))
+                            .text_color(title_color)
                             .child(self.label)
                     )
                     .when_some(self.description, |el, desc| {
                         el.child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x71717a))
+                                .text_color(muted_color)
                                 .child(desc)
                         )
                     })

@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::Disableable;
 use crate::app::{AppState, ToolStatus};
@@ -17,47 +18,33 @@ pub struct ToolsPage {
     tools: Vec<ToolInfo>,
     is_checking: bool,
     error_message: Option<String>,
+    initial_check_done: bool,
 }
 
 impl ToolsPage {
-    pub fn new(app_state: Arc<AppState>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        tracing::info!("🔍 ToolsPage::new 开始检测工具状态...");
+    pub fn new(app_state: Arc<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 不在构造函数中检测工具状态，延迟到第一次渲染时
+        let tools = vec![ToolInfo::yt_dlp(), ToolInfo::ffmpeg()];
         
-        // 同步检测工具状态（因为底层使用的是 std::process::Command）
-        let yt_dlp_status = app_state.check_tool_status_sync(ToolType::YtDlp);
-        let ffmpeg_status = app_state.check_tool_status_sync(ToolType::Ffmpeg);
-        
-        tracing::info!("🔍 yt-dlp 状态: {:?}", yt_dlp_status);
-        tracing::info!("🔍 ffmpeg 状态: {:?}", ffmpeg_status);
-        
-        let mut tools = vec![ToolInfo::yt_dlp(), ToolInfo::ffmpeg()];
-        
-        // 更新工具状态
-        for tool in &mut tools {
-            let status = match tool.tool_type {
-                ToolType::YtDlp => &yt_dlp_status,
-                ToolType::Ffmpeg => &ffmpeg_status,
-            };
-            
-            tool.state = match status {
-                ToolStatus::NotInstalled => ToolInstallState::NotInstalled,
-                ToolStatus::Installed { version, is_system } => {
-                    ToolInstallState::Installed { 
-                        version: version.clone(),
-                        is_system: *is_system,
-                    }
-                }
-            };
-        }
-        
-        tracing::info!("🔍 ToolsPage::new 工具检测完成");
-        
-        Self {
+        let page = Self {
             app_state,
             tools,
             is_checking: false,
             error_message: None,
-        }
+            initial_check_done: false,
+        };
+        
+        // 延迟检测工具状态
+        cx.spawn(async move |this, cx| {
+            // 等待一小段时间让 UI 先渲染
+            Timer::after(std::time::Duration::from_millis(100)).await;
+            
+            let _ = this.update(cx, |this, cx| {
+                this.check_tools_status(cx);
+            });
+        }).detach();
+        
+        page
     }
 
     fn check_tools_status(&mut self, cx: &mut Context<Self>) {
@@ -350,6 +337,9 @@ impl Render for ToolsPage {
 
 impl ToolsPage {
     fn render_header(&mut self, cx: &mut Context<Self>, any_not_installed: bool, any_installing: bool) -> impl IntoElement {
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        
         div()
             .flex()
             .items_center()
@@ -363,13 +353,13 @@ impl ToolsPage {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xfafafa))
+                            .text_color(title_color)
                             .child("工具管理")
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(muted_color)
                             .child("管理下载所需的依赖工具")
                     )
             )
@@ -402,18 +392,28 @@ impl ToolsPage {
         div()
             .p(px(12.0))
             .rounded(px(8.0))
-            .bg(rgb(0x450a0a))
+            .bg(Hsla::from(rgb(0x450a0a)).opacity(0.5))
             .border_1()
-            .border_color(rgb(0x991b1b))
+            .border_color(rgb(0xef4444))
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0xfca5a5))
+                    .text_color(rgb(0xef4444))
                     .child(msg)
             )
     }
 
     fn render_tool_cards(&mut self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
+        // 获取主题颜色
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let icon_bg = cx.theme().muted;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        let success_color = cx.theme().success;
+        let danger_color = cx.theme().danger;
+        let primary_color = cx.theme().primary;
+        
         self.tools.iter().enumerate().map(|(idx, tool)| {
             let tool_type = tool.tool_type;
             let is_busy = matches!(tool.state, ToolInstallState::Installing | ToolInstallState::Downloading(_));
@@ -423,8 +423,8 @@ impl ToolsPage {
 
             // 状态文本和颜色
             let (status_text, status_color): (SharedString, Hsla) = match &tool.state {
-                ToolInstallState::Unknown => ("检查中...".into(), rgb(0x71717a).into()),
-                ToolInstallState::NotInstalled => ("未安装".into(), rgb(0xef4444).into()),
+                ToolInstallState::Unknown => ("检查中...".into(), muted_color),
+                ToolInstallState::NotInstalled => ("未安装".into(), danger_color),
                 ToolInstallState::Installed { version, is_system } => {
                     let text: SharedString = match (version, is_system) {
                         (Some(v), true) => format!("v{} (系统)", v).into(),
@@ -432,7 +432,7 @@ impl ToolsPage {
                         (None, true) => "已安装 (系统)".into(),
                         (None, false) => "已安装".into(),
                     };
-                    (text, rgb(0x22c55e).into())
+                    (text, success_color)
                 }
                 ToolInstallState::Downloading(progress) => {
                     let text: SharedString = format!(
@@ -442,10 +442,10 @@ impl ToolsPage {
                         progress.total_str(),
                         progress.speed_str()
                     ).into();
-                    (text, rgb(0x3b82f6).into())
+                    (text, primary_color)
                 }
-                ToolInstallState::Installing => ("安装中...".into(), rgb(0x3b82f6).into()),
-                ToolInstallState::Failed(_) => ("安装失败".into(), rgb(0xef4444).into()),
+                ToolInstallState::Installing => ("安装中...".into(), primary_color),
+                ToolInstallState::Failed(_) => ("安装失败".into(), danger_color),
             };
 
             let status_bg: Hsla = status_color.opacity(0.15);
@@ -466,9 +466,9 @@ impl ToolsPage {
                 .id(SharedString::from(format!("tool-card-{}", idx)))
                 .p(px(20.0))
                 .rounded(px(12.0))
-                .bg(rgb(0x18181b))
+                .bg(card_bg)
                 .border_1()
-                .border_color(rgb(0x3f3f46))
+                .border_color(border_color)
                 .flex()
                 .flex_col()
                 .gap(px(12.0))
@@ -491,7 +491,7 @@ impl ToolsPage {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .bg(rgb(0x27272a))
+                                        .bg(icon_bg)
                                         .rounded(px(12.0))
                                         .text_2xl()
                                         .child(tool_icon)
@@ -511,7 +511,7 @@ impl ToolsPage {
                                                     div()
                                                         .text_base()
                                                         .font_weight(FontWeight::SEMIBOLD)
-                                                        .text_color(rgb(0xfafafa))
+                                                        .text_color(title_color)
                                                         .child(tool_name)
                                                 )
                                                 .child(
@@ -529,7 +529,7 @@ impl ToolsPage {
                                         .child(
                                             div()
                                                 .text_sm()
-                                                .text_color(rgb(0xa1a1aa))
+                                                .text_color(muted_color)
                                                 .child(tool_desc)
                                         )
                                 )
@@ -577,14 +577,14 @@ impl ToolsPage {
                         div()
                             .w_full()
                             .h(px(4.0))
-                            .bg(rgb(0x27272a))
+                            .bg(icon_bg)
                             .rounded(px(2.0))
                             .overflow_hidden()
                             .child(
                                 div()
                                     .h_full()
                                     .w(relative(percent / 100.0))
-                                    .bg(rgb(0x3b82f6))
+                                    .bg(primary_color)
                                     .rounded(px(2.0))
                             )
                     )

@@ -4,6 +4,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 
 /// 复选框组件
 #[derive(IntoElement)]
@@ -36,10 +37,14 @@ impl Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let check_bg = if self.checked { rgb(0x3b82f6) } else { rgb(0x27272a) };
-        let check_border = if self.checked { rgb(0x3b82f6) } else { rgb(0x52525b) };
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let primary = cx.theme().primary;
+        let muted = cx.theme().muted;
+        let check_bg = if self.checked { primary } else { muted };
+        let check_border = if self.checked { primary } else { cx.theme().border };
         let checked = self.checked;
+        let text_color = cx.theme().muted_foreground;
+        let checkmark_color = cx.theme().primary_foreground;
 
         div()
             .id(self.id)
@@ -65,7 +70,7 @@ impl RenderOnce for Checkbox {
                         this.child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0xfafafa))
+                                .text_color(checkmark_color)
                                 .child("✓")
                         )
                     })
@@ -73,7 +78,7 @@ impl RenderOnce for Checkbox {
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0xa1a1aa))
+                    .text_color(text_color)
                     .child(self.label)
             )
     }

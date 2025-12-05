@@ -30,6 +30,19 @@ fn main() -> Result<()> {
         // 必须在GPUI组件使用前调用
         gpui_component::init(cx);
         
+        // 加载主题文件
+        if let Err(err) = gpui_component::ThemeRegistry::watch_dir(
+            std::path::PathBuf::from("./themes"),
+            cx,
+            |cx| {
+                // 主题加载完成后，尝试应用上次保存的主题
+                tracing::info!("🎨 主题加载完成，共 {} 个主题可用", 
+                    gpui_component::ThemeRegistry::global(cx).sorted_themes().len());
+            }
+        ) {
+            tracing::warn!("⚠️ 无法加载主题目录: {}", err);
+        }
+        
         // 初始化路由系统
         router_init(cx);
 

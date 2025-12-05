@@ -96,13 +96,20 @@ impl AppLayout {
 }
 
 impl RenderOnce for AppLayout {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let nav_items = vec![
             NavItem::new("/", "下载", "⬇️"),
             NavItem::new("/tasks", "任务", "📋"),
             NavItem::new("/tools", "工具", "🔧"),
             NavItem::new("/settings", "设置", "⚙️"),
         ];
+
+        // 从主题获取颜色
+        let bg_color = cx.theme().sidebar;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        let content_bg = cx.theme().background;
 
         div()
             .flex()
@@ -117,8 +124,8 @@ impl RenderOnce for AppLayout {
                     .h(px(48.0))
                     .px(px(16.0))
                     .border_b_1()
-                    .border_color(rgb(0x3f3f46))
-                    .bg(rgb(0x18181b))
+                    .border_color(border_color)
+                    .bg(bg_color)
                     .child(
                         div()
                             .flex()
@@ -133,14 +140,14 @@ impl RenderOnce for AppLayout {
                                 div()
                                     .text_lg()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(0xfafafa))
+                                    .text_color(title_color)
                                     .child("MageKit")
                             )
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(muted_color)
                             .child("v0.2.0-dev")
                     )
             )
@@ -152,7 +159,7 @@ impl RenderOnce for AppLayout {
                     .overflow_hidden()
                     .child(
                         // 侧边栏导航
-                        render_sidebar(nav_items)
+                        render_sidebar(nav_items, cx)
                     )
                     .child(
                         // 内容区域 - Outlet 用于渲染子路由
@@ -162,7 +169,7 @@ impl RenderOnce for AppLayout {
                             .flex()
                             .flex_col()
                             .overflow_hidden()
-                            .bg(rgb(0x09090b))
+                            .bg(content_bg)
                             .child(self.outlet)
                     )
             )
@@ -170,14 +177,21 @@ impl RenderOnce for AppLayout {
 }
 
 /// 渲染侧边栏
-fn render_sidebar(nav_items: Vec<NavItem>) -> impl IntoElement {
+fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
+    let bg_color = cx.theme().sidebar;
+    let border_color = cx.theme().border;
+    let muted_color = cx.theme().muted_foreground;
+    let hover_bg = cx.theme().sidebar_accent;
+    let text_color = cx.theme().sidebar_foreground;
+    let hover_text = cx.theme().sidebar_accent_foreground;
+
     div()
         .w(px(200.0))
         .flex()
         .flex_col()
-        .bg(rgb(0x18181b))
+        .bg(bg_color)
         .border_r_1()
-        .border_color(rgb(0x3f3f46))
+        .border_color(border_color)
         .child(
             // 导航列表
             div()
@@ -186,7 +200,7 @@ fn render_sidebar(nav_items: Vec<NavItem>) -> impl IntoElement {
                 .p(px(8.0))
                 .gap(px(4.0))
                 .children(
-                    nav_items.into_iter().map(|item| render_nav_item(item))
+                    nav_items.into_iter().map(move |item| render_nav_item(item, text_color, hover_bg, hover_text))
                 )
         )
         .child(
@@ -195,18 +209,18 @@ fn render_sidebar(nav_items: Vec<NavItem>) -> impl IntoElement {
                 .mt_auto()
                 .p(px(12.0))
                 .border_t_1()
-                .border_color(rgb(0x3f3f46))
+                .border_color(border_color)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x71717a))
+                        .text_color(muted_color)
                         .child("基于 GPUI 构建")
                 )
         )
 }
 
 /// 渲染单个导航项
-fn render_nav_item(item: NavItem) -> impl IntoElement {
+fn render_nav_item(item: NavItem, text_color: Hsla, hover_bg: Hsla, hover_text: Hsla) -> impl IntoElement {
     NavLink::new()
         .to(item.path)
         .child(
@@ -217,11 +231,11 @@ fn render_nav_item(item: NavItem) -> impl IntoElement {
                 .px(px(12.0))
                 .py(px(10.0))
                 .rounded(px(6.0))
-                .text_color(rgb(0xa1a1aa))
-                .hover(|this| {
+                .text_color(text_color)
+                .hover(move |this| {
                     this
-                        .bg(rgb(0x27272a))
-                        .text_color(rgb(0xfafafa))
+                        .bg(hover_bg)
+                        .text_color(hover_text)
                 })
                 .child(
                     div()

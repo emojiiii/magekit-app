@@ -4,6 +4,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 use std::sync::Arc;
 
 /// 质量选项
@@ -54,9 +55,17 @@ impl QualitySelector {
 }
 
 impl RenderOnce for QualitySelector {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected = self.selected;
         let on_select = self.on_select;
+
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let primary_color = cx.theme().primary;
+        let primary_fg = cx.theme().primary_foreground;
+        let muted_bg = cx.theme().muted;
+        let muted_color = cx.theme().muted_foreground;
 
         div()
             .flex_1()
@@ -64,15 +73,15 @@ impl RenderOnce for QualitySelector {
             .flex_col()
             .gap(px(12.0))
             .p(px(16.0))
-            .bg(rgb(0x18181b))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(0xfafafa))
+                    .text_color(title_color)
                     .child("🎬 视频质量")
             )
             .child(
@@ -85,8 +94,8 @@ impl RenderOnce for QualitySelector {
                             let on_select = on_select.clone();
                             move |quality| {
                                 let is_selected = selected == quality;
-                                let bg_color = if is_selected { rgb(0x3b82f6) } else { rgb(0x27272a) };
-                                let text_color = if is_selected { rgb(0xfafafa) } else { rgb(0xa1a1aa) };
+                                let bg_color = if is_selected { primary_color } else { muted_bg };
+                                let text_color = if is_selected { primary_fg } else { muted_color };
                                 let btn_id: SharedString = format!("quality-{:?}", quality).into();
                                 let on_select = on_select.clone();
 

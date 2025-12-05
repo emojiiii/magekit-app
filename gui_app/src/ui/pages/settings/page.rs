@@ -2,9 +2,9 @@
 
 use gpui::*;
 use gpui_component::input::InputState;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, Theme, ThemeRegistry};
 use crate::app::AppState;
-use magekit_shared::types::Theme;
+use magekit_shared::types::Theme as AppTheme;
 use std::sync::Arc;
 use std::path::PathBuf;
 use super::widgets::{
@@ -24,8 +24,8 @@ pub struct SettingsPage {
     embed_metadata: bool,
     embed_thumbnail: bool,
     
-    // 外观设置
-    theme: Theme,
+    // 外观设置 - 存储主题名称
+    theme_name: SharedString,
     
     // 高级设置
     auto_check_updates: bool,
@@ -41,6 +41,9 @@ impl SettingsPage {
         let config = app_state.config();
         let download_path = config.download.default_output_path.to_string_lossy().to_string();
         
+        // 获取当前主题名称
+        let theme_name: SharedString = cx.theme().theme_name().clone();
+        
         Self {
             app_state,
             download_path_input: cx.new(|cx| {
@@ -52,7 +55,7 @@ impl SettingsPage {
             max_concurrent: config.download.max_concurrent_downloads,
             embed_metadata: config.download.embed_metadata,
             embed_thumbnail: config.download.embed_thumbnail,
-            theme: config.ui.theme.clone(),
+            theme_name,
             auto_check_updates: config.tools.auto_update,
             debug_mode: matches!(config.advanced.log_level, magekit_shared::LogLevel::Debug | magekit_shared::LogLevel::Trace),
             has_changes: false,
@@ -75,46 +78,19 @@ impl SettingsPage {
         }
     }
     
-    fn set_theme(&mut self, theme: Theme, _window: &mut Window, cx: &mut Context<Self>) {
-        self.theme = theme.clone();
+    fn set_theme(&mut self, theme_name: &SharedString, _window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_name = theme_name.clone();
         self.has_changes = true;
         
-        // 确定实际使用的主题模式
-        let is_dark = match &theme {
-            Theme::Light => false,
-            Theme::Dark => true,
-            Theme::System => {
-                // 检测系统主题
-                #[cfg(target_os = "macos")]
-                {
-                    use std::process::Command;
-                    if let Ok(output) = Command::new("defaults")
-                        .args(["read", "-g", "AppleInterfaceStyle"])
-                        .output()
-                    {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        stdout.trim().eq_ignore_ascii_case("dark")
-                    } else {
-                        false
-                    }
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    false
-                }
-            }
-        };
-        
-        // 更新全局主题
-        let mode = if is_dark {
-            gpui_component::theme::ThemeMode::Dark
-        } else {
-            gpui_component::theme::ThemeMode::Light
-        };
-        
-        cx.update_global::<gpui_component::theme::Theme, _>(|t, _cx| {
-            t.mode = mode;
-        });
+        // 从 ThemeRegistry 获取主题配置并应用
+        if let Some(theme_config) = ThemeRegistry::global(cx)
+            .themes()
+            .get(theme_name)
+            .cloned()
+        {
+            Theme::global_mut(cx).apply_config(&theme_config);
+            cx.refresh_windows();
+        }
         
         self.save_settings(cx);
     }
@@ -170,7 +146,7 @@ impl SettingsPage {
         let embed_thumbnail = self.embed_thumbnail;
         let auto_check_updates = self.auto_check_updates;
         let debug_mode = self.debug_mode;
-        let theme = self.theme.clone();
+        let theme_name = self.theme_name.to_string();
         
         cx.spawn(async move |_this, _cx| {
             // 获取当前配置并更新
@@ -181,7 +157,17 @@ impl SettingsPage {
                 config.download.embed_metadata = embed_metadata;
                 config.download.embed_thumbnail = embed_thumbnail;
                 config.tools.auto_update = auto_check_updates;
-                config.ui.theme = theme;
+                // 保存主题名称到配置
+                config.ui.theme = AppTheme::Custom(magekit_shared::types::ThemeConfig {
+                    name: theme_name.clone(),
+                    mode: if theme_name.to_lowercase().contains("dark") 
+                        || theme_name.to_lowercase().contains("night")
+                        || theme_name.to_lowercase().contains("noir") {
+                        magekit_shared::types::ThemeMode::Dark
+                    } else {
+                        magekit_shared::types::ThemeMode::Light
+                    },
+                });
                 config.advanced.log_level = if debug_mode {
                     magekit_shared::LogLevel::Debug
                 } else {
@@ -202,10 +188,9 @@ impl SettingsPage {
 
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检测当前是否是暗色模式
-        let is_dark = cx.theme().mode.is_dark();
-        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
-        let desc_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
+        // 使用主题颜色
+        let title_color = cx.theme().foreground;
+        let desc_color = cx.theme().muted_foreground;
         
         div()
             .id("settings-page")
@@ -257,9 +242,9 @@ impl Render for SettingsPage {
                             )
                             // 外观设置（主题切换）
                             .child(
-                                ThemeSettingsCard::new(self.theme.clone())
-                                    .on_theme_change(cx.listener(|this, theme: &Theme, window, cx| {
-                                        this.set_theme(theme.clone(), window, cx);
+                                ThemeSettingsCard::new(self.theme_name.clone())
+                                    .on_theme_change(cx.listener(|this, theme_name: &SharedString, window, cx| {
+                                        this.set_theme(theme_name, window, cx);
                                     }))
                             )
                             // 下载设置

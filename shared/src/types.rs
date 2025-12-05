@@ -260,10 +260,66 @@ impl Default for UiConfig {
 
 /// 主题设置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ThemeConfig {
+    /// 主题名称 (如 "Default Light", "Default Dark", "Ayu Light", "Nord" 等)
+    pub name: String,
+    /// 主题模式 (light/dark)
+    pub mode: ThemeMode,
+}
+
+/// 主题模式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum ThemeMode {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            name: "Default Light".to_string(),
+            mode: ThemeMode::Light,
+        }
+    }
+}
+
+/// 旧版主题枚举，保留用于兼容性
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Theme {
     Light,
     Dark,
     System,
+    /// 使用新版主题配置
+    Custom(ThemeConfig),
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme::Custom(ThemeConfig::default())
+    }
+}
+
+impl Theme {
+    /// 获取主题名称
+    pub fn theme_name(&self) -> String {
+        match self {
+            Theme::Light => "Default Light".to_string(),
+            Theme::Dark => "Default Dark".to_string(),
+            Theme::System => "Default Light".to_string(), // 默认使用 Light
+            Theme::Custom(config) => config.name.clone(),
+        }
+    }
+    
+    /// 是否为暗色模式
+    pub fn is_dark(&self) -> bool {
+        match self {
+            Theme::Light => false,
+            Theme::Dark => true,
+            Theme::System => false, // 需要检测系统
+            Theme::Custom(config) => matches!(config.mode, ThemeMode::Dark),
+        }
+    }
 }
 
 /// 窗口状态

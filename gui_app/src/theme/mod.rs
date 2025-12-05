@@ -279,6 +279,12 @@ impl ThemeManager {
                     ResolvedTheme::Light
                 }
             }
+            AppTheme::Custom(config) => {
+                match config.mode {
+                    magekit_shared::types::ThemeMode::Dark => ResolvedTheme::Dark,
+                    magekit_shared::types::ThemeMode::Light => ResolvedTheme::Light,
+                }
+            }
         };
     }
 

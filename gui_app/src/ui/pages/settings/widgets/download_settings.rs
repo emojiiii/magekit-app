@@ -1,6 +1,7 @@
 //! 下载设置组件
 
 use gpui::*;
+use gpui_component::ActiveTheme;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Disableable;
@@ -51,7 +52,13 @@ impl DownloadSettingsCard {
 }
 
 impl RenderOnce for DownloadSettingsCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        let input_bg = cx.theme().muted;
+
         Section::new("下载设置")
             .icon("⬇️")
             .description("配置下载相关的默认选项")
@@ -59,9 +66,9 @@ impl RenderOnce for DownloadSettingsCard {
                 div()
                     .p(px(16.0))
                     .rounded(px(12.0))
-                    .bg(rgb(0x18181b))
+                    .bg(card_bg)
                     .border_1()
-                    .border_color(rgb(0x3f3f46))
+                    .border_color(border_color)
                     .child(
                         div()
                             .flex()
@@ -77,7 +84,7 @@ impl RenderOnce for DownloadSettingsCard {
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(rgb(0xfafafa))
+                                            .text_color(title_color)
                                             .child("下载目录")
                                     )
                                     .child(
@@ -113,13 +120,13 @@ impl RenderOnce for DownloadSettingsCard {
                                                 div()
                                                     .text_sm()
                                                     .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(rgb(0xfafafa))
+                                                    .text_color(title_color)
                                                     .child("最大并发下载数")
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(rgb(0x71717a))
+                                                    .text_color(muted_color)
                                                     .child("同时下载的任务数量 (1-10)")
                                             )
                                     )
@@ -145,12 +152,12 @@ impl RenderOnce for DownloadSettingsCard {
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
-                                                    .bg(rgb(0x09090b))
+                                                    .bg(input_bg)
                                                     .border_1()
-                                                    .border_color(rgb(0x3f3f46))
+                                                    .border_color(border_color)
                                                     .rounded(px(6.0))
                                                     .text_sm()
-                                                    .text_color(rgb(0xfafafa))
+                                                    .text_color(title_color)
                                                     .child(format!("{}", self.max_concurrent))
                                             )
                                             .child({

@@ -6,6 +6,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Disableable;
+use gpui_component::ActiveTheme;
 
 /// URL 输入卡片组件
 #[derive(IntoElement)]
@@ -43,23 +44,28 @@ impl UrlInputCard {
 }
 
 impl RenderOnce for UrlInputCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let button_label = if self.is_loading { "获取中..." } else { "解析" };
+        
+        // 使用主题颜色
+        let bg_color = cx.theme().background;
+        let border_color = cx.theme().border;
+        let text_color = cx.theme().foreground;
 
         div()
             .flex()
             .flex_col()
             .gap(px(16.0))
             .p(px(20.0))
-            .bg(rgb(0x18181b))
+            .bg(bg_color)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(0xfafafa))
+                    .text_color(text_color)
                     .child("视频链接")
             )
             .child(

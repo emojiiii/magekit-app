@@ -4,6 +4,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 
 /// 卡片组件 - 带有统一样式的容器
 #[derive(IntoElement)]
@@ -55,15 +56,19 @@ impl Card {
 }
 
 impl RenderOnce for Card {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let bg_color = cx.theme().background;
+        let border_color = cx.theme().border;
+        let text_color = cx.theme().foreground;
+        
         div()
             .flex()
             .flex_col()
             .gap(px(12.0))
             .p(self.padding)
-            .bg(rgb(0x18181b))
+            .bg(bg_color)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             .when_some(self.title, |el, title| {
                 el.child(
@@ -75,7 +80,7 @@ impl RenderOnce for Card {
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(rgb(0xfafafa))
+                                .text_color(text_color)
                                 .when_some(self.icon.clone(), |el, icon| {
                                     el.child(format!("{} {}", icon, title))
                                 })

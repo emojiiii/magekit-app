@@ -303,9 +303,8 @@ impl Render for TasksPage {
         let task_count = filtered_tasks.len();
         let is_empty = task_count == 0;
         
-        // 检测当前是否是暗色模式
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark { rgb(0x09090b) } else { rgb(0xfafafa) };
+        // 使用主题颜色
+        let bg_color = cx.theme().background;
 
         div()
             .id("tasks-page")
@@ -335,10 +334,9 @@ impl Render for TasksPage {
 
 impl TasksPage {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检测当前是否是暗色模式
-        let is_dark = cx.theme().mode.is_dark();
-        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
-        let desc_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
+        // 使用主题颜色
+        let title_color = cx.theme().foreground;
+        let desc_color = cx.theme().muted_foreground;
         
         div()
             .flex()
@@ -425,10 +423,9 @@ impl TasksPage {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检测当前是否是暗色模式
-        let is_dark = cx.theme().mode.is_dark();
-        let text_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
-        let muted_color = if is_dark { rgb(0x71717a) } else { rgb(0xa1a1aa) };
+        // 使用主题颜色
+        let text_color = cx.theme().muted_foreground;
+        let muted_color = cx.theme().muted_foreground;
         
         div()
             .flex()

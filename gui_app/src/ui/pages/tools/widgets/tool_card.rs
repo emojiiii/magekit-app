@@ -2,6 +2,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui_component::ActiveTheme;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::Disableable;
 use magekit_shared::ToolType;
@@ -146,7 +147,7 @@ impl<F> RenderOnce for ToolCard<F>
 where
     F: Fn(&ToolType, &mut Window, &mut App) + 'static,
 {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tool = self.tool;
         let tool_type = tool.tool_type;
         let is_installing = matches!(tool.state, ToolInstallState::Installing | ToolInstallState::Downloading(_));
@@ -154,9 +155,19 @@ where
         let tool_desc: SharedString = tool.description.into();
         let tool_icon = tool.icon;
 
+        // 使用主题颜色
+        let card_bg = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        let icon_bg = cx.theme().muted;
+        let success_color = cx.theme().success;
+        let danger_color = cx.theme().danger;
+        let primary_color = cx.theme().primary;
+
         let (status_text, status_color): (SharedString, Hsla) = match &tool.state {
-            ToolInstallState::Unknown => ("检查中...".into(), rgb(0x71717a).into()),
-            ToolInstallState::NotInstalled => ("未安装".into(), rgb(0xef4444).into()),
+            ToolInstallState::Unknown => ("检查中...".into(), muted_color),
+            ToolInstallState::NotInstalled => ("未安装".into(), danger_color),
             ToolInstallState::Installed { version, is_system } => {
                 let text: SharedString = match (version, is_system) {
                     (Some(v), true) => format!("v{} (系统)", v).into(),
@@ -164,14 +175,14 @@ where
                     (None, true) => "已安装 (系统)".into(),
                     (None, false) => "已安装".into(),
                 };
-                (text, rgb(0x22c55e).into())
+                (text, success_color)
             }
             ToolInstallState::Downloading(progress) => {
                 let text: SharedString = format!("下载中 {:.1}%", progress.percent()).into();
-                (text, rgb(0x3b82f6).into())
+                (text, primary_color)
             }
-            ToolInstallState::Installing => ("安装中...".into(), rgb(0x3b82f6).into()),
-            ToolInstallState::Failed(_) => ("安装失败".into(), rgb(0xef4444).into()),
+            ToolInstallState::Installing => ("安装中...".into(), primary_color),
+            ToolInstallState::Failed(_) => ("安装失败".into(), danger_color),
         };
 
         let status_bg: Hsla = status_color.opacity(0.15);
@@ -189,9 +200,9 @@ where
         div()
             .p(px(20.0))
             .rounded(px(12.0))
-            .bg(rgb(0x18181b))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .child(
                 div()
                     .flex()
@@ -211,7 +222,7 @@ where
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .bg(rgb(0x27272a))
+                                    .bg(icon_bg)
                                     .rounded(px(12.0))
                                     .text_2xl()
                                     .child(tool_icon)
@@ -231,7 +242,7 @@ where
                                                 div()
                                                     .text_base()
                                                     .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(0xfafafa))
+                                                    .text_color(title_color)
                                                     .child(tool_name)
                                             )
                                             .child(
@@ -249,7 +260,7 @@ where
                                     .child(
                                         div()
                                             .text_sm()
-                                            .text_color(rgb(0xa1a1aa))
+                                            .text_color(muted_color)
                                             .child(tool_desc)
                                     )
                             )
@@ -275,11 +286,15 @@ where
 pub struct ToolHintCard;
 
 impl RenderOnce for ToolHintCard {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let hint_bg = cx.theme().muted;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        
         div()
             .p(px(16.0))
             .rounded(px(12.0))
-            .bg(rgb(0x27272a))
+            .bg(hint_bg)
             .child(
                 div()
                     .flex()
@@ -289,13 +304,13 @@ impl RenderOnce for ToolHintCard {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(0xfafafa))
+                            .text_color(title_color)
                             .child("💡 关于工具")
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(muted_color)
                             .child("这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。")
                     )
             )

@@ -60,15 +60,12 @@ impl RenderOnce for TaskItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let task = &self.task;
         
-        // 检测当前是否是暗色模式
-        let is_dark = cx.theme().mode.is_dark();
-        
-        // 根据主题选择颜色
-        let bg_color = if is_dark { rgb(0x18181b) } else { rgb(0xffffff) };
-        let border_color = if is_dark { rgb(0x3f3f46) } else { rgb(0xe4e4e7) };
-        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
-        let muted_color = if is_dark { rgb(0x71717a) } else { rgb(0xa1a1aa) };
-        let progress_bg = if is_dark { rgb(0x27272a) } else { rgb(0xf4f4f5) };
+        // 使用主题颜色
+        let bg_color = cx.theme().background;
+        let border_color = cx.theme().border;
+        let title_color = cx.theme().foreground;
+        let muted_color = cx.theme().muted_foreground;
+        let progress_bg = cx.theme().muted;
         
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
