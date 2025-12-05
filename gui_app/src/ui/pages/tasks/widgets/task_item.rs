@@ -66,16 +66,24 @@ impl RenderOnce for TaskItem {
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;
         let progress_bg = cx.theme().muted;
+        let error_color = rgb(0xef4444);
         
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
-            TaskState::Queued => ("⏳", rgb(0xfbbf24), "等待中"),
-            TaskState::Downloading => ("⬇️", rgb(0x3b82f6), "下载中"),
-            TaskState::Paused => ("⏸️", rgb(0xf59e0b), "已暂停"),
-            TaskState::Completed => ("✅", rgb(0x22c55e), "已完成"),
-            TaskState::Failed(_) => ("❌", rgb(0xef4444), "失败"),
-            TaskState::Cancelled => ("🚫", rgb(0x6b7280), "已取消"),
+            TaskState::Queued => ("⏳", rgb(0xfbbf24), "等待中".to_string()),
+            TaskState::Downloading => ("⬇️", rgb(0x3b82f6), "下载中".to_string()),
+            TaskState::Paused => ("⏸️", rgb(0xf59e0b), "已暂停".to_string()),
+            TaskState::Completed => ("✅", rgb(0x22c55e), "已完成".to_string()),
+            TaskState::Failed(_) => ("❌", rgb(0xef4444), "失败".to_string()),
+            TaskState::Cancelled => ("🚫", rgb(0x6b7280), "已取消".to_string()),
         };
+        
+        // 获取失败原因
+        let error_message = match &task.state {
+            TaskState::Failed(msg) => Some(msg.clone()),
+            _ => None,
+        };
+        let is_failed = error_message.is_some();
 
         // 计算进度百分比
         let progress_percent = task.progress;
@@ -151,6 +159,18 @@ impl RenderOnce for TaskItem {
                             .child(status_text)
                     )
             )
+            // 失败原因显示
+            .when_some(error_message, |this, msg| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(error_color)
+                        .p(px(8.0))
+                        .bg(rgba(0xef444420))
+                        .rounded(px(4.0))
+                        .child(format!("原因: {}", msg))
+                )
+            })
             // 进度条
             .when(is_active, |this| {
                 this.child(
@@ -169,21 +189,23 @@ impl RenderOnce for TaskItem {
                 )
             })
             // 信息行
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .text_xs()
-                    .text_color(muted_color)
-                    .child(size_str)
-                    .when(is_downloading, |this| {
-                        this.child(speed_str)
-                    })
-                    .when(is_active, |this| {
-                        this.child(format!("{:.1}%", progress_percent * 100.0))
-                    })
-            )
+            .when(!is_failed, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(muted_color)
+                        .child(size_str.clone())
+                        .when(is_downloading, |this| {
+                            this.child(speed_str.clone())
+                        })
+                        .when(is_active, |this| {
+                            this.child(format!("{:.1}%", progress_percent * 100.0))
+                        })
+                )
+            })
             // 操作按钮
             .child(
                 div()

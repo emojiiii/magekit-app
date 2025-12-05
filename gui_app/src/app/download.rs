@@ -157,9 +157,14 @@ impl AppState {
             let last_total: Arc<std::sync::atomic::AtomicU64> = Arc::new(std::sync::atomic::AtomicU64::new(0));
             
             // 在单独线程中读取 stderr
+            let cancel_flag_for_stderr = cancel_flag.clone();
             let stderr_handle = std::thread::spawn(move || {
                 let mut stderr_lines: Vec<String> = Vec::new();
                 for line in stderr_reader.lines() {
+                    // 检查取消标志
+                    if cancel_flag_for_stderr.load(Ordering::SeqCst) {
+                        break;
+                    }
                     if let Ok(line) = line {
                         tracing::warn!("[yt-dlp stderr] {}", line);
                         stderr_lines.push(line);
@@ -173,12 +178,24 @@ impl AppState {
             let all_lines_clone = all_lines.clone();
             let last_total_clone = last_total.clone();
             let progress_callback_clone = progress_callback.clone();
+            let cancel_flag_clone = cancel_flag.clone();
             
             let stdout_handle = std::thread::spawn(move || {
                 for line in stdout_reader.lines() {
+                    // 检查取消标志，如果已取消则停止处理
+                    if cancel_flag_clone.load(Ordering::SeqCst) {
+                        tracing::info!("🛑 stdout 线程检测到取消信号，停止处理");
+                        break;
+                    }
+                    
                     if let Ok(line) = line {
                         tracing::info!("[yt-dlp] {}", line);
                         all_lines_clone.lock().unwrap().push(line.clone());
+                        
+                        // 再次检查取消标志，避免在取消后继续调用回调
+                        if cancel_flag_clone.load(Ordering::SeqCst) {
+                            break;
+                        }
                         
                         // 解析进度信息
                         if line.contains("[download]") && line.contains("%") && !line.contains("Destination") {

@@ -424,26 +424,21 @@ impl HomePage {
             audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
         };
         
-        // 创建共享的进度变量
-        let progress_percent = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let progress_speed = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let downloaded_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let total_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // 克隆 tasks 用于进度回调直接更新
+        let tasks_for_callback = app_state.tasks.clone();
         
-        // 克隆用于回调
-        let pp = progress_percent.clone();
-        let ps = progress_speed.clone();
-        let db = downloaded_bytes.clone();
-        let tb = total_bytes.clone();
-        
-        // 进度回调 - 添加调试日志
+        // 进度回调 - 直接更新 tasks，无需轮询
         let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = Arc::new(move |percent, speed, downloaded, total| {
-            tracing::info!("📥 回调收到进度: {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
-                percent * 100.0, speed, downloaded, total);
-            pp.store((percent * 100.0) as u32, std::sync::atomic::Ordering::Relaxed);
-            ps.store(speed, std::sync::atomic::Ordering::Relaxed);
-            db.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-            tb.store(total, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!("📥 [with_format] 进度回调: percent={:.3}, speed={}, downloaded={}, total={}", 
+                percent, speed, downloaded, total);
+            // 直接更新 tasks（使用 blocking_write）
+            let mut tasks = tasks_for_callback.blocking_write();
+            if let Some(task) = tasks.get_mut(&task_id) {
+                task.progress = percent;
+                task.speed = if speed > 0 { Some(speed) } else { None };
+                task.downloaded_bytes = downloaded;
+                task.total_bytes = if total > 0 { Some(total) } else { None };
+            }
         });
         
         // 在后台线程中运行下载
@@ -459,12 +454,11 @@ impl HomePage {
         
         // 克隆用于更新任务状态
         let tasks_for_update = app_state.tasks.clone();
-        let _runtime_for_update = app_state.runtime.clone();
         
         // 克隆 app_state 用于清理取消标志
         let app_state_for_cleanup = app_state.clone();
         
-        // 使用 cx.spawn 来轮询检查下载结果和更新进度
+        // 使用 cx.spawn 来等待下载完成（不再需要轮询进度）
         cx.spawn(async move |_this, _cx| {
             // 首先将任务状态更新为 Downloading
             {
@@ -479,43 +473,15 @@ impl HomePage {
                 }).await;
             }
             
-            // 轮询等待后台线程完成 (start_download)
-            tracing::info!("🔄 开始轮询下载进度 (start_download)");
-            let mut poll_count = 0u32;
+            // 等待后台线程完成（进度由回调直接更新，无需轮询）
+            tracing::info!("⏳ 等待下载完成 (start_download)");
             loop {
                 if handle.is_finished() {
                     tracing::info!("🏁 下载线程已完成");
                     break;
                 }
-                
-                // 更新进度 UI
-                let percent = progress_percent.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
-                let speed = progress_speed.load(std::sync::atomic::Ordering::Relaxed);
-                let downloaded = downloaded_bytes.load(std::sync::atomic::Ordering::Relaxed);
-                let total = total_bytes.load(std::sync::atomic::Ordering::Relaxed);
-                
-                // 每 5 次轮询打印一次日志
-                poll_count += 1;
-                if poll_count % 5 == 0 {
-                    tracing::info!("🔄 轮询 #{}: 进度={:.1}%, 速度={} B/s, 已下载={} B, 总大小={} B", 
-                        poll_count, percent * 100.0, speed, downloaded, total);
-                }
-                
-                // 更新任务列表中的进度（不更新首页状态）
-                {
-                    let tasks = tasks_for_update.clone();
-                    smol::unblock(move || {
-                        let mut tasks = tasks.blocking_write();
-                        if let Some(task) = tasks.get_mut(&task_id) {
-                            task.progress = percent;
-                            task.speed = if speed > 0 { Some(speed) } else { None };
-                            task.downloaded_bytes = downloaded;
-                            task.total_bytes = if total > 0 { Some(total) } else { None };
-                        }
-                    }).await;
-                }
-                
-                Timer::after(std::time::Duration::from_millis(200)).await;
+                // 只需等待线程完成，不需要更新进度
+                Timer::after(std::time::Duration::from_millis(100)).await;
             }
             
             // 在后台线程获取结果
@@ -729,25 +695,20 @@ impl HomePage {
             audio_only: is_audio_only,
         };
         
-        // 创建共享的进度变量
-        let progress_percent = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let progress_speed = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let downloaded_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let total_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // 克隆 tasks 用于进度回调直接更新
+        let tasks_for_callback = app_state.tasks.clone();
         
-        // 克隆用于回调
-        let pp = progress_percent.clone();
-        let ps = progress_speed.clone();
-        let db = downloaded_bytes.clone();
-        let tb = total_bytes.clone();
-        
-        // 进度回调
+        // 进度回调 - 直接更新 tasks，无需轮询
         let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = Arc::new(move |percent, speed, downloaded, total| {
             tracing::info!("📥 [with_format] 进度回调: percent={:.3}, speed={}, downloaded={}, total={}", percent, speed, downloaded, total);
-            pp.store((percent * 100.0) as u32, std::sync::atomic::Ordering::Relaxed);
-            ps.store(speed, std::sync::atomic::Ordering::Relaxed);
-            db.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-            tb.store(total, std::sync::atomic::Ordering::Relaxed);
+            // 直接更新 tasks（使用 blocking_write）
+            let mut tasks = tasks_for_callback.blocking_write();
+            if let Some(task) = tasks.get_mut(&task_id) {
+                task.progress = percent;
+                task.speed = if speed > 0 { Some(speed) } else { None };
+                task.downloaded_bytes = downloaded;
+                task.total_bytes = if total > 0 { Some(total) } else { None };
+            }
         });
         
         // 在后台线程中运行下载
@@ -767,7 +728,7 @@ impl HomePage {
         // 克隆 app_state 用于清理取消标志
         let app_state_for_cleanup = app_state.clone();
         
-        // 使用 cx.spawn 来轮询检查下载结果和更新进度
+        // 使用 cx.spawn 来等待下载完成（不再需要轮询进度）
         cx.spawn(async move |_this, _cx| {
             // 首先将任务状态更新为 Downloading
             {
@@ -781,43 +742,15 @@ impl HomePage {
                 }).await;
             }
             
-            // 轮询等待后台线程完成 (start_download_with_format)
-            tracing::info!("🔄 开始轮询下载进度 (start_download_with_format)");
-            let mut poll_count = 0u32;
+            // 等待后台线程完成（进度由回调直接更新，无需轮询）
+            tracing::info!("⏳ 等待下载完成 (start_download_with_format)");
             loop {
                 if handle.is_finished() {
                     tracing::info!("🏁 下载线程已完成");
                     break;
                 }
-                
-                // 更新进度 UI
-                let percent = progress_percent.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
-                let speed = progress_speed.load(std::sync::atomic::Ordering::Relaxed);
-                let downloaded = downloaded_bytes.load(std::sync::atomic::Ordering::Relaxed);
-                let total = total_bytes.load(std::sync::atomic::Ordering::Relaxed);
-                
-                // 每 5 次轮询打印一次日志
-                poll_count += 1;
-                if poll_count % 5 == 0 {
-                    tracing::info!("🔄 轮询 #{}: 进度={:.1}%, 速度={} B/s, 已下载={} B, 总大小={} B", 
-                        poll_count, percent * 100.0, speed, downloaded, total);
-                }
-                
-                // 更新任务列表中的进度（不更新首页状态）
-                {
-                    let tasks = tasks_for_update.clone();
-                    smol::unblock(move || {
-                        let mut tasks = tasks.blocking_write();
-                        if let Some(task) = tasks.get_mut(&task_id) {
-                            task.progress = percent;
-                            task.speed = if speed > 0 { Some(speed) } else { None };
-                            task.downloaded_bytes = downloaded;
-                            task.total_bytes = if total > 0 { Some(total) } else { None };
-                        }
-                    }).await;
-                }
-                
-                Timer::after(std::time::Duration::from_millis(200)).await;
+                // 只需等待线程完成，不需要更新进度
+                Timer::after(std::time::Duration::from_millis(100)).await;
             }
             
             // 在后台线程获取结果

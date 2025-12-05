@@ -50,12 +50,12 @@ impl TasksPage {
             is_loading: false,
         };
         
-        // 启动定时刷新任务（每秒刷新一次）
+        // 启动定时刷新任务（200ms 刷新一次，比 1 秒更实时）
         let app_state_for_timer = app_state.clone();
         cx.spawn(async move |this, cx| {
             loop {
-                // 等待 1 秒
-                Timer::after(std::time::Duration::from_secs(1)).await;
+                // 等待 200ms - 更快的刷新率
+                Timer::after(std::time::Duration::from_millis(200)).await;
                 
                 // 从 AppState 加载最新任务
                 let app_state = app_state_for_timer.clone();
@@ -66,11 +66,17 @@ impl TasksPage {
                 
                 // 更新本地任务列表
                 let should_continue = this.update(cx, |this, cx| {
-                    // 只有任务列表有变化时才更新
-                    if this.tasks.len() != tasks.len() || 
+                    // 检查是否有变化
+                    let has_change = this.tasks.len() != tasks.len() || 
                        this.tasks.iter().zip(tasks.iter()).any(|(a, b)| {
-                           a.id != b.id || a.progress != b.progress || a.state != b.state
-                       }) {
+                           a.id != b.id || 
+                           a.progress != b.progress || 
+                           a.state != b.state ||
+                           a.speed != b.speed ||
+                           a.downloaded_bytes != b.downloaded_bytes
+                       });
+                    
+                    if has_change {
                         this.tasks = tasks;
                         cx.notify();
                     }
