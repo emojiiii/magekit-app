@@ -405,8 +405,27 @@ impl HomePage {
         // 创建任务 ID
         let task_id = uuid::Uuid::new_v4();
         
+        // 转换下载选项（使用默认值）
+        let options = crate::app::DownloadVideoOptions {
+            embed_metadata: true,
+            embed_thumbnail: false,
+            download_subtitles: false,
+            audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
+        };
+        
+        // 创建下载参数（用于暂停后恢复）
+        let download_params = magekit_shared::DownloadParams {
+            output_dir: output_dir.clone(),
+            format_id: format_id.clone(),
+            embed_metadata: options.embed_metadata,
+            embed_thumbnail: options.embed_thumbnail,
+            download_subtitles: options.download_subtitles,
+            audio_only: options.audio_only,
+        };
+        
         // 创建任务状态并添加到任务列表
-        let task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
+        let mut task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
+        task_status.download_params = Some(download_params);
         {
             let tasks = app_state.tasks.clone();
             let runtime = app_state.runtime.clone();
@@ -416,13 +435,6 @@ impl HomePage {
                 tasks.insert(task_id, task_status_clone);
             });
         }
-        // 转换下载选项（使用默认值）
-        let options = crate::app::DownloadVideoOptions {
-            embed_metadata: true,
-            embed_thumbnail: false,
-            download_subtitles: false,
-            audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
-        };
         
         // 克隆 tasks 用于进度回调直接更新
         let tasks_for_callback = app_state.tasks.clone();
@@ -512,20 +524,31 @@ impl HomePage {
                             }
                         }
                         Err(error) => {
-                            task.state = TaskState::Failed(error);
-                            task.completed_at = Some(std::time::SystemTime::now());
+                            // 如果是暂停导致的错误，保持 Paused 状态
+                            if error.contains("下载已暂停") {
+                                task.state = TaskState::Paused;
+                            } else if error.contains("下载已取消") {
+                                task.state = TaskState::Cancelled;
+                            } else {
+                                task.state = TaskState::Failed(error);
+                                task.completed_at = Some(std::time::SystemTime::now());
+                            }
                         }
                     }
                 }
             }).await;
             
             // 日志输出（不更新首页状态）
-            match result {
+            match &result {
                 Ok(path) => {
                     tracing::info!("✅ 下载完成: {}", path.display());
                 }
                 Err(e) => {
-                    tracing::error!("❌ 下载失败: {}", e);
+                    if e.to_string().contains("下载已暂停") {
+                        tracing::info!("⏸️ 下载已暂停");
+                    } else {
+                        tracing::error!("❌ 下载失败: {}", e);
+                    }
                 }
             }
         }).detach();
@@ -675,8 +698,27 @@ impl HomePage {
         // 创建任务 ID
         let task_id = uuid::Uuid::new_v4();
         
+        // 转换下载选项（使用默认值）
+        let options = crate::app::DownloadVideoOptions {
+            embed_metadata: true,
+            embed_thumbnail: false,
+            download_subtitles: false,
+            audio_only: is_audio_only,
+        };
+        
+        // 创建下载参数（用于暂停后恢复）
+        let download_params = magekit_shared::DownloadParams {
+            output_dir: output_dir.clone(),
+            format_id: format_id.clone(),
+            embed_metadata: options.embed_metadata,
+            embed_thumbnail: options.embed_thumbnail,
+            download_subtitles: options.download_subtitles,
+            audio_only: options.audio_only,
+        };
+        
         // 创建任务状态并添加到任务列表
-        let task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
+        let mut task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
+        task_status.download_params = Some(download_params);
         {
             let tasks = app_state.tasks.clone();
             let runtime = app_state.runtime.clone();
@@ -686,14 +728,6 @@ impl HomePage {
                 tasks.insert(task_id, task_status_clone);
             });
         }
-        
-        // 转换下载选项（使用默认值）
-        let options = crate::app::DownloadVideoOptions {
-            embed_metadata: true,
-            embed_thumbnail: false,
-            download_subtitles: false,
-            audio_only: is_audio_only,
-        };
         
         // 克隆 tasks 用于进度回调直接更新
         let tasks_for_callback = app_state.tasks.clone();
@@ -781,20 +815,31 @@ impl HomePage {
                             }
                         }
                         Err(error) => {
-                            task.state = TaskState::Failed(error);
-                            task.completed_at = Some(std::time::SystemTime::now());
+                            // 如果是暂停导致的错误，保持 Paused 状态
+                            if error.contains("下载已暂停") {
+                                task.state = TaskState::Paused;
+                            } else if error.contains("下载已取消") {
+                                task.state = TaskState::Cancelled;
+                            } else {
+                                task.state = TaskState::Failed(error);
+                                task.completed_at = Some(std::time::SystemTime::now());
+                            }
                         }
                     }
                 }
             }).await;
             
             // 日志输出（不更新首页状态）
-            match result {
+            match &result {
                 Ok(path) => {
                     tracing::info!("✅ 下载完成: {}", path.display());
                 }
                 Err(e) => {
-                    tracing::error!("❌ 下载失败: {}", e);
+                    if e.to_string().contains("下载已暂停") {
+                        tracing::info!("⏸️ 下载已暂停");
+                    } else {
+                        tracing::error!("❌ 下载失败: {}", e);
+                    }
                 }
             }
         }).detach();

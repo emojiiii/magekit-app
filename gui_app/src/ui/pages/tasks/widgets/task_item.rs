@@ -213,7 +213,7 @@ impl RenderOnce for TaskItem {
                     .items_center()
                     .gap(px(8.0))
                     .pt(px(8.0))
-                    // 暂停按钮
+                    // 暂停按钮（下载中显示）
                     .when(is_downloading, |this| {
                         let handler = on_pause.clone();
                         this.child(
@@ -226,7 +226,7 @@ impl RenderOnce for TaskItem {
                                 })
                         )
                     })
-                    // 继续按钮
+                    // 继续按钮（暂停状态显示）
                     .when(is_paused, |this| {
                         let handler = on_resume.clone();
                         this.child(
@@ -239,7 +239,7 @@ impl RenderOnce for TaskItem {
                                 })
                         )
                     })
-                    // 取消按钮
+                    // 取消按钮（活动状态显示）
                     .when(is_active, |this| {
                         let handler = on_cancel.clone();
                         this.child(

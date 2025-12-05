@@ -40,14 +40,29 @@ impl AppState {
         }
     }
 
+    /// 暂停下载任务
+    pub fn pause_download_task(&self, task_id: TaskId) {
+        let flags = self.download_pause_flags.lock();
+        tracing::info!("⏸️ 尝试暂停任务: {}, 当前有 {} 个活跃下载", task_id, flags.len());
+        if let Some(flag) = flags.get(&task_id) {
+            tracing::info!("⏸️ 设置暂停标志: {}", task_id);
+            flag.store(true, Ordering::SeqCst);
+        } else {
+            tracing::warn!("⚠️ 未找到任务的暂停标志: {}", task_id);
+        }
+    }
+
     /// 清理下载任务的取消标志
     pub fn cleanup_download_task(&self, task_id: TaskId) {
-        let mut flags = self.download_cancel_flags.lock();
-        flags.remove(&task_id);
+        let mut cancel_flags = self.download_cancel_flags.lock();
+        cancel_flags.remove(&task_id);
+        let mut pause_flags = self.download_pause_flags.lock();
+        pause_flags.remove(&task_id);
     }
 
     /// 下载视频（在后台线程中运行，带进度回调）
     /// progress_callback: fn(progress_percent, speed_bytes_per_sec, downloaded_bytes, total_bytes)
+    /// is_resume: 是否是恢复下载（使用 --continue 选项）
     pub fn download_video_in_background(
         &self,
         task_id: TaskId,
@@ -58,6 +73,35 @@ impl AppState {
         progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync>,
         _title: Option<String>,  // 保留备用
     ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
+        self.download_video_in_background_internal(task_id, url, output_dir, format_id, options, progress_callback, _title, false)
+    }
+    
+    /// 恢复下载（使用 --continue 选项续传）
+    pub fn resume_download_in_background(
+        &self,
+        task_id: TaskId,
+        url: String,
+        output_dir: std::path::PathBuf,
+        format_id: String,
+        options: DownloadVideoOptions,
+        progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync>,
+        title: Option<String>,
+    ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
+        self.download_video_in_background_internal(task_id, url, output_dir, format_id, options, progress_callback, title, true)
+    }
+
+    /// 内部下载函数
+    fn download_video_in_background_internal(
+        &self,
+        task_id: TaskId,
+        url: String,
+        output_dir: std::path::PathBuf,
+        format_id: String,
+        options: DownloadVideoOptions,
+        progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync>,
+        _title: Option<String>,
+        is_resume: bool,
+    ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
         let storage = self.tool_manager.storage.clone();
         
         // 创建取消标志
@@ -66,6 +110,13 @@ impl AppState {
             let mut flags = self.download_cancel_flags.lock();
             flags.insert(task_id, cancel_flag.clone());
             tracing::info!("📝 注册取消标志: {}, 当前共 {} 个活跃下载", task_id, flags.len());
+        }
+        
+        // 创建暂停标志
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut flags = self.download_pause_flags.lock();
+            flags.insert(task_id, pause_flag.clone());
         }
         
         std::thread::spawn(move || {
@@ -89,7 +140,7 @@ impl AppState {
                 format!("{}+bestaudio/best", format_id)
             };
             
-            tracing::info!("📝 原始格式ID: {}, 实际使用: {}", format_id, effective_format_id);
+            tracing::info!("📝 原始格式ID: {}, 实际使用: {}, 续传模式: {}", format_id, effective_format_id, is_resume);
             
             // 文件名模板
             let output_template = output_dir.join("%(title)s_%(height)sp.%(ext)s");
@@ -102,6 +153,12 @@ impl AppState {
                .arg("--newline")
                .arg("--progress")
                .arg("--no-mtime");
+            
+            // 如果是恢复下载，添加 --continue 选项
+            if is_resume {
+                cmd.arg("--continue");
+                tracing::info!("📝 添加 --continue 选项以支持续传");
+            }
             
             // 元数据选项
             if options.embed_metadata {
@@ -158,11 +215,16 @@ impl AppState {
             
             // 在单独线程中读取 stderr
             let cancel_flag_for_stderr = cancel_flag.clone();
+            let pause_flag_for_stderr = pause_flag.clone();
             let stderr_handle = std::thread::spawn(move || {
                 let mut stderr_lines: Vec<String> = Vec::new();
                 for line in stderr_reader.lines() {
                     // 检查取消标志
                     if cancel_flag_for_stderr.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    // 检查暂停标志
+                    if pause_flag_for_stderr.load(Ordering::SeqCst) {
                         break;
                     }
                     if let Ok(line) = line {
@@ -179,12 +241,18 @@ impl AppState {
             let last_total_clone = last_total.clone();
             let progress_callback_clone = progress_callback.clone();
             let cancel_flag_clone = cancel_flag.clone();
+            let pause_flag_clone = pause_flag.clone();
             
             let stdout_handle = std::thread::spawn(move || {
                 for line in stdout_reader.lines() {
                     // 检查取消标志，如果已取消则停止处理
                     if cancel_flag_clone.load(Ordering::SeqCst) {
                         tracing::info!("🛑 stdout 线程检测到取消信号，停止处理");
+                        break;
+                    }
+                    // 检查暂停标志
+                    if pause_flag_clone.load(Ordering::SeqCst) {
+                        tracing::info!("⏸️ stdout 线程检测到暂停信号，停止处理");
                         break;
                     }
                     
@@ -250,7 +318,7 @@ impl AppState {
                 }
             });
             
-            // 主线程循环检查取消标志
+            // 主线程循环检查取消/暂停标志
             loop {
                 // 检查是否被取消
                 if cancel_flag.load(Ordering::SeqCst) {
@@ -258,6 +326,14 @@ impl AppState {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(anyhow::anyhow!("下载已取消"));
+                }
+                
+                // 检查是否被暂停
+                if pause_flag.load(Ordering::SeqCst) {
+                    tracing::info!("⏸️ 检测到暂停信号，终止下载进程 PID: {}", child_id);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(anyhow::anyhow!("下载已暂停"));
                 }
                 
                 // 检查进程是否结束

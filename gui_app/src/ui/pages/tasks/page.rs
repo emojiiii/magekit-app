@@ -149,7 +149,10 @@ impl TasksPage {
 
     /// 暂停任务
     fn pause_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("暂停任务: {}", task_id);
+        tracing::info!("⏸️ 暂停任务: {}", task_id);
+        
+        // 调用暂停下载进程
+        self.app_state.pause_download_task(task_id);
         
         // 更新本地状态
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -176,27 +179,132 @@ impl TasksPage {
 
     /// 恢复任务
     fn resume_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("恢复任务: {}", task_id);
+        tracing::info!("▶️ 恢复任务: {}", task_id);
         
-        // 更新本地状态
-        if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-            task.state = TaskState::Downloading;
-        }
+        // 从本地任务列表中获取任务信息
+        let task_info = self.tasks.iter().find(|t| t.id == task_id).cloned();
         
-        // 更新 AppState 中的任务状态
-        let app_state = self.app_state.clone();
-        cx.spawn(async move |this, cx| {
-            smol::unblock(move || {
-                let mut tasks = app_state.tasks.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    task.state = TaskState::Downloading;
+        if let Some(task) = task_info {
+            // 检查是否有下载参数
+            if let Some(params) = &task.download_params {
+                // 更新本地状态
+                if let Some(local_task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                    local_task.state = TaskState::Downloading;
                 }
-            }).await;
-            
-            let _ = this.update(cx, |_this, cx| {
-                cx.notify();
-            });
-        }).detach();
+                
+                let app_state = self.app_state.clone();
+                let url = task.url.clone();
+                let title = task.title.clone();
+                let output_dir = params.output_dir.clone();
+                let format_id = params.format_id.clone();
+                let options = crate::app::DownloadVideoOptions {
+                    embed_metadata: params.embed_metadata,
+                    embed_thumbnail: params.embed_thumbnail,
+                    download_subtitles: params.download_subtitles,
+                    audio_only: params.audio_only,
+                };
+                
+                // 克隆 tasks 用于进度回调
+                let tasks_for_callback = app_state.tasks.clone();
+                
+                // 创建进度回调
+                let progress_callback: std::sync::Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = 
+                    std::sync::Arc::new(move |percent, speed, downloaded, total| {
+                        let mut tasks = tasks_for_callback.blocking_write();
+                        if let Some(task) = tasks.get_mut(&task_id) {
+                            task.progress = percent;
+                            task.speed = if speed > 0 { Some(speed) } else { None };
+                            task.downloaded_bytes = downloaded;
+                            task.total_bytes = if total > 0 { Some(total) } else { None };
+                        }
+                    });
+                
+                // 启动恢复下载
+                let handle = app_state.resume_download_in_background(
+                    task_id,
+                    url,
+                    output_dir,
+                    format_id,
+                    options,
+                    progress_callback,
+                    title,
+                );
+                
+                // 更新 AppState 中的任务状态
+                let tasks_for_update = app_state.tasks.clone();
+                let app_state_for_cleanup = app_state.clone();
+                
+                cx.spawn(async move |_this, _cx| {
+                    // 更新状态为 Downloading
+                    {
+                        let tasks = tasks_for_update.clone();
+                        smol::unblock(move || {
+                            let mut tasks = tasks.blocking_write();
+                            if let Some(task) = tasks.get_mut(&task_id) {
+                                task.state = TaskState::Downloading;
+                            }
+                        }).await;
+                    }
+                    
+                    // 等待下载完成
+                    tracing::info!("⏳ 等待恢复下载完成");
+                    loop {
+                        if handle.is_finished() {
+                            tracing::info!("🏁 恢复下载线程已完成");
+                            break;
+                        }
+                        gpui::Timer::after(std::time::Duration::from_millis(100)).await;
+                    }
+                    
+                    // 获取结果
+                    let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
+                        handle.join().unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
+                    }).await;
+                    
+                    // 清理标志
+                    app_state_for_cleanup.cleanup_download_task(task_id);
+                    
+                    // 更新最终状态
+                    let tasks = tasks_for_update.clone();
+                    let result_for_task = result.as_ref().map(|p| p.clone()).map_err(|e| e.to_string());
+                    smol::unblock(move || {
+                        let mut tasks = tasks.blocking_write();
+                        if let Some(task) = tasks.get_mut(&task_id) {
+                            match result_for_task {
+                                Ok(path) => {
+                                    task.state = TaskState::Completed;
+                                    task.progress = 1.0;
+                                    task.output_path = Some(path.clone());
+                                    task.completed_at = Some(std::time::SystemTime::now());
+                                    if let Ok(metadata) = std::fs::metadata(&path) {
+                                        task.total_bytes = Some(metadata.len());
+                                        task.downloaded_bytes = metadata.len();
+                                    }
+                                }
+                                Err(error) => {
+                                    // 如果是暂停导致的，保持暂停状态
+                                    if error.contains("下载已暂停") {
+                                        task.state = TaskState::Paused;
+                                    } else if error.contains("下载已取消") {
+                                        task.state = TaskState::Cancelled;
+                                    } else {
+                                        task.state = TaskState::Failed(error);
+                                        task.completed_at = Some(std::time::SystemTime::now());
+                                    }
+                                }
+                            }
+                        }
+                    }).await;
+                    
+                    match result {
+                        Ok(path) => tracing::info!("✅ 恢复下载完成: {}", path.display()),
+                        Err(e) => tracing::error!("❌ 恢复下载失败: {}", e),
+                    }
+                }).detach();
+            } else {
+                tracing::warn!("⚠️ 任务没有保存下载参数，无法恢复: {}", task_id);
+            }
+        }
         
         cx.notify();
     }

@@ -37,6 +37,8 @@ pub struct AppState {
     pub runtime: Arc<Runtime>,
     /// 下载取消标志 (task_id -> cancel_flag)
     pub download_cancel_flags: Arc<Mutex<HashMap<TaskId, Arc<AtomicBool>>>>,
+    /// 下载暂停标志 (task_id -> pause_flag)
+    pub download_pause_flags: Arc<Mutex<HashMap<TaskId, Arc<AtomicBool>>>>,
 }
 
 impl AppState {
@@ -69,6 +71,7 @@ impl AppState {
             event_tx,
             runtime,
             download_cancel_flags: Arc::new(Mutex::new(HashMap::new())),
+            download_pause_flags: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

@@ -99,6 +99,17 @@ pub enum TaskState {
     Cancelled,
 }
 
+/// 下载任务的参数（用于暂停后恢复）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadParams {
+    pub output_dir: PathBuf,
+    pub format_id: String,
+    pub embed_metadata: bool,
+    pub embed_thumbnail: bool,
+    pub download_subtitles: bool,
+    pub audio_only: bool,
+}
+
 /// 任务状态信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskStatus {
@@ -115,6 +126,8 @@ pub struct TaskStatus {
     pub started_at: Option<std::time::SystemTime>,
     pub completed_at: Option<std::time::SystemTime>,
     pub output_path: Option<PathBuf>,
+    /// 下载参数（用于暂停后恢复）
+    pub download_params: Option<DownloadParams>,
 }
 
 impl TaskStatus {
@@ -133,6 +146,7 @@ impl TaskStatus {
             started_at: None,
             completed_at: None,
             output_path: None,
+            download_params: None,
         }
     }
 
