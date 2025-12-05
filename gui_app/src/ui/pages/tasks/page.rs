@@ -302,12 +302,16 @@ impl Render for TasksPage {
         let filtered_tasks = self.filtered_tasks();
         let task_count = filtered_tasks.len();
         let is_empty = task_count == 0;
+        
+        // 检测当前是否是暗色模式
+        let is_dark = cx.theme().mode.is_dark();
+        let bg_color = if is_dark { rgb(0x09090b) } else { rgb(0xfafafa) };
 
         div()
             .id("tasks-page")
             .size_full()
             .overflow_y_scroll()
-            .bg(rgb(0x09090b))
+            .bg(bg_color)
             .child(
                 div()
                     .flex()
@@ -320,7 +324,7 @@ impl Render for TasksPage {
                     .child(self.render_filter_bar(cx))
                     // 任务列表
                     .when(is_empty, |this| {
-                        this.child(self.render_empty_state())
+                        this.child(self.render_empty_state(cx))
                     })
                     .when(!is_empty, |this| {
                         this.child(self.render_task_list(cx))
@@ -331,6 +335,11 @@ impl Render for TasksPage {
 
 impl TasksPage {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检测当前是否是暗色模式
+        let is_dark = cx.theme().mode.is_dark();
+        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
+        let desc_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
+        
         div()
             .flex()
             .items_center()
@@ -344,13 +353,13 @@ impl TasksPage {
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xfafafa))
+                            .text_color(title_color)
                             .child("📥 任务列表")
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xa1a1aa))
+                            .text_color(desc_color)
                             .child(format!("共 {} 个任务", self.tasks.len()))
                     )
             )
@@ -363,7 +372,7 @@ impl TasksPage {
                         let has_completed = self.tasks.iter().any(|t| matches!(t.state, TaskState::Completed));
                         Button::new("clear")
                             .xsmall()
-                            .ghost()
+                            .outline()
                             .disabled(!has_completed)
                             .label("清空已完成")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -373,7 +382,7 @@ impl TasksPage {
                     .child(
                         Button::new("refresh")
                             .xsmall()
-                            .ghost()
+                            .outline()
                             .label("刷新")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh_tasks(cx);
@@ -405,7 +414,7 @@ impl TasksPage {
                         if is_active {
                             btn.primary()
                         } else {
-                            btn.ghost()
+                            btn.outline()
                         }
                     })
                     .label(label)
@@ -415,7 +424,12 @@ impl TasksPage {
             }))
     }
 
-    fn render_empty_state(&self) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检测当前是否是暗色模式
+        let is_dark = cx.theme().mode.is_dark();
+        let text_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
+        let muted_color = if is_dark { rgb(0x71717a) } else { rgb(0xa1a1aa) };
+        
         div()
             .flex()
             .flex_col()
@@ -431,7 +445,7 @@ impl TasksPage {
             .child(
                 div()
                     .text_lg()
-                    .text_color(rgb(0xa1a1aa))
+                    .text_color(text_color)
                     .child(match self.filter {
                         TaskFilter::All => "暂无下载任务",
                         TaskFilter::Downloading => "没有正在下载的任务",
@@ -442,7 +456,7 @@ impl TasksPage {
             .child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x71717a))
+                    .text_color(muted_color)
                     .child("在首页粘贴视频链接开始下载")
             )
     }

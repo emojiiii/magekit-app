@@ -358,8 +358,14 @@ impl HomePage {
                         Ok(path) => {
                             task.state = TaskState::Completed;
                             task.progress = 1.0;
-                            task.output_path = Some(path);
+                            task.output_path = Some(path.clone());
                             task.completed_at = Some(std::time::SystemTime::now());
+                            
+                            // 获取文件大小
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                task.total_bytes = Some(metadata.len());
+                                task.downloaded_bytes = metadata.len();
+                            }
                         }
                         Err(error) => {
                             task.state = TaskState::Failed(error);

@@ -523,23 +523,69 @@ impl AppState {
                     all_lines.push(line.clone());
                     
                     // 解析进度信息
+                    // 格式1 (--progress-template): download:  XX.X%  XXX KiB/s  XXX MiB  XXX MiB
+                    // 格式2 (标准输出): [download]  XX.X% of ~XXX.XXMB at XXMB/s ETA XX:XX
+                    
+                    // 首先尝试解析 progress-template 格式
                     if line.starts_with("download:") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
+                        // download: XX.X% SPEED DOWNLOADED TOTAL
                         if parts.len() >= 4 {
-                            // 解析百分比
+                            // 解析百分比 (第一个带 % 的部分)
                             let percent_str = parts[0].strip_prefix("download:").unwrap_or("0%");
                             let percent: f32 = percent_str.trim_end_matches('%')
                                 .parse()
                                 .unwrap_or(0.0);
                             
-                            // 解析速度
+                            // 解析速度 (第2个参数)
                             let speed = parse_size_string(parts[1]);
                             
-                            // 解析已下载
+                            // 解析已下载 (第3个参数)
                             let downloaded = parse_size_string(parts[2]);
                             
-                            // 解析总大小
+                            // 解析总大小 (第4个参数)
                             let total = parse_size_string(parts[3]);
+                            
+                            tracing::debug!("📊 进度(模板): {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
+                                percent, speed, downloaded, total);
+                            
+                            progress_callback(percent, speed, downloaded, total);
+                        }
+                    }
+                    // 其次尝试解析标准 [download] 格式
+                    else if line.contains("[download]") && line.contains("%") {
+                        // 解析百分比
+                        if let Some(percent_pos) = line.find('%') {
+                            // 找到 % 前的数字
+                            let before_percent = &line[..percent_pos];
+                            let percent_str = before_percent.split_whitespace().last().unwrap_or("0");
+                            let percent: f32 = percent_str.parse().unwrap_or(0.0);
+                            
+                            // 解析总大小 (在 "of" 之后, 在 "at" 之前)
+                            let total = if let Some(of_pos) = line.find(" of ") {
+                                let after_of = &line[of_pos + 4..];
+                                let size_str = after_of.split_whitespace().next().unwrap_or("");
+                                // 移除可能的 ~ 前缀
+                                let size_str = size_str.trim_start_matches('~');
+                                parse_size_string(size_str)
+                            } else {
+                                0
+                            };
+                            
+                            // 解析速度 (在 "at" 之后)
+                            let speed = if let Some(at_pos) = line.find(" at ") {
+                                let after_at = &line[at_pos + 4..];
+                                let speed_str = after_at.split_whitespace().next().unwrap_or("");
+                                parse_size_string(speed_str)
+                            } else {
+                                0
+                            };
+                            
+                            // 计算已下载字节数
+                            let downloaded = ((percent / 100.0) * total as f32) as u64;
+                            
+                            tracing::debug!("📊 进度(标准): {:.1}%, 速度: {} B/s, 已下载: {} B, 总大小: {} B", 
+                                percent, speed, downloaded, total);
                             
                             progress_callback(percent, speed, downloaded, total);
                         }

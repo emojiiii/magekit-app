@@ -57,8 +57,18 @@ impl TaskItem {
 }
 
 impl RenderOnce for TaskItem {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let task = &self.task;
+        
+        // 检测当前是否是暗色模式
+        let is_dark = cx.theme().mode.is_dark();
+        
+        // 根据主题选择颜色
+        let bg_color = if is_dark { rgb(0x18181b) } else { rgb(0xffffff) };
+        let border_color = if is_dark { rgb(0x3f3f46) } else { rgb(0xe4e4e7) };
+        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
+        let muted_color = if is_dark { rgb(0x71717a) } else { rgb(0xa1a1aa) };
+        let progress_bg = if is_dark { rgb(0x27272a) } else { rgb(0xf4f4f5) };
         
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
@@ -80,8 +90,10 @@ impl RenderOnce for TaskItem {
         // 格式化大小
         let size_str = if let Some(total) = task.total_bytes {
             format!("{} / {}", format_bytes(task.downloaded_bytes), format_bytes(total))
-        } else {
+        } else if task.downloaded_bytes > 0 {
             format_bytes(task.downloaded_bytes)
+        } else {
+            "计算中...".to_string()
         };
 
         // 标题（使用 URL 的最后部分作为备用）
@@ -104,9 +116,9 @@ impl RenderOnce for TaskItem {
             .flex_col()
             .gap(px(8.0))
             .p(px(16.0))
-            .bg(rgb(0x18181b))
+            .bg(bg_color)
             .border_1()
-            .border_color(rgb(0x3f3f46))
+            .border_color(border_color)
             .rounded(px(12.0))
             // 顶部：标题和状态
             .child(
@@ -128,7 +140,7 @@ impl RenderOnce for TaskItem {
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(rgb(0xfafafa))
+                                            .text_color(title_color)
                                             .overflow_hidden()
                                             .text_ellipsis()
                                             .child(title)
@@ -148,7 +160,7 @@ impl RenderOnce for TaskItem {
                     div()
                         .h(px(4.0))
                         .w_full()
-                        .bg(rgb(0x27272a))
+                        .bg(progress_bg)
                         .rounded(px(2.0))
                         .child(
                             div()
@@ -166,7 +178,7 @@ impl RenderOnce for TaskItem {
                     .items_center()
                     .justify_between()
                     .text_xs()
-                    .text_color(rgb(0x71717a))
+                    .text_color(muted_color)
                     .child(size_str)
                     .when(is_downloading, |this| {
                         this.child(speed_str)
@@ -188,7 +200,7 @@ impl RenderOnce for TaskItem {
                         this.child(
                             Button::new("pause")
                                 .xsmall()
-                                .ghost()
+                                .outline()
                                 .label("暂停")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
@@ -201,7 +213,7 @@ impl RenderOnce for TaskItem {
                         this.child(
                             Button::new("resume")
                                 .xsmall()
-                                .ghost()
+                                .primary()
                                 .label("继续")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
@@ -227,7 +239,7 @@ impl RenderOnce for TaskItem {
                         this.child(
                             Button::new("open")
                                 .xsmall()
-                                .ghost()
+                                .outline()
                                 .label("打开文件夹")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))

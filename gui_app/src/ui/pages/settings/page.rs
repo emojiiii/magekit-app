@@ -2,13 +2,16 @@
 
 use gpui::*;
 use gpui_component::input::InputState;
+use gpui_component::ActiveTheme;
 use crate::app::AppState;
+use magekit_shared::types::Theme;
 use std::sync::Arc;
 use std::path::PathBuf;
 use super::widgets::{
     DownloadSettingsCard,
     AdvancedSettingsCard,
     AboutSection,
+    ThemeSettingsCard,
 };
 
 /// 设置页面
@@ -20,6 +23,9 @@ pub struct SettingsPage {
     max_concurrent: usize,
     embed_metadata: bool,
     embed_thumbnail: bool,
+    
+    // 外观设置
+    theme: Theme,
     
     // 高级设置
     auto_check_updates: bool,
@@ -46,6 +52,7 @@ impl SettingsPage {
             max_concurrent: config.download.max_concurrent_downloads,
             embed_metadata: config.download.embed_metadata,
             embed_thumbnail: config.download.embed_thumbnail,
+            theme: config.ui.theme.clone(),
             auto_check_updates: config.tools.auto_update,
             debug_mode: matches!(config.advanced.log_level, magekit_shared::LogLevel::Debug | magekit_shared::LogLevel::Trace),
             has_changes: false,
@@ -66,6 +73,50 @@ impl SettingsPage {
             self.has_changes = true;
             self.save_settings(cx);
         }
+    }
+    
+    fn set_theme(&mut self, theme: Theme, _window: &mut Window, cx: &mut Context<Self>) {
+        self.theme = theme.clone();
+        self.has_changes = true;
+        
+        // 确定实际使用的主题模式
+        let is_dark = match &theme {
+            Theme::Light => false,
+            Theme::Dark => true,
+            Theme::System => {
+                // 检测系统主题
+                #[cfg(target_os = "macos")]
+                {
+                    use std::process::Command;
+                    if let Ok(output) = Command::new("defaults")
+                        .args(["read", "-g", "AppleInterfaceStyle"])
+                        .output()
+                    {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        stdout.trim().eq_ignore_ascii_case("dark")
+                    } else {
+                        false
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    false
+                }
+            }
+        };
+        
+        // 更新全局主题
+        let mode = if is_dark {
+            gpui_component::theme::ThemeMode::Dark
+        } else {
+            gpui_component::theme::ThemeMode::Light
+        };
+        
+        cx.update_global::<gpui_component::theme::Theme, _>(|t, _cx| {
+            t.mode = mode;
+        });
+        
+        self.save_settings(cx);
     }
     
     fn toggle_auto_check_updates(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -119,6 +170,7 @@ impl SettingsPage {
         let embed_thumbnail = self.embed_thumbnail;
         let auto_check_updates = self.auto_check_updates;
         let debug_mode = self.debug_mode;
+        let theme = self.theme.clone();
         
         cx.spawn(async move |_this, _cx| {
             // 获取当前配置并更新
@@ -129,6 +181,7 @@ impl SettingsPage {
                 config.download.embed_metadata = embed_metadata;
                 config.download.embed_thumbnail = embed_thumbnail;
                 config.tools.auto_update = auto_check_updates;
+                config.ui.theme = theme;
                 config.advanced.log_level = if debug_mode {
                     magekit_shared::LogLevel::Debug
                 } else {
@@ -149,6 +202,11 @@ impl SettingsPage {
 
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检测当前是否是暗色模式
+        let is_dark = cx.theme().mode.is_dark();
+        let title_color = if is_dark { rgb(0xfafafa) } else { rgb(0x18181b) };
+        let desc_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x71717a) };
+        
         div()
             .id("settings-page")
             .size_full()
@@ -186,16 +244,23 @@ impl Render for SettingsPage {
                                                 div()
                                                     .text_2xl()
                                                     .font_weight(FontWeight::BOLD)
-                                                    .text_color(rgb(0xfafafa))
+                                                    .text_color(title_color)
                                                     .child("设置")
                                             )
                                             .child(
                                                 div()
                                                     .text_sm()
-                                                    .text_color(rgb(0xa1a1aa))
+                                                    .text_color(desc_color)
                                                     .child("自定义应用程序行为和偏好")
                                             )
                                     )
+                            )
+                            // 外观设置（主题切换）
+                            .child(
+                                ThemeSettingsCard::new(self.theme.clone())
+                                    .on_theme_change(cx.listener(|this, theme: &Theme, window, cx| {
+                                        this.set_theme(theme.clone(), window, cx);
+                                    }))
                             )
                             // 下载设置
                             .child(
