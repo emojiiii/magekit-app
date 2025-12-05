@@ -53,7 +53,7 @@ impl DownloadSettingsCard {
 
 impl RenderOnce for DownloadSettingsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;

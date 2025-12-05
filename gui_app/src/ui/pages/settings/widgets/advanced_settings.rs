@@ -58,7 +58,7 @@ impl RenderOnce for AdvancedSettingsCard {
         let auto_check = self.settings.auto_check_updates;
         let debug_mode = self.settings.debug_mode;
         
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         
         Section::new("高级设置")

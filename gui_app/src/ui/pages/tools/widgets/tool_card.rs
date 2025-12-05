@@ -156,7 +156,7 @@ where
         let tool_icon = tool.icon;
 
         // 使用主题颜色
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;

@@ -59,7 +59,7 @@ impl RenderOnce for QualitySelector {
         let selected = self.selected;
         let on_select = self.on_select;
 
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let primary_color = cx.theme().primary;

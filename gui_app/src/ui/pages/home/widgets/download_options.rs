@@ -70,7 +70,7 @@ impl DownloadOptionsCard {
 
 impl RenderOnce for DownloadOptionsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         
@@ -156,7 +156,7 @@ impl RenderOnce for OutputPathCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         use gpui_component::button::{Button, ButtonVariants};
 
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let input_bg = cx.theme().muted;

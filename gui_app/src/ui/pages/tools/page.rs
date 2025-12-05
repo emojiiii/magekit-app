@@ -295,6 +295,8 @@ impl Render for ToolsPage {
         let any_installing = self.tools.iter().any(|t| {
             matches!(t.state, ToolInstallState::Installing | ToolInstallState::Downloading(_))
         });
+        
+        let bg_color = cx.theme().background;
 
         div()
             .id("tools-page")
@@ -302,6 +304,7 @@ impl Render for ToolsPage {
             .flex()
             .flex_col()
             .overflow_hidden()
+            .bg(bg_color)
             .child(
                 // 可滚动内容区域
                 div()
@@ -405,7 +408,7 @@ impl ToolsPage {
 
     fn render_tool_cards(&mut self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
         // 获取主题颜色
-        let card_bg = cx.theme().background;
+        let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
         let icon_bg = cx.theme().muted;
         let title_color = cx.theme().foreground;
