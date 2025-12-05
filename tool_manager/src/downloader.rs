@@ -61,6 +61,12 @@ impl VideoDownloader {
         tracing::info!("✅ 视频信息获取成功: {} - {}", video_data.id, video_data.title);
         tracing::debug!("📊 格式数量: {}, 时长: {:?}秒", video_data.formats.len(), video_data.duration);
         
+        // 打印所有格式的详细信息用于调试
+        for (i, fmt) in video_data.formats.iter().enumerate() {
+            tracing::info!("  格式[{}]: id={}, ext={:?}, res={:?}, vcodec={:?}, acodec={:?}", 
+                i, fmt.format_id, fmt.ext, fmt.resolution, fmt.vcodec, fmt.acodec);
+        }
+        
         Ok(video_data.into())
     }
 

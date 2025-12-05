@@ -48,25 +48,27 @@ impl RenderOnce for UrlInputCard {
         let button_label = if self.is_loading { "获取中..." } else { "解析" };
         
         // 使用主题颜色
-        let bg_color = cx.theme().background;
-        let border_color = cx.theme().border;
-        let text_color = cx.theme().foreground;
+        let is_dark = cx.theme().mode.is_dark();
+        let bg_color = if is_dark { rgb(0x18181b) } else { rgb(0xffffff) };
+        let border_color = if is_dark { rgb(0x27272a) } else { rgb(0xf0f0f0) };
+        let label_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x6b7280) };
 
         div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
+            .gap(px(12.0))
             .p(px(20.0))
             .bg(bg_color)
             .border_1()
             .border_color(border_color)
-            .rounded(px(12.0))
+            .rounded(px(16.0))
+            .shadow_sm()
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(text_color)
-                    .child("视频链接")
+                    .text_color(label_color)
+                    .child("🔗 视频链接")
             )
             .child(
                 div()

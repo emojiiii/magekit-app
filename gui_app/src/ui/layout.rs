@@ -98,7 +98,7 @@ impl AppLayout {
 impl RenderOnce for AppLayout {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let nav_items = vec![
-            NavItem::new("/", "下载", "⬇️"),
+            NavItem::new("/", "首页", "🏠"),
             NavItem::new("/tasks", "任务", "📋"),
             NavItem::new("/tools", "工具", "🔧"),
             NavItem::new("/settings", "设置", "⚙️"),

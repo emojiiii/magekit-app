@@ -1,7 +1,6 @@
 //! 首页主组件
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use gpui_component::input::InputState;
 use gpui_component::notification::Notification;
 use gpui_component::ActiveTheme;
@@ -16,7 +15,7 @@ use super::widgets::{
     UrlInputCard, 
     VideoPreviewIdle, VideoPreviewLoading, VideoPreviewReady, 
     VideoPreviewDownloading, VideoPreviewCompleted, VideoPreviewError,
-    VideoInfo, VideoFormatInfo, DownloadOptionsCard, DownloadOptionsData,
+    VideoInfo, VideoFormatInfo, FormatSelection,
     QualityOption
 };
 
@@ -70,13 +69,17 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
     tracing::info!("🔄 开始转换格式列表，原始格式数量: {}", formats.len());
     
     // 打印前几个格式的详细信息用于调试
-    for (i, fmt) in formats.iter().take(5).enumerate() {
+    for (i, fmt) in formats.iter().take(10).enumerate() {
         tracing::info!("  原始格式 {}: id={}, ext={}, res={:?}, vcodec={:?}, acodec={:?}, quality={:?}", 
             i, fmt.format_id, fmt.ext, fmt.resolution, fmt.vcodec, fmt.acodec, fmt.quality);
     }
     
     let mut result = Vec::new();
-    let mut seen_resolutions: HashMap<String, bool> = HashMap::new();
+    
+    // 用于去重的 key: (分辨率, 是否有音频, 扩展名)
+    let mut seen_combined: HashMap<String, bool> = HashMap::new();  // 合并格式去重
+    let mut seen_video_only: HashMap<String, bool> = HashMap::new(); // 仅视频去重
+    let mut seen_audio: HashMap<String, bool> = HashMap::new();      // 仅音频去重
     
     // 先按质量排序：优先高分辨率
     let mut sorted_formats: Vec<_> = formats.iter().collect();
@@ -93,7 +96,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
         height_b.cmp(&height_a) // 降序
     });
     
-    // 处理视频格式
+    // 处理所有格式
     for fmt in &sorted_formats {
         // 判断是否有视频：vcodec 存在且不是 "none"
         let has_video = fmt.vcodec.as_ref()
@@ -105,90 +108,88 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
             .unwrap_or(false);
         
         // 如果 vcodec 和 acodec 都是 None，但有分辨率，可能是合并格式
-        let is_combined = fmt.vcodec.is_none() && fmt.acodec.is_none() && fmt.resolution.is_some();
+        let is_combined_default = fmt.vcodec.is_none() && fmt.acodec.is_none() && fmt.resolution.is_some();
         
         // 跳过没有视频也没有音频的格式（除非是合并格式）
-        if !has_video && !has_audio && !is_combined {
+        if !has_video && !has_audio && !is_combined_default {
             continue;
         }
         
-        // 对于视频格式或合并格式，根据分辨率去重
-        if has_video || is_combined {
-            let resolution_key = fmt.resolution.clone().unwrap_or_else(|| "unknown".to_string());
-            
-            // 跳过已处理的分辨率
-            if seen_resolutions.contains_key(&resolution_key) {
-                continue;
-            }
-            seen_resolutions.insert(resolution_key.clone(), true);
-            
-            // 生成用户友好的标签
-            let label = if let Some(res) = &fmt.resolution {
-                // 尝试提取高度作为标签，如 "1920x1080" -> "1080p"
-                if let Some(height) = res.split('x').last() {
-                    if let Ok(h) = height.parse::<u32>() {
-                        format!("{}p", h)
-                    } else {
-                        res.clone()
-                    }
+        let resolution_key = fmt.resolution.clone().unwrap_or_else(|| "unknown".to_string());
+        
+        // 生成用户友好的标签
+        let label = if let Some(res) = &fmt.resolution {
+            // 尝试提取高度作为标签，如 "1920x1080" -> "1080p"
+            if let Some(height) = res.split('x').last() {
+                if let Ok(h) = height.parse::<u32>() {
+                    format!("{}p", h)
                 } else {
                     res.clone()
                 }
             } else {
-                fmt.quality.clone().unwrap_or_else(|| "视频".to_string())
-            };
-            
-            tracing::info!("  添加视频格式: {} - {} ({})", fmt.format_id, label, fmt.ext);
-            
-            result.push(VideoFormatInfo {
-                format_id: fmt.format_id.clone(),
-                label,
-                ext: fmt.ext.clone(),
-                filesize: fmt.filesize,
-                has_video: true,
-                has_audio: has_audio || is_combined,
-            });
-        }
-    }
-    
-    // 处理纯音频格式 (去重，只保留最高质量的几个)
-    let mut audio_seen: HashMap<String, bool> = HashMap::new();
-    for fmt in &sorted_formats {
-        let has_video = fmt.vcodec.as_ref()
-            .map(|v| !v.is_empty() && v != "none")
-            .unwrap_or(false);
-        let has_audio = fmt.acodec.as_ref()
-            .map(|a| !a.is_empty() && a != "none")
-            .unwrap_or(false);
+                res.clone()
+            }
+        } else if !has_video && has_audio {
+            // 音频格式显示为 "最佳音质" 或扩展名
+            "最佳音质".to_string()
+        } else {
+            fmt.quality.clone().unwrap_or_else(|| "视频".to_string())
+        };
         
-        if !has_video && has_audio {
-            let ext_key = fmt.ext.clone();
-            if audio_seen.contains_key(&ext_key) {
-                continue;
+        // 根据格式类型分类处理
+        if has_video && has_audio || is_combined_default {
+            // 合并格式（视频+音频）
+            let key = format!("{}_{}", resolution_key, fmt.ext);
+            if !seen_combined.contains_key(&key) {
+                seen_combined.insert(key, true);
+                tracing::info!("  添加合并格式: {} - {} ({}) [video+audio]", fmt.format_id, label, fmt.ext);
+                result.push(VideoFormatInfo {
+                    format_id: fmt.format_id.clone(),
+                    label,
+                    ext: fmt.ext.clone(),
+                    filesize: fmt.filesize,
+                    has_video: true,
+                    has_audio: true,
+                });
             }
-            audio_seen.insert(ext_key.clone(), true);
-            
-            // 限制音频格式数量
-            if result.iter().filter(|f| !f.has_video).count() >= 3 {
-                break;
+        } else if has_video && !has_audio {
+            // 仅视频格式
+            let key = format!("{}_{}", resolution_key, fmt.ext);
+            if !seen_video_only.contains_key(&key) {
+                seen_video_only.insert(key, true);
+                tracing::info!("  添加仅视频格式: {} - {} ({}) [video only]", fmt.format_id, label, fmt.ext);
+                result.push(VideoFormatInfo {
+                    format_id: fmt.format_id.clone(),
+                    label,
+                    ext: fmt.ext.clone(),
+                    filesize: fmt.filesize,
+                    has_video: true,
+                    has_audio: false,
+                });
             }
-            
-            let label = format!("音频 ({})", fmt.ext.to_uppercase());
-            
-            tracing::info!("  添加音频格式: {} - {}", fmt.format_id, label);
-            
-            result.push(VideoFormatInfo {
-                format_id: fmt.format_id.clone(),
-                label,
-                ext: fmt.ext.clone(),
-                filesize: fmt.filesize,
-                has_video: false,
-                has_audio: true,
-            });
+        } else if !has_video && has_audio {
+            // 仅音频格式
+            let key = fmt.ext.clone();
+            if !seen_audio.contains_key(&key) {
+                // 限制音频格式数量
+                if seen_audio.len() < 3 {
+                    seen_audio.insert(key, true);
+                    tracing::info!("  添加仅音频格式: {} - {} [audio only]", fmt.format_id, label);
+                    result.push(VideoFormatInfo {
+                        format_id: fmt.format_id.clone(),
+                        label,
+                        ext: fmt.ext.clone(),
+                        filesize: fmt.filesize,
+                        has_video: false,
+                        has_audio: true,
+                    });
+                }
+            }
         }
     }
     
-    tracing::info!("🔄 格式转换完成，结果数量: {}", result.len());
+    tracing::info!("🔄 格式转换完成，结果数量: {} (合并:{}, 仅视频:{}, 仅音频:{})", 
+        result.len(), seen_combined.len(), seen_video_only.len(), seen_audio.len());
     
     // 如果没有任何格式被识别，添加一个默认的 "最佳质量" 选项
     if result.is_empty() {
@@ -229,9 +230,11 @@ pub struct HomePage {
     url_input: Entity<InputState>,
     download_state: DownloadState,
     selected_quality: QualityOption,
-    selected_format_id: Option<String>,  // 用户选中的格式 ID
+    /// 选中的视频格式 ID（合并格式或仅视频）
+    selected_video_id: Option<String>,
+    /// 选中的音频格式 ID（仅音频）
+    selected_audio_id: Option<String>,
     output_path: String,
-    options: DownloadOptionsData,
     /// 当前解析的 URL (用于下载)
     current_url: Option<String>,
 }
@@ -254,9 +257,9 @@ impl HomePage {
             url_input,
             download_state: DownloadState::Idle,
             selected_quality: QualityOption::Best,
-            selected_format_id: None,
+            selected_video_id: None,
+            selected_audio_id: None,
             output_path: default_path,
-            options: DownloadOptionsData::default(),
             current_url: None,
         }
     }
@@ -323,11 +326,9 @@ impl HomePage {
                                 fmt.label, fmt.format_id, fmt.ext, fmt.has_video, fmt.has_audio);
                         }
                         
-                        // 默认选中第一个视频格式
-                        let default_format_id = gui_formats.iter()
-                            .find(|f| f.has_video)
-                            .map(|f| f.format_id.clone());
-                        this.selected_format_id = default_format_id;
+                        // 默认不选中任何格式，让用户自由选择
+                        this.selected_video_id = None;
+                        this.selected_audio_id = None;
                         
                         // 转换为 GUI 使用的 VideoInfo
                         let gui_info = VideoInfo {
@@ -343,7 +344,8 @@ impl HomePage {
                     Err(e) => {
                         tracing::error!("❌ 视频信息解析失败: {}", e);
                         this.current_url = None;
-                        this.selected_format_id = None;
+                        this.selected_video_id = None;
+                        this.selected_audio_id = None;
                         this.download_state = DownloadState::Error(e.to_string());
                     }
                 }
@@ -375,9 +377,6 @@ impl HomePage {
         tracing::info!("  标题: {}", video_title.as_deref().unwrap_or("未知"));
         tracing::info!("  输出目录: {}", self.output_path);
         tracing::info!("  质量: {:?}", self.selected_quality);
-        tracing::info!("  嵌入元数据: {}", self.options.embed_metadata);
-        tracing::info!("  嵌入封面: {}", self.options.embed_thumbnail);
-        tracing::info!("  下载字幕: {}", self.options.download_subtitles);
         
         // 导航到任务页 - 先调用 navigate 释放 cx 借用
         {
@@ -417,11 +416,11 @@ impl HomePage {
                 tasks.insert(task_id, task_status_clone);
             });
         }
-        // 转换下载选项
+        // 转换下载选项（使用默认值）
         let options = crate::app::DownloadVideoOptions {
-            embed_metadata: self.options.embed_metadata,
-            embed_thumbnail: self.options.embed_thumbnail,
-            download_subtitles: self.options.download_subtitles,
+            embed_metadata: true,
+            embed_thumbnail: false,
+            download_subtitles: false,
             audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
         };
         
@@ -564,22 +563,89 @@ impl HomePage {
         cx.notify();
     }
     
-    /// 选择格式
-    fn select_format(&mut self, format_id: String, cx: &mut Context<Self>) {
-        tracing::info!("📝 选择格式: {}", format_id);
-        self.selected_format_id = Some(format_id);
+    /// 选择/取消选择视频格式（toggle）
+    fn select_video_format(&mut self, format_id: String, cx: &mut Context<Self>) {
+        // 如果点击的是已选中的，则取消选择
+        if self.selected_video_id.as_ref() == Some(&format_id) {
+            tracing::info!("📹 取消选择视频格式: {}", format_id);
+            self.selected_video_id = None;
+        } else {
+            tracing::info!("📹 选择视频格式: {}", format_id);
+            self.selected_video_id = Some(format_id.clone());
+            // 如果选中的是合并格式（含音频），清除单独选中的音频
+            if let DownloadState::Ready(info) = &self.download_state {
+                if let Some(fmt) = info.formats.iter().find(|f| f.format_id == format_id) {
+                    if fmt.has_audio {
+                        self.selected_audio_id = None;
+                    }
+                }
+            }
+        }
         cx.notify();
     }
     
-    fn toggle_option(&mut self, option: &str, cx: &mut Context<Self>) {
-        match option {
-            "metadata" => self.options.embed_metadata = !self.options.embed_metadata,
-            "thumbnail" => self.options.embed_thumbnail = !self.options.embed_thumbnail,
-            "subtitles" => self.options.download_subtitles = !self.options.download_subtitles,
-            "audio" => self.options.audio_only = !self.options.audio_only,
-            _ => {}
+    /// 选择/取消选择音频格式（toggle）
+    fn select_audio_format(&mut self, format_id: String, cx: &mut Context<Self>) {
+        // 如果点击的是已选中的，则取消选择
+        if self.selected_audio_id.as_ref() == Some(&format_id) {
+            tracing::info!("🎵 取消选择音频格式: {}", format_id);
+            self.selected_audio_id = None;
+        } else {
+            tracing::info!("🎵 选择音频格式: {}", format_id);
+            self.selected_audio_id = Some(format_id);
         }
         cx.notify();
+    }
+    
+    /// 获取当前选中的格式字符串（用于 yt-dlp）
+    fn get_format_selection(&self) -> Option<FormatSelection> {
+        // 判断是否是分离格式网站（如B站）
+        let is_separated_source = if let DownloadState::Ready(info) = &self.download_state {
+            let has_combined = info.formats.iter().any(|f| f.has_video && f.has_audio);
+            let has_video_only = info.formats.iter().any(|f| f.has_video && !f.has_audio);
+            let has_audio_only = info.formats.iter().any(|f| !f.has_video && f.has_audio);
+            !has_combined && has_video_only && has_audio_only
+        } else {
+            false
+        };
+        
+        match (&self.selected_video_id, &self.selected_audio_id) {
+            (Some(vid), Some(aid)) => {
+                // 检查视频格式是否已包含音频
+                if let DownloadState::Ready(info) = &self.download_state {
+                    let video_has_audio = info.formats.iter()
+                        .find(|f| &f.format_id == vid)
+                        .map(|f| f.has_audio)
+                        .unwrap_or(false);
+                    
+                    if video_has_audio {
+                        return Some(FormatSelection::Combined(vid.clone()));
+                    }
+                }
+                Some(FormatSelection::VideoAndAudio {
+                    video_id: vid.clone(),
+                    audio_id: aid.clone(),
+                })
+            }
+            (Some(vid), None) => {
+                if let DownloadState::Ready(info) = &self.download_state {
+                    let fmt = info.formats.iter().find(|f| &f.format_id == vid)?;
+                    if fmt.has_audio {
+                        return Some(FormatSelection::Combined(vid.clone()));
+                    }
+                    // 对于分离格式网站，自动加上最佳音频
+                    if is_separated_source {
+                        return Some(FormatSelection::VideoAndAudio {
+                            video_id: vid.clone(),
+                            audio_id: "bestaudio".to_string(),
+                        });
+                    }
+                }
+                Some(FormatSelection::VideoOnly(vid.clone()))
+            }
+            (None, Some(aid)) => Some(FormatSelection::AudioOnly(aid.clone())),
+            (None, None) => None,
+        }
     }
     
     /// 使用指定的格式 ID 开始下载
@@ -606,9 +672,6 @@ impl HomePage {
         tracing::info!("  标题: {}", video_title.as_deref().unwrap_or("未知"));
         tracing::info!("  输出目录: {}", self.output_path);
         tracing::info!("  格式 ID: {}", format_id);
-        tracing::info!("  嵌入元数据: {}", self.options.embed_metadata);
-        tracing::info!("  嵌入封面: {}", self.options.embed_thumbnail);
-        tracing::info!("  下载字幕: {}", self.options.download_subtitles);
         
         // 判断是否是音频格式（在修改状态前判断）
         let is_audio_only = match &self.download_state {
@@ -651,11 +714,11 @@ impl HomePage {
             });
         }
         
-        // 转换下载选项
+        // 转换下载选项（使用默认值）
         let options = crate::app::DownloadVideoOptions {
-            embed_metadata: self.options.embed_metadata,
-            embed_thumbnail: self.options.embed_thumbnail,
-            download_subtitles: self.options.download_subtitles,
+            embed_metadata: true,
+            embed_thumbnail: false,
+            download_subtitles: false,
             audio_only: is_audio_only,
         };
         
@@ -875,7 +938,8 @@ impl HomePage {
             state.set_value("", window, cx);
         });
         self.download_state = DownloadState::Idle;
-        self.selected_format_id = None;
+        self.selected_video_id = None;
+        self.selected_audio_id = None;
         cx.notify();
     }
 }
@@ -911,26 +975,8 @@ impl Render for HomePage {
                                 this.on_parse(cx);
                             }))
                     )
-                    // 状态内容
+                    // 状态内容（包含格式选择）
                     .child(self.render_state_content(cx))
-                    // 下载选项（仅在解析成功后显示）
-                    .when(matches!(self.download_state, DownloadState::Ready(_)), |this| {
-                        this.child(
-                            DownloadOptionsCard::new(self.options.clone())
-                                .on_toggle_metadata(cx.listener(|this, _ev, _window, cx| {
-                                    this.toggle_option("metadata", cx);
-                                }))
-                                .on_toggle_thumbnail(cx.listener(|this, _ev, _window, cx| {
-                                    this.toggle_option("thumbnail", cx);
-                                }))
-                                .on_toggle_subtitles(cx.listener(|this, _ev, _window, cx| {
-                                    this.toggle_option("subtitles", cx);
-                                }))
-                                .on_toggle_audio(cx.listener(|this, _ev, _window, cx| {
-                                    this.toggle_option("audio", cx);
-                                }))
-                        )
-                    })
             )
     }
 }
@@ -971,23 +1017,30 @@ impl HomePage {
             DownloadState::Idle => VideoPreviewIdle.into_any_element(),
             DownloadState::Fetching => VideoPreviewLoading.into_any_element(),
             DownloadState::Ready(info) => {
-                let selected_format = self.selected_format_id.clone();
+                let selected_video = self.selected_video_id.clone();
+                let selected_audio = self.selected_audio_id.clone();
                 VideoPreviewReady::new(info.clone())
-                    .selected_format(selected_format)
+                    .selected_video(selected_video)
+                    .selected_audio(selected_audio)
                     .on_cancel(cx.listener(|this, _ev, window, cx| {
                         this.reset(window, cx);
                     }))
                     .on_download(cx.listener(|this, _ev, window, cx| {
-                        // 使用当前选中的格式，如果没有选中则使用默认
-                        let format_id = this.selected_format_id.clone()
-                            .unwrap_or_else(|| "bestvideo+bestaudio/best".to_string());
-                        this.start_download_with_format(format_id, window, cx);
+                        // 使用当前选中的格式
+                        if let Some(selection) = this.get_format_selection() {
+                            let format_str = selection.to_format_string();
+                            tracing::info!("📥 开始下载，格式: {}", format_str);
+                            this.start_download_with_format(format_str, window, cx);
+                        }
                     }))
                     .on_download_thumbnail(cx.listener(|this, _ev, window, cx| {
                         this.download_thumbnail(window, cx);
                     }))
-                    .on_select_format(cx.listener(|this, format_id: &str, _window, cx| {
-                        this.select_format(format_id.to_string(), cx);
+                    .on_select_video(cx.listener(|this, format_id: &str, _window, cx| {
+                        this.select_video_format(format_id.to_string(), cx);
+                    }))
+                    .on_select_audio(cx.listener(|this, format_id: &str, _window, cx| {
+                        this.select_audio_format(format_id.to_string(), cx);
                     }))
                     .into_any_element()
             }
