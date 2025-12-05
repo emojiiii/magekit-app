@@ -1,10 +1,11 @@
 //! 高级设置组件
 
-use gpui::*;
+use crate::ui::widgets::Section;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::switch::Switch;
-use crate::ui::widgets::Section;
+use gpui_component::{Icon, IconName};
 
 /// 高级设置数据
 #[derive(Debug, Clone)]
@@ -42,12 +43,18 @@ impl AdvancedSettingsCard {
         }
     }
 
-    pub fn on_auto_check_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_auto_check_change(
+        mut self,
+        handler: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle_updates = Some(Box::new(handler));
         self
     }
 
-    pub fn on_debug_mode_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_debug_mode_change(
+        mut self,
+        handler: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle_debug = Some(Box::new(handler));
         self
     }
@@ -57,46 +64,49 @@ impl RenderOnce for AdvancedSettingsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let auto_check = self.settings.auto_check_updates;
         let debug_mode = self.settings.debug_mode;
-        
+
         let theme = cx.theme();
         let card_bg = theme.secondary;
         let border_color = theme.border;
-        
-        Section::new("⚙️ 高级")
-            .child(
-                div()
-                    .p(px(20.0))
-                    .rounded(px(12.0))
-                    .bg(card_bg)
-                    .border_1()
-                    .border_color(border_color)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            // 自动检查更新
-                            .child(
-                                SettingsToggleItem::new("auto-updates", "自动检查更新")
-                                    .description("启动时自动检查工具和应用更新")
-                                    .emoji("🔄")
-                                    .checked(auto_check)
-                                    .border_bottom(true)
-                                    .when_some(self.on_toggle_updates, |el, handler| {
-                                        el.on_toggle(move |checked, window, cx| handler(&checked, window, cx))
+
+        Section::new_with_icon("高级", IconName::Settings).child(
+            div()
+                .p(px(20.0))
+                .rounded(px(12.0))
+                .bg(card_bg)
+                .border_1()
+                .border_color(border_color)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        // 自动检查更新
+                        .child(
+                            SettingsToggleItem::new("auto-updates", "自动检查更新")
+                                .description("启动时自动检查工具和应用更新")
+                                .icon(IconName::Loader)
+                                .checked(auto_check)
+                                .border_bottom(true)
+                                .when_some(self.on_toggle_updates, |el, handler| {
+                                    el.on_toggle(move |checked, window, cx| {
+                                        handler(&checked, window, cx)
                                     })
-                            )
-                            // 调试模式
-                            .child(
-                                SettingsToggleItem::new("debug-mode", "调试模式")
-                                    .description("启用详细日志和调试信息")
-                                    .emoji("🐛")
-                                    .checked(debug_mode)
-                                    .when_some(self.on_toggle_debug, |el, handler| {
-                                        el.on_toggle(move |checked, window, cx| handler(&checked, window, cx))
+                                }),
+                        )
+                        // 调试模式
+                        .child(
+                            SettingsToggleItem::new("debug-mode", "调试模式")
+                                .description("启用详细日志和调试信息")
+                                .icon(IconName::Inspector)
+                                .checked(debug_mode)
+                                .when_some(self.on_toggle_debug, |el, handler| {
+                                    el.on_toggle(move |checked, window, cx| {
+                                        handler(&checked, window, cx)
                                     })
-                            )
-                    )
-            )
+                                }),
+                        ),
+                ),
+        )
     }
 }
 
@@ -106,7 +116,7 @@ pub struct SettingsToggleItem {
     id: String,
     label: String,
     description: Option<String>,
-    emoji: Option<&'static str>,
+    icon: Option<IconName>,
     checked: bool,
     border_bottom: bool,
     on_toggle: Option<Box<dyn Fn(bool, &mut Window, &mut App) + 'static>>,
@@ -118,7 +128,7 @@ impl SettingsToggleItem {
             id: id.into(),
             label: label.into(),
             description: None,
-            emoji: None,
+            icon: None,
             checked: false,
             border_bottom: false,
             on_toggle: None,
@@ -130,8 +140,8 @@ impl SettingsToggleItem {
         self
     }
 
-    pub fn emoji(mut self, emoji: &'static str) -> Self {
-        self.emoji = Some(emoji);
+    pub fn icon(mut self, icon: IconName) -> Self {
+        self.icon = Some(icon);
         self
     }
 
@@ -171,13 +181,9 @@ impl RenderOnce for SettingsToggleItem {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    // emoji 图标
-                    .when_some(self.emoji, |el, emoji| {
-                        el.child(
-                            div()
-                                .text_lg()
-                                .child(emoji)
-                        )
+                    // 图标
+                    .when_some(self.icon, |el, icon| {
+                        el.child(Icon::new(icon).text_color(title_color))
                     })
                     .child(
                         div()
@@ -188,23 +194,19 @@ impl RenderOnce for SettingsToggleItem {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child(self.label)
+                                    .child(self.label),
                             )
                             .when_some(self.description, |el, desc| {
-                                el.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(muted_color)
-                                        .child(desc)
-                                )
-                            })
-                    )
+                                el.child(div().text_xs().text_color(muted_color).child(desc))
+                            }),
+                    ),
             )
             .child({
                 let switch_id: SharedString = self.id.into();
                 let mut switch = Switch::new(switch_id).checked(checked);
                 if let Some(handler) = self.on_toggle {
-                    switch = switch.on_click(move |_checked, window, cx| handler(!checked, window, cx));
+                    switch =
+                        switch.on_click(move |_checked, window, cx| handler(!checked, window, cx));
                 }
                 switch
             })

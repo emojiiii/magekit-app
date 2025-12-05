@@ -1,7 +1,7 @@
 //! 设置页面主组件
 
 use gpui::*;
-use gpui_component::{ActiveTheme, Theme, ThemeRegistry};
+use gpui_component::{ActiveTheme, Theme, ThemeRegistry, Icon, IconName, Sizable};
 use crate::app::AppState;
 use magekit_shared::types::Theme as AppTheme;
 use std::sync::Arc;
@@ -208,9 +208,7 @@ impl Render for SettingsPage {
                                     .items_center()
                                     .gap(px(12.0))
                                     .child(
-                                        div()
-                                            .text_2xl()
-                                            .child("⚙️")
+                                        Icon::new(IconName::Settings).large().text_color(title_color)
                                     )
                                     .child(
                                         div()

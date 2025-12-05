@@ -23,6 +23,7 @@ url = "2.4"
 # GPUI dependencies
 gpui = { version = "*" }
 gpui-component = { version = "*" }
+gpui-component-assets = { version = "*" }
 reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.4.2" }
 
 # Configuration

@@ -24,7 +24,8 @@ fn main() -> Result<()> {
 
     tracing::info!("🚀 MageKit 视频下载器启动 - 完整GUI架构实现");
 
-    let app = Application::new();
+    // 注册图标资源
+    let app = Application::new().with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
         // 必须在GPUI组件使用前调用

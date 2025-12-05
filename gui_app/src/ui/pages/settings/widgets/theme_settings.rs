@@ -4,7 +4,7 @@ use crate::ui::widgets::Section;
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_component::{ActiveTheme, IconName, ThemeRegistry};
+use gpui_component::{ActiveTheme, Icon, IconName, ThemeRegistry};
 use std::sync::Arc;
 
 /// 主题设置卡片
@@ -47,16 +47,19 @@ impl RenderOnce for ThemeSettingsCard {
         // 获取所有可用主题
         let themes = ThemeRegistry::global(cx).sorted_themes();
 
-        // 构建主题选项列表
-        let theme_names: Vec<SharedString> = themes.iter().map(|t| t.name.clone()).collect();
+        // 构建主题选项列表，包含名称和是否深色主题
+        let theme_items: Vec<(SharedString, bool)> = themes
+            .iter()
+            .map(|t| (t.name.clone(), t.mode.is_dark()))
+            .collect();
 
         // 找到当前主题的索引
-        let _selected_idx = theme_names
+        let _selected_idx = theme_items
             .iter()
-            .position(|n| n == &current_theme_name)
+            .position(|(n, _)| n == &current_theme_name)
             .unwrap_or(0);
 
-        Section::new("🎨 外观").child(
+        Section::new_with_icon("外观", IconName::Palette).child(
             div()
                 .p(px(20.0))
                 .rounded(px(12.0))
@@ -79,7 +82,7 @@ impl RenderOnce for ThemeSettingsCard {
                                         .flex()
                                         .items_center()
                                         .gap(px(12.0))
-                                        .child(div().text_2xl().child("🖌️"))
+                                        .child(Icon::new(IconName::Palette).text_color(text_color))
                                         .child(
                                             div()
                                                 .flex()
@@ -108,13 +111,21 @@ impl RenderOnce for ThemeSettingsCard {
                                         .w(px(200.0))
                                         .dropdown_menu(move |menu, _window, _cx| {
                                             let mut m = menu;
-                                            for name in theme_names.iter() {
+                                            for (name, is_dark) in theme_items.iter() {
                                                 let theme_name = name.clone();
                                                 let is_current = theme_name == current_theme_name;
                                                 let handler = on_change.clone();
                                                 let click_name = theme_name.clone();
+                                                
+                                                // 深色主题用月亮图标，浅色主题用太阳图标
+                                                let icon = if *is_dark {
+                                                    IconName::Moon
+                                                } else {
+                                                    IconName::Sun
+                                                };
 
                                                 let item = PopupMenuItem::new(theme_name)
+                                                    .icon(icon)
                                                     .checked(is_current)
                                                     .on_click(move |_, window, cx| {
                                                         if let Some(h) = &handler {
