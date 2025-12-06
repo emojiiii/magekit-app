@@ -1,14 +1,15 @@
 //! 设置页面主组件
 
 use super::widgets::{
-    AboutSection, AdvancedSettingsCard, DownloadSettingsCard, ProxyMode, ProxySettingsCard,
-    ProxyTestStatus, ThemeSettingsCard,
+    AboutSection, AdvancedSettingsCard, CookieSettingsCard, DownloadSettingsCard, ProxyMode,
+    ProxySettingsCard, ProxyTestStatus, ThemeSettingsCard,
 };
 use crate::app::AppState;
 use gpui::*;
 use gpui_component::input::InputState;
 use gpui_component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
 use magekit_shared::types::Theme as AppTheme;
+use magekit_shared::PlatformCookie;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -29,6 +30,11 @@ pub struct SettingsPage {
     proxy_url: String,
     proxy_input: Entity<InputState>,
     proxy_test_status: ProxyTestStatus,
+
+    // Cookie 设置
+    cookies: Vec<PlatformCookie>,
+    cookie_platform_input: Entity<InputState>,
+    cookie_content_input: Entity<InputState>,
 
     // 高级设置
     auto_check_updates: bool,
@@ -72,6 +78,17 @@ impl SettingsPage {
             state
         });
 
+        // 加载 Cookie 配置
+        let cookies = config.advanced.cookies.clone();
+
+        // 创建 Cookie 输入框状态
+        let cookie_platform_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("例如: bilibili, youtube")
+        });
+        let cookie_content_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("粘贴完整的 Cookie 字符串")
+        });
+
         Self {
             app_state,
             download_path,
@@ -83,6 +100,9 @@ impl SettingsPage {
             proxy_url,
             proxy_input,
             proxy_test_status: ProxyTestStatus::Idle,
+            cookies,
+            cookie_platform_input,
+            cookie_content_input,
             auto_check_updates: config.tools.auto_update,
             debug_mode: matches!(
                 config.advanced.log_level,
@@ -136,6 +156,51 @@ impl SettingsPage {
         self.debug_mode = enabled;
         self.has_changes = true;
         self.save_settings(cx);
+    }
+
+    /// 添加新的 Cookie
+    fn add_cookie(&mut self, cookie: PlatformCookie, window: &mut Window, cx: &mut Context<Self>) {
+        // 检查是否已存在相同平台的 Cookie
+        if let Some(existing) = self.cookies.iter_mut().find(|c| c.platform == cookie.platform) {
+            // 更新现有的 Cookie
+            existing.cookie = cookie.cookie;
+            existing.enabled = cookie.enabled;
+        } else {
+            // 添加新的 Cookie
+            self.cookies.push(cookie);
+        }
+
+        // 清空输入框
+        self.cookie_platform_input.update(cx, |state, cx| {
+            state.set_value("", window, cx);
+        });
+        self.cookie_content_input.update(cx, |state, cx| {
+            state.set_value("", window, cx);
+        });
+
+        self.has_changes = true;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    /// 删除 Cookie
+    fn delete_cookie(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.cookies.len() {
+            self.cookies.remove(index);
+            self.has_changes = true;
+            self.save_settings(cx);
+            cx.notify();
+        }
+    }
+
+    /// 切换 Cookie 启用状态
+    fn toggle_cookie(&mut self, index: usize, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(cookie) = self.cookies.get_mut(index) {
+            cookie.enabled = enabled;
+            self.has_changes = true;
+            self.save_settings(cx);
+            cx.notify();
+        }
     }
 
     fn set_proxy_mode(&mut self, mode: ProxyMode, cx: &mut Context<Self>) {
@@ -271,6 +336,7 @@ impl SettingsPage {
         let theme_name = self.theme_name.to_string();
         let proxy_mode = self.proxy_mode;
         let proxy_url = self.proxy_url.clone();
+        let cookies = self.cookies.clone();
 
         cx.spawn(async move |_this, _cx| {
             // 获取当前配置并更新
@@ -312,6 +378,8 @@ impl SettingsPage {
                 } else {
                     magekit_shared::LogLevel::Info
                 };
+                // 保存 Cookie 设置
+                config.advanced.cookies = cookies;
 
                 // 使用 runtime 保存配置
                 app_state.runtime.block_on(async {
@@ -427,6 +495,31 @@ impl Render for SettingsPage {
                                                 this.test_proxy(cx);
                                             });
                                         }
+                                    })
+                            })
+                            // Cookie 设置
+                            .child({
+                                let cookies = self.cookies.clone();
+                                let platform_input = self.cookie_platform_input.clone();
+                                let cookie_input = self.cookie_content_input.clone();
+                                let entity = cx.entity().clone();
+                                let entity2 = cx.entity().clone();
+                                let entity3 = cx.entity().clone();
+                                CookieSettingsCard::new(cookies, platform_input, cookie_input)
+                                    .on_add(move |cookie, window, cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.add_cookie(cookie, window, cx);
+                                        });
+                                    })
+                                    .on_delete(move |index, _window, cx| {
+                                        let _ = entity2.update(cx, |this, cx| {
+                                            this.delete_cookie(index, cx);
+                                        });
+                                    })
+                                    .on_toggle(move |index, enabled, _window, cx| {
+                                        let _ = entity3.update(cx, |this, cx| {
+                                            this.toggle_cookie(index, enabled, cx);
+                                        });
                                     })
                             })
                             // 高级设置

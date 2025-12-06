@@ -134,15 +134,34 @@ impl ToolManager {
     }
 
     /// 获取视频信息
-    pub async fn get_video_info(&self, url: &str) -> DownloadResult<VideoInfo> {
-        self.downloader.get_video_info(url).await
+    /// 
+    /// # 参数
+    /// - `url`: 视频 URL
+    /// - `cookies`: 可选的平台 Cookie 列表
+    pub async fn get_video_info(&self, url: &str, cookies: Option<&[magekit_shared::PlatformCookie]>) -> DownloadResult<VideoInfo> {
+        self.downloader.get_video_info(url, cookies).await
+    }
+
+    /// 获取频道/作者的所有视频列表
+    /// 
+    /// # 参数
+    /// - `url`: 频道或播放列表 URL
+    /// - `cookies`: 可选的平台 Cookie 列表
+    pub async fn get_channel_videos(&self, url: &str, cookies: Option<&[magekit_shared::PlatformCookie]>) -> DownloadResult<magekit_shared::ChannelInfo> {
+        self.downloader.get_channel_videos(url, cookies).await
     }
 
     /// 开始下载任务
+    /// 
+    /// # 参数
+    /// - `url`: 视频 URL
+    /// - `options`: 下载选项
+    /// - `cookies`: 可选的平台 Cookie 列表
     pub async fn start_download(
         &self,
         url: &str,
         options: DownloadOptions,
+        cookies: Option<&[magekit_shared::PlatformCookie]>,
     ) -> DownloadResult<TaskId> {
         let task_id = Uuid::new_v4();
 
@@ -151,7 +170,7 @@ impl ToolManager {
         task_status.state = TaskState::Queued;
 
         // 生成输出路径
-        let video_info = self.get_video_info(url).await?;
+        let video_info = self.get_video_info(url, cookies).await?;
         let output_path = generate_output_path(
             &options.output_path,
             &video_info.title,
@@ -187,6 +206,7 @@ impl ToolManager {
         let tasks = self.tasks.clone();
         let update_tx = self.update_tx.clone();
         let url_clone = url.to_string();
+        let cookies_owned: Option<Vec<magekit_shared::PlatformCookie>> = cookies.map(|c| c.to_vec());
 
         tokio::spawn(async move {
             Self::run_download_task(
@@ -197,6 +217,7 @@ impl ToolManager {
                 tasks,
                 update_tx,
                 cancel_rx,
+                cookies_owned,
             ).await;
         });
 
@@ -307,6 +328,7 @@ impl ToolManager {
         tasks: Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
         _update_tx: mpsc::Sender<ToolManagerEvent>,
         mut cancel_rx: mpsc::Receiver<()>,
+        cookies: Option<Vec<magekit_shared::PlatformCookie>>,
     ) {
         // 创建进度通道
         let (progress_tx, mut progress_rx) = mpsc::channel(1000);
@@ -378,7 +400,7 @@ impl ToolManager {
 
         // 执行下载
         let download_result = tokio::select! {
-            result = downloader.start_download(task_id, &url, options, progress_tx) => {
+            result = downloader.start_download(task_id, &url, options, progress_tx, cookies.as_deref()) => {
                 result
             }
             _ = cancel_task => {

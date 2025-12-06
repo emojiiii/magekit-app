@@ -54,3 +54,6 @@ rfd = "0.15"
 
 # HTTP 客户端（用于加载远程图片）
 reqwest_client = { workspace = true }
+
+# 临时文件（用于 Cookie）
+tempfile = "3"

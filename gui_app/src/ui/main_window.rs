@@ -10,7 +10,7 @@ use crate::ui::layout::{
     AppLayout, 
     not_found_page
 };
-use crate::ui::pages::{HomePage, ToolsPage, SettingsPage, TasksPage};
+use crate::ui::pages::{HomePage, ToolsPage, SettingsPage, TasksPage, ChannelPage};
 use std::sync::Arc;
 
 /// 主窗口组件
@@ -26,6 +26,8 @@ pub struct MainWindow {
     tools_page: Entity<ToolsPage>,
     /// 缓存的设置页 Entity
     settings_page: Entity<SettingsPage>,
+    /// 缓存的频道页 Entity
+    channel_page: Entity<ChannelPage>,
 }
 
 impl MainWindow {
@@ -36,6 +38,7 @@ impl MainWindow {
         let tasks_page = cx.new(|cx| TasksPage::new(app_state.clone(), window, cx));
         let tools_page = cx.new(|cx| ToolsPage::new(app_state.clone(), window, cx));
         let settings_page = cx.new(|cx| SettingsPage::new(app_state.clone(), window, cx));
+        let channel_page = cx.new(|cx| ChannelPage::new(app_state.clone(), window, cx));
         
         Self {
             app_state,
@@ -43,6 +46,7 @@ impl MainWindow {
             tasks_page,
             tools_page,
             settings_page,
+            channel_page,
         }
     }
 }
@@ -56,6 +60,7 @@ impl Render for MainWindow {
         let tasks_page = self.tasks_page.clone();
         let tools_page = self.tools_page.clone();
         let settings_page = self.settings_page.clone();
+        let channel_page = self.channel_page.clone();
         
         div()
             .flex()
@@ -78,6 +83,12 @@ impl Render for MainWindow {
                             Route::new()
                                 .path("tasks")
                                 .element(tasks_page)
+                        )
+                        .child(
+                            // 频道页面 - 使用缓存的 Entity
+                            Route::new()
+                                .path("channel")
+                                .element(channel_page)
                         )
                         .child(
                             // 工具管理页面 - 使用缓存的 Entity

@@ -151,11 +151,17 @@ impl TaskStatus {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.state, TaskState::Queued | TaskState::Downloading | TaskState::Paused)
+        matches!(
+            self.state,
+            TaskState::Queued | TaskState::Downloading | TaskState::Paused
+        )
     }
 
     pub fn is_finished(&self) -> bool {
-        matches!(self.state, TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled)
+        matches!(
+            self.state,
+            TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
+        )
     }
 }
 
@@ -206,7 +212,8 @@ pub struct DownloadConfig {
 impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
-            default_output_path: dirs::download_dir().unwrap_or_else(|| PathBuf::from("./downloads")),
+            default_output_path: dirs::download_dir()
+                .unwrap_or_else(|| PathBuf::from("./downloads")),
             max_concurrent_downloads: 3,
             default_format: "best".to_string(),
             embed_metadata: true,
@@ -324,7 +331,7 @@ impl Theme {
             Theme::Custom(config) => config.name.clone(),
         }
     }
-    
+
     /// 是否为暗色模式
     pub fn is_dark(&self) -> bool {
         match self {
@@ -354,6 +361,9 @@ pub struct AdvancedConfig {
     pub speed_limit: Option<u64>,
     pub retry_times: u32,
     pub timeout: Duration,
+    /// 平台 Cookie 配置列表
+    #[serde(default)]
+    pub cookies: Vec<PlatformCookie>,
 }
 
 impl Default for AdvancedConfig {
@@ -364,6 +374,33 @@ impl Default for AdvancedConfig {
             speed_limit: None,
             retry_times: 3,
             timeout: Duration::from_secs(30),
+            cookies: Vec::new(),
+        }
+    }
+}
+
+/// 平台 Cookie 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformCookie {
+    /// 平台名称/域名，如 "bilibili", "youtube", "bilibili.com"
+    pub platform: String,
+    /// Cookie 内容（Netscape 格式或浏览器格式的 cookie 字符串）
+    pub cookie: String,
+    /// 是否启用
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl PlatformCookie {
+    pub fn new(platform: String, cookie: String) -> Self {
+        Self {
+            platform,
+            cookie,
+            enabled: true,
         }
     }
 }
@@ -438,4 +475,51 @@ pub enum NotificationType {
     Success,
     Warning,
     Error,
+}
+
+// ============================================================================
+// 频道/作者相关类型
+// ============================================================================
+
+/// 频道/播放列表信息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelInfo {
+    /// 频道/播放列表 ID
+    pub id: String,
+    /// 频道/播放列表名称
+    pub title: String,
+    /// 频道/播放列表 URL
+    pub url: String,
+    /// 上传者/频道名称
+    pub uploader: Option<String>,
+    /// 频道描述
+    pub description: Option<String>,
+    /// 视频数量
+    pub video_count: usize,
+    /// 频道缩略图
+    pub thumbnail: Option<String>,
+    /// 视频条目列表
+    pub entries: Vec<ChannelVideoEntry>,
+}
+
+/// 频道中的视频条目（精简信息）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelVideoEntry {
+    /// 视频 ID
+    pub id: String,
+    /// 视频标题
+    pub title: String,
+    /// 视频 URL
+    pub url: String,
+    /// 视频时长（秒）
+    pub duration: Option<u64>,
+    /// 缩略图 URL
+    pub thumbnail: Option<String>,
+    /// 上传者
+    pub uploader: Option<String>,
+    /// 在播放列表中的索引
+    pub playlist_index: Option<u32>,
+    /// 是否被选中下载
+    #[serde(default)]
+    pub selected: bool,
 }

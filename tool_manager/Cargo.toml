@@ -20,6 +20,7 @@ reqwest = { workspace = true, features = ["stream"] }
 url = { workspace = true }
 tracing = { workspace = true }
 toml = { workspace = true }
+tempfile = "3"
 
 # 异步运行时和进程管理
 async-trait = "0.1"
