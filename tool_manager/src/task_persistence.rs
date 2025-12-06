@@ -153,14 +153,23 @@ impl TaskPersistence {
         Ok(())
     }
 
-    /// 更新任务状态
+    /// 更新任务状态（如果不存在则添加）
     pub fn update_task_status(&mut self, task_id: TaskId, status: TaskStatus) -> ToolManagerResult<()> {
         if let Some(task) = self.tasks.tasks.get_mut(&task_id) {
+            // 任务已存在，更新状态
             task.status = status;
-            
-            if self.auto_save {
-                self.tasks.save()?;
-            }
+        } else {
+            // 任务不存在，添加新任务
+            let persisted_task = PersistedTask {
+                status,
+                retry_count: 0,
+                max_retries: 3,  // 默认最大重试次数
+            };
+            self.tasks.upsert_task(persisted_task);
+        }
+        
+        if self.auto_save {
+            self.tasks.save()?;
         }
         Ok(())
     }

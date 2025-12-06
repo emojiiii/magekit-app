@@ -62,6 +62,21 @@ impl AppState {
 
         // 初始化任务列表
         let tasks = Arc::new(RwLock::new(HashMap::new()));
+        
+        // 加载持久化的任务
+        let tool_manager_clone = tool_manager.clone();
+        let tasks_clone = tasks.clone();
+        runtime.block_on(async move {
+            let restored_tasks = tool_manager_clone.get_all_tasks().await;
+            if !restored_tasks.is_empty() {
+                tracing::info!("📦 恢复 {} 个持久化任务", restored_tasks.len());
+                let mut tasks_map = tasks_clone.write().await;
+                for task_status in restored_tasks {
+                    tracing::debug!("  - {} ({:?})", task_status.title.as_deref().unwrap_or("Unknown"), task_status.state);
+                    tasks_map.insert(task_status.id, task_status);
+                }
+            }
+        });
 
         Ok(Self {
             tool_manager,
@@ -111,6 +126,22 @@ impl AppState {
     /// 接收事件
     pub async fn recv_event(&mut self) -> Option<AppEvent> {
         self.event_rx.recv().await
+    }
+    
+    /// 保存任务状态到持久化存储
+    pub fn save_task_to_persistence(&self, task_status: &TaskStatus) {
+        let tool_manager = self.tool_manager.clone();
+        let task_status = task_status.clone();
+        
+        self.runtime.spawn(async move {
+            if let Err(e) = tool_manager.save_task_status(&task_status).await {
+                tracing::error!("🚨 保存任务状态失败: {}", e);
+            } else {
+                tracing::info!("💾 任务状态已保存: {} ({:?})", 
+                    task_status.title.as_deref().unwrap_or("Unknown"), 
+                    task_status.state);
+            }
+        });
     }
 }
 

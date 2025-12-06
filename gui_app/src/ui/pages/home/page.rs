@@ -303,9 +303,12 @@ pub struct HomePage {
 
 impl HomePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let default_path = dirs::download_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "~/Downloads".to_string());
+        // 从配置读取默认下载路径
+        let default_path = app_state.config.blocking_read()
+            .download
+            .default_output_path
+            .to_string_lossy()
+            .to_string();
 
         // 创建 URL 输入框状态
         let url_input = cx.new(|cx| {
@@ -504,9 +507,12 @@ impl HomePage {
             let tasks = app_state.tasks.clone();
             let runtime = app_state.runtime.clone();
             let task_status_clone = task_status.clone();
+            let app_state_for_save = app_state.clone();
             runtime.spawn(async move {
                 let mut tasks = tasks.write().await;
-                tasks.insert(task_id, task_status_clone);
+                tasks.insert(task_id, task_status_clone.clone());
+                // 立即保存新创建的任务到持久化存储
+                app_state_for_save.save_task_to_persistence(&task_status_clone);
             });
         }
 
@@ -555,12 +561,15 @@ impl HomePage {
             // 首先将任务状态更新为 Downloading
             {
                 let tasks = tasks_for_update.clone();
+                let app_state_clone = app_state_for_cleanup.clone();
                 smol::unblock(move || {
                     // 使用 blocking_write 同步更新
                     let mut tasks = tasks.blocking_write();
                     if let Some(task) = tasks.get_mut(&task_id) {
                         task.state = TaskState::Downloading;
                         task.started_at = Some(std::time::SystemTime::now());
+                        // 保存任务状态（开始下载时）
+                        app_state_clone.save_task_to_persistence(task);
                     }
                 })
                 .await;
@@ -819,9 +828,12 @@ impl HomePage {
             let tasks = app_state.tasks.clone();
             let runtime = app_state.runtime.clone();
             let task_status_clone = task_status.clone();
+            let app_state_for_save = app_state.clone();
             runtime.spawn(async move {
                 let mut tasks = tasks.write().await;
-                tasks.insert(task_id, task_status_clone);
+                tasks.insert(task_id, task_status_clone.clone());
+                // 立即保存新创建的任务到持久化存储
+                app_state_for_save.save_task_to_persistence(&task_status_clone);
             });
         }
 

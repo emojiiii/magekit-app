@@ -166,6 +166,8 @@ impl TasksPage {
                 let mut tasks = app_state.tasks.blocking_write();
                 if let Some(task) = tasks.get_mut(&task_id) {
                     task.state = TaskState::Paused;
+                    // 保存任务状态
+                    app_state.save_task_to_persistence(task);
                 }
             }).await;
             
@@ -267,6 +269,7 @@ impl TasksPage {
                     // 更新最终状态
                     let tasks = tasks_for_update.clone();
                     let result_for_task = result.as_ref().map(|p| p.clone()).map_err(|e| e.to_string());
+                    let app_state_for_save = app_state_for_cleanup.clone();
                     smol::unblock(move || {
                         let mut tasks = tasks.blocking_write();
                         if let Some(task) = tasks.get_mut(&task_id) {
@@ -293,6 +296,8 @@ impl TasksPage {
                                     }
                                 }
                             }
+                            // 保存任务状态到持久化存储
+                            app_state_for_save.save_task_to_persistence(task);
                         }
                     }).await;
                     
@@ -333,6 +338,8 @@ impl TasksPage {
                 if let Some(task) = tasks.get_mut(&task_id) {
                     task.state = TaskState::Cancelled;
                     task.completed_at = Some(std::time::SystemTime::now());
+                    // 保存任务状态
+                    app_state.save_task_to_persistence(task);
                 }
             }).await;
             

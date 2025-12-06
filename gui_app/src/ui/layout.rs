@@ -8,7 +8,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::*;
-use gpui_router::{IntoLayout, NavLink, Outlet};
+use gpui_router::{IntoLayout, NavLink, Outlet, use_location};
 
 // ============================================================================
 // 页面包装器组件
@@ -176,6 +176,10 @@ fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
     let hover_bg = cx.theme().sidebar_accent;
     let text_color = cx.theme().sidebar_foreground;
     let hover_text = cx.theme().sidebar_accent_foreground;
+    
+    // 获取当前路由
+    let location = use_location(cx);
+    let current_path = location.pathname.clone();
 
     div()
         .w(px(200.0))
@@ -189,7 +193,10 @@ fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
             div().flex().flex_col().p(px(8.0)).gap(px(4.0)).children(
                 nav_items
                     .into_iter()
-                    .map(move |item| render_nav_item(item, text_color, hover_bg, hover_text)),
+                    .map(move |item| {
+                        let is_active = current_path == item.path;
+                        render_nav_item(item, text_color, hover_bg, hover_text, is_active)
+                    }),
             ),
         )
         .child(
@@ -214,25 +221,33 @@ fn render_nav_item(
     text_color: Hsla,
     hover_bg: Hsla,
     hover_text: Hsla,
+    is_active: bool,
 ) -> impl IntoElement {
-    NavLink::new().to(item.path).child(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(6.0))
-            .text_color(text_color)
-            .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-            .child(div().text_base().child(item.icon))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(item.label),
-            ),
-    )
+    NavLink::new()
+        .to(item.path)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .px(px(12.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .when(is_active, |this| {
+                    this.bg(hover_bg).text_color(hover_text)
+                })
+                .when(!is_active, |this| {
+                    this.text_color(text_color)
+                })
+                .hover(move |this| this.bg(hover_bg).text_color(hover_text))
+                .child(div().text_base().child(item.icon))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(item.label),
+                ),
+        )
 }
 
 /// 首页 - 下载面板 + 快速操作
