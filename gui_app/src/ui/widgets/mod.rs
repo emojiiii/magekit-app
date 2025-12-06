@@ -4,8 +4,6 @@
 
 mod card;
 mod section;
-mod checkbox;
 mod status_badge;
 
 pub use section::*;
-pub use checkbox::*;

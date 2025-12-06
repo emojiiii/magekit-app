@@ -4,7 +4,6 @@ use magekit_shared::{get_temp_dir, ToolType, UpdateChannel};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::process::Command;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
 

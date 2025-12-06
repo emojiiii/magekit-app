@@ -9,6 +9,7 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::spinner::Spinner;
+use gpui_component::scroll::{Scrollbar, ScrollbarState, ScrollbarAxis};
 use gpui_component::{ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_router::use_navigate;
 use magekit_shared::{ChannelInfo, ChannelVideoEntry, TaskState, TaskStatus};
@@ -69,6 +70,8 @@ pub struct ChannelPage {
     current_page: usize,
     /// VirtualList 滚动句柄
     scroll_handle: VirtualListScrollHandle,
+    /// 滚动条状态
+    scroll_state: ScrollbarState,
     /// 预计算的 item sizes
     item_sizes: Rc<Vec<Size<Pixels>>>,
 }
@@ -96,6 +99,7 @@ impl ChannelPage {
             current_tab_index: None,
             current_page: 0,
             scroll_handle: VirtualListScrollHandle::new(),
+            scroll_state: ScrollbarState::default(),
             item_sizes: Rc::new(Vec::new()),
         }
     }
@@ -687,17 +691,11 @@ impl ChannelPage {
                                 .id(SharedString::from(format!("video-item-{}", global_idx)))
                                 .w_full()
                                 .h(px(VIDEO_ITEM_HEIGHT))
-                                .p_3()
-                                .rounded_md()
-                                .border_1()
-                                .when(is_selected, |div| {
-                                    div.border_color(primary.opacity(0.5))
-                                        .bg(primary.opacity(0.1))
-                                })
-                                .when(!is_selected, |div| {
-                                    div.border_color(border_color).bg(secondary.opacity(0.3))
-                                })
-                                .hover(|style| style.bg(secondary))
+                                .px_3()
+                                .py_2()
+                                .border_b_1()
+                                .border_color(border_color.opacity(0.5))
+                                .hover(|style| style.bg(secondary.opacity(0.5)))
                                 .cursor_pointer()
                                 .on_click(move |_, _, cx| {
                                     let _ = entity_clone.update(cx, |this, cx| {
@@ -710,46 +708,52 @@ impl ChannelPage {
                                         .items_center()
                                         .gap_3()
                                         .h_full()
-                                        // 复选框
+                                        // 复选框 - 更现代的样式
                                         .child(
                                             div()
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .w(px(24.0))
-                                                .h(px(24.0))
+                                                .w(px(20.0))
+                                                .h(px(20.0))
                                                 .rounded(px(4.0))
-                                                .bg(if is_selected { primary } else { muted })
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(if is_selected {
-                                                            primary_foreground
-                                                        } else {
-                                                            muted_foreground
-                                                        })
-                                                        .child(if is_selected { "✓" } else { "" }),
-                                                ),
+                                                .border_1()
+                                                .when(is_selected, |d| {
+                                                    d.bg(primary)
+                                                        .border_color(primary)
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .font_weight(FontWeight::BOLD)
+                                                                .text_color(primary_foreground)
+                                                                .child("✓")
+                                                        )
+                                                })
+                                                .when(!is_selected, |d| {
+                                                    d.border_color(muted_foreground.opacity(0.5))
+                                                        .bg(gpui::transparent_black())
+                                                }),
                                         )
-                                        // 序号
+                                        // 序号 - 更紧凑
                                         .child(
                                             div()
-                                                .w(px(32.0))
-                                                .text_sm()
+                                                .min_w(px(40.0))
+                                                .text_xs()
                                                 .text_color(muted_foreground)
                                                 .child(format!("#{}", global_idx + 1)),
                                         )
-                                        // 缩略图
+                                        // 缩略图 - 圆角更大
                                         .child(
                                             div()
-                                                .w(px(80.0))
-                                                .h(px(45.0))
-                                                .rounded(px(4.0))
+                                                .w(px(96.0))
+                                                .h(px(54.0))
+                                                .rounded(px(6.0))
                                                 .bg(muted)
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
                                                 .overflow_hidden()
+                                                .flex_shrink_0()
                                                 .when_some(entry_thumbnail.clone(), |el, thumb_url| {
                                                     el.child(
                                                         img(thumb_url).size_full().object_fit(ObjectFit::Cover),
@@ -758,7 +762,7 @@ impl ChannelPage {
                                                 .when(entry_thumbnail.is_none(), |el| {
                                                     el.child(
                                                         Icon::new(IconName::Folder)
-                                                            .size_4()
+                                                            .size_5()
                                                             .text_color(muted_foreground),
                                                     )
                                                 }),
@@ -769,8 +773,10 @@ impl ChannelPage {
                                                 .flex_1()
                                                 .flex()
                                                 .flex_col()
-                                                .gap_1()
+                                                .justify_center()
+                                                .gap(px(4.0))
                                                 .overflow_hidden()
+                                                .min_w_0()
                                                 // 标题
                                                 .child(
                                                     div()
@@ -853,17 +859,31 @@ impl ChannelPage {
             )
             // Tab 选择器
             .when_some(tab_buttons, |el, tabs| el.child(tabs))
-            // 视频列表 - 使用 VirtualList
+            // 视频列表 - 使用 VirtualList 和 Scrollbar
             .child(
                 div()
                     .id("video-list-container")
                     .flex_1()
                     .w_full()
                     .overflow_hidden()
+                    .relative()
                     .border_1()
                     .border_color(border_color)
                     .rounded_md()
                     .child(video_list)
+                    // 添加垂直滚动条
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .bottom_0()
+                            .w(px(12.))
+                            .child(
+                                Scrollbar::both(&self.scroll_state, &self.scroll_handle)
+                                    .axis(ScrollbarAxis::Vertical)
+                            )
+                    )
             )
             // 分页控件（底部）
             .when(total_pages > 1, |el| {
