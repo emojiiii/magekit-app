@@ -109,7 +109,6 @@ impl RenderOnce for AppLayout {
         let bg_color = cx.theme().sidebar;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
-        let muted_color = cx.theme().muted_foreground;
         let content_bg = cx.theme().background;
 
         div()
@@ -140,8 +139,7 @@ impl RenderOnce for AppLayout {
                                     .text_color(title_color)
                                     .child("MageKit"),
                             ),
-                    )
-                    .child(div().text_sm().text_color(muted_color).child("v0.2.0-dev")),
+                    ),
             )
             .child(
                 // 主内容区域
@@ -172,9 +170,8 @@ impl RenderOnce for AppLayout {
 fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
     let bg_color = cx.theme().sidebar;
     let border_color = cx.theme().border;
-    let muted_color = cx.theme().muted_foreground;
-    let hover_bg = cx.theme().sidebar_accent;
     let text_color = cx.theme().sidebar_foreground;
+    let hover_bg = cx.theme().sidebar_accent;
     let hover_text = cx.theme().sidebar_accent_foreground;
     
     // 获取当前路由
@@ -198,20 +195,6 @@ fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
                         render_nav_item(item, text_color, hover_bg, hover_text, is_active)
                     }),
             ),
-        )
-        .child(
-            // 底部信息
-            div()
-                .mt_auto()
-                .p(px(12.0))
-                .border_t_1()
-                .border_color(border_color)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted_color)
-                        .child("基于 GPUI 构建"),
-                ),
         )
 }
 
