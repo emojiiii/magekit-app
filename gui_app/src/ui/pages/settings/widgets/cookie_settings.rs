@@ -10,6 +10,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{IconName, Sizable};
 use magekit_shared::PlatformCookie;
+use std::rc::Rc;
 
 /// Cookie 设置卡片
 pub struct CookieSettingsCard {
@@ -22,9 +23,9 @@ pub struct CookieSettingsCard {
     /// 添加回调
     on_add: Option<Box<dyn Fn(PlatformCookie, &mut Window, &mut App) + 'static>>,
     /// 删除回调
-    on_delete: Option<Box<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
+    on_delete: Option<Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
     /// 切换启用回调
-    on_toggle: Option<Box<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
 }
 
 impl CookieSettingsCard {
@@ -49,12 +50,12 @@ impl CookieSettingsCard {
     }
 
     pub fn on_delete(mut self, handler: impl Fn(usize, &mut Window, &mut App) + 'static) -> Self {
-        self.on_delete = Some(Box::new(handler));
+        self.on_delete = Some(Rc::new(handler));
         self
     }
 
     pub fn on_toggle(mut self, handler: impl Fn(usize, bool, &mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle = Some(Box::new(handler));
+        self.on_toggle = Some(Rc::new(handler));
         self
     }
 }
@@ -96,8 +97,8 @@ struct CookieSettingsInner {
     platform_input: Entity<InputState>,
     cookie_input: Entity<InputState>,
     on_add: Option<Box<dyn Fn(PlatformCookie, &mut Window, &mut App) + 'static>>,
-    on_delete: Option<Box<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
-    on_toggle: Option<Box<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
+    on_delete: Option<Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
 }
 
 impl RenderOnce for CookieSettingsInner {
@@ -289,8 +290,8 @@ impl RenderOnce for CookieSettingsInner {
 fn render_cookie_item(
     index: usize,
     cookie: PlatformCookie,
-    on_delete: &Option<Box<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
-    on_toggle: &Option<Box<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
+    on_delete: &Option<Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
+    on_toggle: &Option<Rc<dyn Fn(usize, bool, &mut Window, &mut App) + 'static>>,
     _card_bg: Hsla,
     border_color: Hsla,
     title_color: Hsla,
@@ -369,15 +370,11 @@ fn render_cookie_item(
                         .small()
                         .ghost()
                         .icon(if is_enabled { IconName::Check } else { IconName::Close });
-                    
+
                     if let Some(handler) = on_toggle {
-                        let handler = handler as *const _;
+                        let handler = Rc::clone(handler);
                         btn = btn.on_click(move |_ev, window, cx| {
-                            // Safety: handler 生命周期由父组件管理
-                            unsafe {
-                                let handler = &*(handler as *const Box<dyn Fn(usize, bool, &mut Window, &mut App)>);
-                                handler(index, !is_enabled, window, cx);
-                            }
+                            handler(index, !is_enabled, window, cx);
                         });
                     }
                     btn
@@ -389,15 +386,11 @@ fn render_cookie_item(
                         .danger()
                         .ghost()
                         .icon(IconName::Delete);
-                    
+
                     if let Some(handler) = on_delete {
-                        let handler = handler as *const _;
+                        let handler = Rc::clone(handler);
                         btn = btn.on_click(move |_ev, window, cx| {
-                            // Safety: handler 生命周期由父组件管理
-                            unsafe {
-                                let handler = &*(handler as *const Box<dyn Fn(usize, &mut Window, &mut App)>);
-                                handler(index, window, cx);
-                            }
+                            handler(index, window, cx);
                         });
                     }
                     btn
