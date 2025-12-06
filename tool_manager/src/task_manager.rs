@@ -2,13 +2,13 @@ use crate::downloader::{DownloadProgress, VideoDownloader};
 use crate::error::{DownloadError, DownloadResult, ToolManagerResult};
 use crate::storage::ToolStorage;
 use crate::task_persistence::TaskPersistence;
-use crate::task_queue::{TaskQueue, QueuedTask, TaskPriority, QueueStats};
-use crate::{updater::UpdateInfo, config::ConfigManager};
-use magekit_shared::{TaskStatus, TaskState, TaskUpdate, VideoInfo, DownloadOptions, TaskId};
+use crate::task_queue::{QueueStats, QueuedTask, TaskPriority, TaskQueue};
+use crate::{config::ConfigManager, updater::UpdateInfo};
+use magekit_shared::{DownloadOptions, TaskId, TaskState, TaskStatus, TaskUpdate, VideoInfo};
 use magekit_shared::{UpdateChannel, generate_output_path};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use uuid::Uuid;
 
 /// 工具管理器
@@ -84,14 +84,17 @@ impl ToolManager {
         let config_manager = ConfigManager::new_sync()?;
 
         let (update_tx, _) = mpsc::channel(1000);
-        
+
         // 创建任务队列（默认3个并发）
-        let max_concurrent = config_manager.config().download_defaults.max_concurrent_downloads;
+        let max_concurrent = config_manager
+            .config()
+            .download_defaults
+            .max_concurrent_downloads;
         let (task_queue, _queue_rx) = TaskQueue::new(max_concurrent);
-        
+
         // 创建任务持久化
         let persistence = TaskPersistence::new().unwrap_or_default();
-        
+
         // 获取最大重试次数
         let max_retries = config_manager.config().download_defaults.retry_times;
 
@@ -134,25 +137,33 @@ impl ToolManager {
     }
 
     /// 获取视频信息
-    /// 
+    ///
     /// # 参数
     /// - `url`: 视频 URL
     /// - `cookies`: 可选的平台 Cookie 列表
-    pub async fn get_video_info(&self, url: &str, cookies: Option<&[magekit_shared::PlatformCookie]>) -> DownloadResult<VideoInfo> {
+    pub async fn get_video_info(
+        &self,
+        url: &str,
+        cookies: Option<&[magekit_shared::PlatformCookie]>,
+    ) -> DownloadResult<VideoInfo> {
         self.downloader.get_video_info(url, cookies).await
     }
 
     /// 获取频道/作者的所有视频列表
-    /// 
+    ///
     /// # 参数
     /// - `url`: 频道或播放列表 URL
     /// - `cookies`: 可选的平台 Cookie 列表
-    pub async fn get_channel_videos(&self, url: &str, cookies: Option<&[magekit_shared::PlatformCookie]>) -> DownloadResult<magekit_shared::ChannelInfo> {
+    pub async fn get_channel_videos(
+        &self,
+        url: &str,
+        cookies: Option<&[magekit_shared::PlatformCookie]>,
+    ) -> DownloadResult<magekit_shared::ChannelInfo> {
         self.downloader.get_channel_videos(url, cookies).await
     }
 
     /// 开始下载任务
-    /// 
+    ///
     /// # 参数
     /// - `url`: 视频 URL
     /// - `options`: 下载选项
@@ -174,17 +185,20 @@ impl ToolManager {
         let output_path = generate_output_path(
             &options.output_path,
             &video_info.title,
-            &video_info.formats
+            &video_info
+                .formats
                 .iter()
                 .find(|f| f.format_id == options.format_id)
                 .map(|f| f.ext.as_str())
                 .unwrap_or("mp4"),
-        ).map_err(|e| DownloadError::internal(e.to_string()))?;
+        )
+        .map_err(|e| DownloadError::internal(e.to_string()))?;
 
         task_status.output_path = Some(output_path.clone());
 
         // 发送任务创建事件
-        self.send_task_update(TaskUpdate::Created(task_status.clone())).await;
+        self.send_task_update(TaskUpdate::Created(task_status.clone()))
+            .await;
 
         // 创建任务句柄
         let (cancel_tx, cancel_rx) = mpsc::channel(1);
@@ -206,7 +220,8 @@ impl ToolManager {
         let tasks = self.tasks.clone();
         let update_tx = self.update_tx.clone();
         let url_clone = url.to_string();
-        let cookies_owned: Option<Vec<magekit_shared::PlatformCookie>> = cookies.map(|c| c.to_vec());
+        let cookies_owned: Option<Vec<magekit_shared::PlatformCookie>> =
+            cookies.map(|c| c.to_vec());
 
         tokio::spawn(async move {
             Self::run_download_task(
@@ -218,7 +233,8 @@ impl ToolManager {
                 update_tx,
                 cancel_rx,
                 cookies_owned,
-            ).await;
+            )
+            .await;
         });
 
         Ok(task_id)
@@ -239,10 +255,8 @@ impl ToolManager {
 
                 drop(tasks); // 释放锁
 
-                self.send_task_update(TaskUpdate::StateChanged(
-                    task_id,
-                    TaskState::Paused,
-                )).await;
+                self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Paused))
+                    .await;
 
                 Ok(())
             } else {
@@ -261,7 +275,8 @@ impl ToolManager {
     pub async fn resume_download(&self, task_id: TaskId) -> DownloadResult<()> {
         // 实际实现中，这里需要重新启动下载任务
         // 为了简化，我们只是更新状态
-        self.update_task_state(task_id, TaskState::Downloading).await
+        self.update_task_state(task_id, TaskState::Downloading)
+            .await
     }
 
     /// 取消下载任务
@@ -276,10 +291,8 @@ impl ToolManager {
 
             drop(tasks); // 释放锁
 
-            self.send_task_update(TaskUpdate::StateChanged(
-                task_id,
-                TaskState::Cancelled,
-            )).await;
+            self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Cancelled))
+                .await;
 
             Ok(())
         } else {
@@ -307,7 +320,8 @@ impl ToolManager {
             task.status.state = state.clone();
             drop(tasks);
 
-            self.send_task_update(TaskUpdate::StateChanged(task_id, state)).await;
+            self.send_task_update(TaskUpdate::StateChanged(task_id, state))
+                .await;
             Ok(())
         } else {
             Err(DownloadError::task_not_found(task_id))
@@ -316,7 +330,10 @@ impl ToolManager {
 
     /// 发送任务更新事件
     async fn send_task_update(&self, update: TaskUpdate) {
-        let _ = self.update_tx.send(ToolManagerEvent::TaskUpdate(update)).await;
+        let _ = self
+            .update_tx
+            .send(ToolManagerEvent::TaskUpdate(update))
+            .await;
     }
 
     /// 运行下载任务
@@ -342,48 +359,36 @@ impl ToolManager {
             while let Some(progress) = progress_rx.recv().await {
                 match progress {
                     DownloadProgress::Started { .. } => {
-                        Self::update_task_in_map(
-                            &tasks_clone,
-                            progress_task_id,
-                            |status| {
-                                status.state = TaskState::Downloading;
-                                status.started_at = Some(std::time::SystemTime::now());
-                            },
-                        ).await;
+                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                            status.state = TaskState::Downloading;
+                            status.started_at = Some(std::time::SystemTime::now());
+                        })
+                        .await;
                     }
                     DownloadProgress::Progress { percent, .. } => {
-                        Self::update_task_in_map(
-                            &tasks_clone,
-                            progress_task_id,
-                            |status| {
-                                status.progress = percent;
-                            },
-                        ).await;
+                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                            status.progress = percent;
+                        })
+                        .await;
                     }
                     DownloadProgress::Completed { output_path, .. } => {
-                        Self::update_task_in_map(
-                            &tasks_clone,
-                            progress_task_id,
-                            |status| {
-                                status.state = TaskState::Completed;
-                                status.progress = 100.0;
-                                status.completed_at = Some(std::time::SystemTime::now());
-                                status.output_path = Some(output_path);
-                            },
-                        ).await;
+                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                            status.state = TaskState::Completed;
+                            status.progress = 100.0;
+                            status.completed_at = Some(std::time::SystemTime::now());
+                            status.output_path = Some(output_path);
+                        })
+                        .await;
 
                         // 任务完成，退出循环
                         break;
                     }
                     DownloadProgress::Error { error, .. } => {
-                        Self::update_task_in_map(
-                            &tasks_clone,
-                            progress_task_id,
-                            |status| {
-                                status.state = TaskState::Failed(error.clone());
-                                status.completed_at = Some(std::time::SystemTime::now());
-                            },
-                        ).await;
+                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                            status.state = TaskState::Failed(error.clone());
+                            status.completed_at = Some(std::time::SystemTime::now());
+                        })
+                        .await;
                         break;
                     }
                 }
@@ -461,7 +466,7 @@ impl ToolManager {
         priority: TaskPriority,
     ) -> DownloadResult<TaskId> {
         let task_id = Uuid::new_v4();
-        
+
         // 创建队列任务
         let queued_task = QueuedTask {
             task_id,
@@ -470,25 +475,26 @@ impl ToolManager {
             priority,
             created_at: std::time::Instant::now(),
         };
-        
+
         // 创建任务状态
         let task_status = TaskStatus::new(task_id, url.to_string(), None);
-        
+
         // 添加到队列
         {
             let queue = self.task_queue.lock().await;
             queue.enqueue(queued_task).await;
         }
-        
+
         // 持久化任务
         {
             let mut persistence = self.persistence.lock().await;
             let _ = persistence.add_task(task_status.clone(), self.max_retries);
         }
-        
+
         // 发送任务创建事件
-        self.send_task_update(TaskUpdate::Created(task_status)).await;
-        
+        self.send_task_update(TaskUpdate::Created(task_status))
+            .await;
+
         tracing::info!("Task {} enqueued with priority {:?}", task_id, priority);
         Ok(task_id)
     }
@@ -530,9 +536,11 @@ impl ToolManager {
         // 检查任务是否存在且失败
         let task_info = {
             let tasks = self.tasks.read().await;
-            tasks.get(&task_id).map(|t| (t.status.clone(), t.retry_count, t.max_retries))
+            tasks
+                .get(&task_id)
+                .map(|t| (t.status.clone(), t.retry_count, t.max_retries))
         };
-        
+
         if let Some((status, retry_count, max_retries)) = task_info {
             if !matches!(status.state, TaskState::Failed(_)) {
                 return Err(DownloadError::task_operation_failed(
@@ -541,7 +549,7 @@ impl ToolManager {
                     "Task is not in failed state".to_string(),
                 ));
             }
-            
+
             if retry_count >= max_retries {
                 return Err(DownloadError::task_operation_failed(
                     task_id,
@@ -549,7 +557,7 @@ impl ToolManager {
                     format!("Max retries ({}) exceeded", max_retries),
                 ));
             }
-            
+
             // 更新重试次数
             {
                 let mut tasks = self.tasks.write().await;
@@ -558,13 +566,13 @@ impl ToolManager {
                     task.status.state = TaskState::Queued;
                 }
             }
-            
+
             // 更新持久化
             {
                 let mut persistence = self.persistence.lock().await;
                 let _ = persistence.increment_retry(task_id);
             }
-            
+
             // 重新加入队列
             let queued_task = QueuedTask {
                 task_id,
@@ -573,15 +581,20 @@ impl ToolManager {
                 priority: TaskPriority::Normal,
                 created_at: std::time::Instant::now(),
             };
-            
+
             {
                 let queue = self.task_queue.lock().await;
                 queue.enqueue(queued_task).await;
             }
-            
-            self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Queued)).await;
-            
-            tracing::info!("Task {} retry scheduled (attempt {})", task_id, retry_count + 1);
+
+            self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Queued))
+                .await;
+
+            tracing::info!(
+                "Task {} retry scheduled (attempt {})",
+                task_id,
+                retry_count + 1
+            );
             Ok(())
         } else {
             Err(DownloadError::task_not_found(task_id))
@@ -594,7 +607,7 @@ impl ToolManager {
             let persistence = self.persistence.lock().await;
             persistence.can_retry(task_id)
         };
-        
+
         if can_retry {
             match self.retry_task(task_id).await {
                 Ok(_) => true,
@@ -613,7 +626,7 @@ impl ToolManager {
     /// 设置下载速度限制
     pub async fn set_speed_limit(&self, bytes_per_second: Option<u64>) {
         *self.speed_limit.write().await = bytes_per_second;
-        
+
         if let Some(limit) = bytes_per_second {
             tracing::info!("Speed limit set to {} bytes/s", limit);
         } else {
@@ -632,22 +645,25 @@ impl ToolManager {
     pub async fn restore_tasks(&self) -> Vec<TaskId> {
         let persistence = self.persistence.lock().await;
         let resumable = persistence.get_resumable_tasks();
-        
+
         let mut restored = Vec::new();
         for task in resumable {
             let status = task.status.clone();
             restored.push(status.id);
-            
+
             // 将任务添加到内存中的任务列表
             let mut tasks = self.tasks.write().await;
-            tasks.insert(status.id, TaskHandle {
-                status: status.clone(),
-                cancel_tx: None,
-                retry_count: task.retry_count,
-                max_retries: task.max_retries,
-            });
+            tasks.insert(
+                status.id,
+                TaskHandle {
+                    status: status.clone(),
+                    cancel_tx: None,
+                    retry_count: task.retry_count,
+                    max_retries: task.max_retries,
+                },
+            );
         }
-        
+
         tracing::info!("Restored {} tasks from persistence", restored.len());
         restored
     }
@@ -659,21 +675,23 @@ impl ToolManager {
             let mut tasks = self.tasks.write().await;
             tasks.retain(|_, task| !task.status.is_finished());
         }
-        
+
         // 从持久化存储中移除
         {
             let mut persistence = self.persistence.lock().await;
-            persistence.clear_completed()
+            persistence
+                .clear_completed()
                 .map_err(|e| DownloadError::internal(e.to_string()))?;
         }
-        
+
         Ok(())
     }
 
     /// 保存当前任务状态
     pub async fn save_tasks(&self) -> DownloadResult<()> {
         let persistence = self.persistence.lock().await;
-        persistence.save()
+        persistence
+            .save()
             .map_err(|e| DownloadError::internal(e.to_string()))
     }
 
@@ -685,7 +703,7 @@ impl ToolManager {
             let tasks = self.tasks.read().await;
             tasks.keys().cloned().collect()
         };
-        
+
         for task_id in task_ids {
             let _ = self.pause_download(task_id).await;
         }
@@ -695,12 +713,13 @@ impl ToolManager {
     pub async fn resume_all(&self) {
         let task_ids: Vec<TaskId> = {
             let tasks = self.tasks.read().await;
-            tasks.iter()
+            tasks
+                .iter()
                 .filter(|(_, t)| matches!(t.status.state, TaskState::Paused))
                 .map(|(id, _)| *id)
                 .collect()
         };
-        
+
         for task_id in task_ids {
             let _ = self.resume_download(task_id).await;
         }
@@ -712,7 +731,7 @@ impl ToolManager {
             let tasks = self.tasks.read().await;
             tasks.keys().cloned().collect()
         };
-        
+
         for task_id in task_ids {
             let _ = self.cancel_download(task_id).await;
         }
@@ -721,15 +740,14 @@ impl ToolManager {
     /// 获取活跃任务数量
     pub async fn active_task_count(&self) -> usize {
         let tasks = self.tasks.read().await;
-        tasks.values()
-            .filter(|t| t.status.is_active())
-            .count()
+        tasks.values().filter(|t| t.status.is_active()).count()
     }
 
     /// 获取已完成任务数量
     pub async fn completed_task_count(&self) -> usize {
         let tasks = self.tasks.read().await;
-        tasks.values()
+        tasks
+            .values()
             .filter(|t| matches!(t.status.state, TaskState::Completed))
             .count()
     }
@@ -737,7 +755,8 @@ impl ToolManager {
     /// 获取失败任务数量
     pub async fn failed_task_count(&self) -> usize {
         let tasks = self.tasks.read().await;
-        tasks.values()
+        tasks
+            .values()
             .filter(|t| matches!(t.status.state, TaskState::Failed(_)))
             .count()
     }
