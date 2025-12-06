@@ -9,9 +9,10 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::spinner::Spinner;
-use gpui_component::{ActiveTheme, Disableable, Icon, IconName, Sizable};
+use gpui_component::{ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_router::use_navigate;
 use magekit_shared::{ChannelInfo, ChannelVideoEntry, TaskState, TaskStatus};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,6 +53,9 @@ impl Default for ChannelState {
     }
 }
 
+/// 每页显示的视频数量
+const ITEMS_PER_PAGE: usize = 100;
+
 /// 频道/作者页面
 pub struct ChannelPage {
     app_state: Arc<AppState>,
@@ -59,6 +63,14 @@ pub struct ChannelPage {
     state: ChannelState,
     /// 下载路径
     output_path: String,
+    /// 当前选中的 Tab 索引（None 表示"全部"）
+    current_tab_index: Option<usize>,
+    /// 当前页码（从 0 开始）
+    current_page: usize,
+    /// VirtualList 滚动句柄
+    scroll_handle: VirtualListScrollHandle,
+    /// 预计算的 item sizes
+    item_sizes: Rc<Vec<Size<Pixels>>>,
 }
 
 /// 视频项的固定高度
@@ -81,6 +93,100 @@ impl ChannelPage {
             url_input,
             state: ChannelState::Idle,
             output_path: default_path,
+            current_tab_index: None,
+            current_page: 0,
+            scroll_handle: VirtualListScrollHandle::new(),
+            item_sizes: Rc::new(Vec::new()),
+        }
+    }
+
+    /// 获取当前 Tab 下当前页的视频列表
+    fn get_current_page_entries(&self) -> Vec<(usize, ChannelVideoEntry)> {
+        if let ChannelState::Ready(ref info) = self.state {
+            // 获取当前 Tab 的视频
+            let all_entries: Vec<(usize, &ChannelVideoEntry)> = match self.current_tab_index {
+                None => {
+                    // "全部" Tab - 显示所有视频
+                    info.entries.iter().enumerate().collect()
+                }
+                Some(tab_index) => {
+                    // 特定 Tab
+                    if let Some(tab) = info.tabs.get(tab_index) {
+                        // 需要找到这些视频在 entries 中的原始索引
+                        tab.entries
+                            .iter()
+                            .filter_map(|tab_entry| {
+                                info.entries
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, e)| e.id == tab_entry.id)
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                }
+            };
+
+            // 分页
+            let start = self.current_page * ITEMS_PER_PAGE;
+            let end = (start + ITEMS_PER_PAGE).min(all_entries.len());
+
+            all_entries
+                .into_iter()
+                .skip(start)
+                .take(end - start)
+                .map(|(idx, entry)| (idx, entry.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// 获取当前 Tab 的总视频数
+    fn get_current_tab_total(&self) -> usize {
+        if let ChannelState::Ready(ref info) = self.state {
+            match self.current_tab_index {
+                None => info.entries.len(),
+                Some(tab_index) => info.tabs.get(tab_index).map(|t| t.entries.len()).unwrap_or(0),
+            }
+        } else {
+            0
+        }
+    }
+
+    /// 获取总页数
+    fn get_total_pages(&self) -> usize {
+        let total = self.get_current_tab_total();
+        (total + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE
+    }
+
+    /// 更新 item sizes（用于 VirtualList）
+    fn update_item_sizes(&mut self) {
+        let count = self.get_current_page_entries().len();
+        let sizes: Vec<Size<Pixels>> = (0..count)
+            .map(|_| size(px(800.0), px(VIDEO_ITEM_HEIGHT)))
+            .collect();
+        self.item_sizes = Rc::new(sizes);
+    }
+
+    /// 切换 Tab
+    fn switch_tab(&mut self, tab_index: Option<usize>, cx: &mut Context<Self>) {
+        self.current_tab_index = tab_index;
+        self.current_page = 0;
+        self.scroll_handle = VirtualListScrollHandle::new();
+        self.update_item_sizes();
+        cx.notify();
+    }
+
+    /// 切换页码
+    fn switch_page(&mut self, page: usize, cx: &mut Context<Self>) {
+        let total_pages = self.get_total_pages();
+        if page < total_pages {
+            self.current_page = page;
+            self.scroll_handle = VirtualListScrollHandle::new();
+            self.update_item_sizes();
+            cx.notify();
         }
     }
 
@@ -132,15 +238,27 @@ impl ChannelPage {
                 match result {
                     Ok(mut info) => {
                         tracing::info!(
-                            "📺 频道解析成功: {} - {} 个视频",
+                            "📺 频道解析成功: {} - {} 个视频, {} 个标签页",
                             info.title,
-                            info.video_count
+                            info.video_count,
+                            info.tabs.len()
                         );
                         // 默认选中所有视频
                         for entry in &mut info.entries {
                             entry.selected = true;
                         }
+                        // 同时更新 tabs 中的 entries 选中状态
+                        for tab in &mut info.tabs {
+                            for entry in &mut tab.entries {
+                                entry.selected = true;
+                            }
+                        }
                         this.state = ChannelState::Ready(info);
+                        // 重置分页和 Tab 状态
+                        this.current_tab_index = None;
+                        this.current_page = 0;
+                        this.scroll_handle = VirtualListScrollHandle::new();
+                        this.update_item_sizes();
                     }
                     Err(e) => {
                         tracing::error!("❌ 频道解析失败: {}", e);
@@ -426,25 +544,34 @@ impl ChannelPage {
             )
     }
 
-    /// 渲染视频列表（使用滚动列表）
-    fn render_video_list(&self, info: &ChannelInfo, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 渲染视频列表（使用 VirtualList + Tab + 分页）
+    fn render_video_list(&mut self, info: &ChannelInfo, cx: &mut Context<Self>) -> impl IntoElement {
         let channel_title = info.title.clone();
         let selected_count = info.entries.iter().filter(|e| e.selected).count();
         let total_count = info.entries.len();
         let all_selected = selected_count == total_count && total_count > 0;
         let theme = cx.theme();
-        let entity = cx.entity().clone();
 
         // 提取主题颜色供后续使用
         let primary = theme.primary;
         let border_color = theme.border;
         let secondary = theme.secondary;
-        let muted = theme.muted;
+        let _muted = theme.muted;
         let muted_foreground = theme.muted_foreground;
         let primary_foreground = theme.primary_foreground;
         let foreground = theme.foreground;
 
-        // 先创建控制栏按钮的监听器
+        // 当前 Tab 和分页信息
+        let current_tab_index = self.current_tab_index;
+        let current_page = self.current_page;
+        let total_pages = self.get_total_pages();
+        let current_tab_total = self.get_current_tab_total();
+
+        // 获取当前页的视频列表
+        let page_entries = self.get_current_page_entries();
+        let page_entry_count = page_entries.len();
+
+        // 创建控制栏按钮的监听器
         let select_all_listener = cx.listener(move |this, checked: &bool, _window, cx| {
             this.select_all(*checked, cx);
         });
@@ -453,126 +580,221 @@ impl ChannelPage {
             this.download_selected(window, cx);
         });
 
-        // 预先收集视频项数据
-        let video_items: Vec<_> = info
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                let is_selected = entry.selected;
-                let entry_title = entry.title.clone();
-                let entry_duration = entry.duration;
-                let entry_thumbnail = entry.thumbnail.clone();
-                let entity_clone = entity.clone();
+        // 渲染 Tab 选择器
+        let has_tabs = !info.tabs.is_empty();
+        let tabs_clone = info.tabs.clone();
+        let tab_buttons = if has_tabs {
+            let mut buttons = vec![
+                // "全部" Tab
+                {
+                    let is_selected = current_tab_index.is_none();
+                    let btn_primary = primary;
+                    let btn_secondary = secondary;
+                    let btn_foreground = foreground;
+                    let btn_primary_foreground = primary_foreground;
+                    
+                    div()
+                        .id("tab-all")
+                        .px_4()
+                        .py_2()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .when(is_selected, |d| d.bg(btn_primary).text_color(btn_primary_foreground))
+                        .when(!is_selected, |d| d.bg(btn_secondary).text_color(btn_foreground).hover(|s| s.bg(btn_secondary.opacity(0.8))))
+                        .child(format!("全部 ({})", total_count))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.switch_tab(None, cx);
+                        }))
+                }
+            ];
 
+            // 各个 Tab 按钮
+            for (idx, tab) in tabs_clone.iter().enumerate() {
+                let tab_name = tab.tab_type.display_name().to_string();
+                let tab_count = tab.entries.len();
+                let is_selected = current_tab_index == Some(idx);
+                let btn_primary = primary;
+                let btn_secondary = secondary;
+                let btn_foreground = foreground;
+                let btn_primary_foreground = primary_foreground;
+
+                buttons.push(
+                    div()
+                        .id(SharedString::from(format!("tab-{}", idx)))
+                        .px_4()
+                        .py_2()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .when(is_selected, |d| d.bg(btn_primary).text_color(btn_primary_foreground))
+                        .when(!is_selected, |d| d.bg(btn_secondary).text_color(btn_foreground).hover(|s| s.bg(btn_secondary.opacity(0.8))))
+                        .child(format!("{} ({})", tab_name, tab_count))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.switch_tab(Some(idx), cx);
+                        }))
+                );
+            }
+
+            Some(
                 div()
-                    .id(SharedString::from(format!("video-item-{}", index)))
-                    .w_full()
-                    .h(px(VIDEO_ITEM_HEIGHT))
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
-                    .when(is_selected, |div| {
-                        div.border_color(primary.opacity(0.5))
-                            .bg(primary.opacity(0.1))
-                    })
-                    .when(!is_selected, |div| {
-                        div.border_color(border_color).bg(secondary.opacity(0.3))
-                    })
-                    .hover(|style| style.bg(secondary))
-                    .cursor_pointer()
-                    .on_click(move |_, _, cx| {
-                        let _ = entity_clone.update(cx, |this, cx| {
-                            this.toggle_video(index, cx);
-                        });
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .h_full()
-                            // 复选框
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .w(px(24.0))
-                                    .h(px(24.0))
-                                    .rounded(px(4.0))
-                                    .bg(if is_selected { primary } else { muted })
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(if is_selected {
-                                                primary_foreground
-                                            } else {
-                                                muted_foreground
-                                            })
-                                            .child(if is_selected { "✓" } else { "" }),
-                                    ),
-                            )
-                            // 序号
-                            .child(
-                                div()
-                                    .w(px(32.0))
-                                    .text_sm()
-                                    .text_color(muted_foreground)
-                                    .child(format!("#{}", index + 1)),
-                            )
-                            // 缩略图
-                            .child(
-                                div()
-                                    .w(px(80.0))
-                                    .h(px(45.0))
-                                    .rounded(px(4.0))
-                                    .bg(muted)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .overflow_hidden()
-                                    .when_some(entry_thumbnail.clone(), |el, thumb_url| {
-                                        el.child(
-                                            img(thumb_url).size_full().object_fit(ObjectFit::Cover),
-                                        )
-                                    })
-                                    .when(entry_thumbnail.is_none(), |el| {
-                                        el.child(
-                                            Icon::new(IconName::Folder)
-                                                .size_4()
-                                                .text_color(muted_foreground),
-                                        )
-                                    }),
-                            )
-                            // 视频信息
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .overflow_hidden()
-                                    // 标题
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(foreground)
-                                            .truncate()
-                                            .child(entry_title),
-                                    )
-                                    // 时长
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(muted_foreground)
-                                            .child(format_duration(entry_duration)),
-                                    ),
-                            ),
-                    )
+                    .flex()
+                    .gap_2()
+                    .mb_2()
+                    .overflow_hidden()
+                    .children(buttons)
+            )
+        } else {
+            None
+        };
+
+        // 使用 VirtualList 渲染视频列表
+        let item_sizes = self.item_sizes.clone();
+        let scroll_handle = self.scroll_handle.clone();
+
+        // 预先收集当前页的条目信息用于 VirtualList
+        let entries_data: Vec<_> = page_entries
+            .iter()
+            .map(|(global_idx, entry)| {
+                (*global_idx, entry.id.clone(), entry.title.clone(), entry.duration, entry.thumbnail.clone(), entry.selected)
             })
             .collect();
+
+        let video_list = v_virtual_list(
+            cx.entity().clone(),
+            "video-list",
+            item_sizes,
+            move |_page, visible_range, _window, cx| {
+                let theme = cx.theme();
+                let primary = theme.primary;
+                let border_color = theme.border;
+                let secondary = theme.secondary;
+                let muted = theme.muted;
+                let muted_foreground = theme.muted_foreground;
+                let primary_foreground = theme.primary_foreground;
+                let foreground = theme.foreground;
+                let entity = cx.entity().clone();
+
+                visible_range
+                    .filter_map(|ix| {
+                        entries_data.get(ix).map(|(global_idx, _id, title, duration, thumbnail, is_selected)| {
+                            let global_idx = *global_idx;
+                            let entry_title = title.clone();
+                            let entry_duration = *duration;
+                            let entry_thumbnail = thumbnail.clone();
+                            let is_selected = *is_selected;
+                            let entity_clone = entity.clone();
+
+                            div()
+                                .id(SharedString::from(format!("video-item-{}", global_idx)))
+                                .w_full()
+                                .h(px(VIDEO_ITEM_HEIGHT))
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .when(is_selected, |div| {
+                                    div.border_color(primary.opacity(0.5))
+                                        .bg(primary.opacity(0.1))
+                                })
+                                .when(!is_selected, |div| {
+                                    div.border_color(border_color).bg(secondary.opacity(0.3))
+                                })
+                                .hover(|style| style.bg(secondary))
+                                .cursor_pointer()
+                                .on_click(move |_, _, cx| {
+                                    let _ = entity_clone.update(cx, |this, cx| {
+                                        this.toggle_video(global_idx, cx);
+                                    });
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .h_full()
+                                        // 复选框
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .w(px(24.0))
+                                                .h(px(24.0))
+                                                .rounded(px(4.0))
+                                                .bg(if is_selected { primary } else { muted })
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(if is_selected {
+                                                            primary_foreground
+                                                        } else {
+                                                            muted_foreground
+                                                        })
+                                                        .child(if is_selected { "✓" } else { "" }),
+                                                ),
+                                        )
+                                        // 序号
+                                        .child(
+                                            div()
+                                                .w(px(32.0))
+                                                .text_sm()
+                                                .text_color(muted_foreground)
+                                                .child(format!("#{}", global_idx + 1)),
+                                        )
+                                        // 缩略图
+                                        .child(
+                                            div()
+                                                .w(px(80.0))
+                                                .h(px(45.0))
+                                                .rounded(px(4.0))
+                                                .bg(muted)
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .overflow_hidden()
+                                                .when_some(entry_thumbnail.clone(), |el, thumb_url| {
+                                                    el.child(
+                                                        img(thumb_url).size_full().object_fit(ObjectFit::Cover),
+                                                    )
+                                                })
+                                                .when(entry_thumbnail.is_none(), |el| {
+                                                    el.child(
+                                                        Icon::new(IconName::Folder)
+                                                            .size_4()
+                                                            .text_color(muted_foreground),
+                                                    )
+                                                }),
+                                        )
+                                        // 视频信息
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_1()
+                                                .overflow_hidden()
+                                                // 标题
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(foreground)
+                                                        .truncate()
+                                                        .child(entry_title),
+                                                )
+                                                // 时长
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(muted_foreground)
+                                                        .child(format_duration(entry_duration)),
+                                                ),
+                                        ),
+                                )
+                        })
+                    })
+                    .collect()
+            },
+        )
+        .track_scroll(&scroll_handle);
 
         div()
             .w_full()
@@ -598,8 +820,8 @@ impl ChannelPage {
                                     .child(channel_title),
                             )
                             .child(div().text_sm().text_color(muted_foreground).child(format!(
-                                "共 {} 个视频，已选择 {}",
-                                total_count, selected_count
+                                "共 {} 个视频，已选择 {} | 当前显示 {}",
+                                total_count, selected_count, current_tab_total
                             ))),
                     )
                     .child(
@@ -629,15 +851,91 @@ impl ChannelPage {
                             ),
                     ),
             )
-            // 视频列表 - 使用滚动容器
+            // Tab 选择器
+            .when_some(tab_buttons, |el, tabs| el.child(tabs))
+            // 分页控件（顶部）
+            .when(total_pages > 1, |el| {
+                let current_page = current_page;
+                let total_pages = total_pages;
+                el.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_4()
+                        .py_2()
+                        // 上一页按钮
+                        .child(
+                            Button::new("prev-page-top")
+                                .outline()
+                                .small()
+                                .label("上一页")
+                                .disabled(current_page == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.current_page > 0 {
+                                        this.switch_page(this.current_page - 1, cx);
+                                    }
+                                }))
+                        )
+                        // 页码显示
+                        .child(
+                            div()
+                                .px_3()
+                                .py_1()
+                                .text_sm()
+                                .text_color(muted_foreground)
+                                .child(format!("第 {} / {} 页", current_page + 1, total_pages))
+                        )
+                        // 下一页按钮
+                        .child(
+                            Button::new("next-page-top")
+                                .outline()
+                                .small()
+                                .label("下一页")
+                                .disabled(current_page >= total_pages - 1)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let max_page = this.get_total_pages();
+                                    if this.current_page < max_page - 1 {
+                                        this.switch_page(this.current_page + 1, cx);
+                                    }
+                                }))
+                        )
+                )
+            })
+            // 视频列表 - 使用 VirtualList
             .child(
                 div()
                     .id("video-list-container")
                     .flex_1()
                     .w_full()
-                    .overflow_y_scroll()
-                    .child(div().flex().flex_col().gap_2().pb_4().children(video_items)),
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_md()
+                    .child(video_list)
             )
+            // 分页控件（底部）
+            .when(total_pages > 1, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_4()
+                        .py_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(muted_foreground)
+                                .child(format!(
+                                    "显示 {} - {} 条，共 {} 条",
+                                    current_page * ITEMS_PER_PAGE + 1,
+                                    (current_page * ITEMS_PER_PAGE + page_entry_count).min(current_tab_total),
+                                    current_tab_total
+                                ))
+                        )
+                )
+            })
     }
 }
 

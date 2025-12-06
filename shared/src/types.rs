@@ -481,6 +481,61 @@ pub enum NotificationType {
 // 频道/作者相关类型
 // ============================================================================
 
+/// 频道 Tab 类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ChannelTabType {
+    /// 视频
+    Videos,
+    /// 短视频 (Shorts)
+    Shorts,
+    /// 直播
+    Live,
+    /// 播放列表
+    Playlists,
+    /// 其他
+    Other(String),
+}
+
+impl ChannelTabType {
+    /// 从 yt-dlp 的 tab 标题解析 Tab 类型
+    pub fn from_title(title: &str) -> Self {
+        let lower = title.to_lowercase();
+        if lower.contains("video") || lower.contains("视频") {
+            Self::Videos
+        } else if lower.contains("short") {
+            Self::Shorts
+        } else if lower.contains("live") || lower.contains("直播") || lower.contains("stream") {
+            Self::Live
+        } else if lower.contains("playlist") || lower.contains("播放列表") {
+            Self::Playlists
+        } else {
+            Self::Other(title.to_string())
+        }
+    }
+
+    /// 获取显示名称
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Videos => "视频",
+            Self::Shorts => "Shorts",
+            Self::Live => "直播",
+            Self::Playlists => "播放列表",
+            Self::Other(name) => name,
+        }
+    }
+}
+
+/// 频道 Tab 信息
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelTab {
+    /// Tab 类型
+    pub tab_type: ChannelTabType,
+    /// Tab 标题
+    pub title: String,
+    /// Tab 中的视频条目
+    pub entries: Vec<ChannelVideoEntry>,
+}
+
 /// 频道/播放列表信息
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChannelInfo {
@@ -498,7 +553,9 @@ pub struct ChannelInfo {
     pub video_count: usize,
     /// 频道缩略图
     pub thumbnail: Option<String>,
-    /// 视频条目列表
+    /// 频道 Tabs（如 Videos, Shorts, Live）
+    pub tabs: Vec<ChannelTab>,
+    /// 所有视频条目（扁平化列表，用于向后兼容）
     pub entries: Vec<ChannelVideoEntry>,
 }
 

@@ -1,6 +1,6 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_shared::{
-    ChannelInfo, ChannelVideoEntry, DownloadOptions, PlatformCookie, TaskId, VideoFormat, VideoInfo,
+    ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, DownloadOptions, PlatformCookie, TaskId, VideoFormat, VideoInfo,
 };
 use serde::Deserialize;
 use std::io::Write;
@@ -434,6 +434,7 @@ impl VideoDownloader {
             description: None,
             video_count: entries.len(),
             thumbnail: uploader_face,
+            tabs: Vec::new(), // Bilibili 暂不支持 Tab 结构
             entries,
         })
     }
@@ -546,28 +547,25 @@ impl VideoDownloader {
             DownloadError::extraction_failed(url, format!("Failed to parse channel JSON: {}", e))
         })?;
 
-        // 解析视频条目 - 递归处理嵌套的 entries
+        // 解析视频条目 - 递归处理嵌套的 entries，同时保留 Tab 结构
         let mut entries: Vec<ChannelVideoEntry> = Vec::new();
+        let mut tabs: Vec<ChannelTab> = Vec::new();
 
         // 从 channel_data 的 entries 中获取视频信息
         if let Some(ref data_entries) = channel_data.entries {
             tracing::info!("📋 解析 {} 个顶层条目", data_entries.len());
             
-            // 递归收集所有视频条目
-            fn collect_video_entries(
+            // 收集单个 Tab 内的所有视频条目
+            fn collect_tab_entries(
                 entry: &serde_json::Value,
                 entries: &mut Vec<ChannelVideoEntry>,
                 depth: usize,
             ) {
-                // 检查这个条目是否有嵌套的 entries（表示这是一个 "tab" 而不是视频）
+                // 检查这个条目是否有嵌套的 entries（可能是播放列表或子分组）
                 if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
-                    // 这是一个包含嵌套视频的标签页（如 Videos, Shorts, Live）
-                    let tab_title = entry.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown Tab");
-                    tracing::info!("{}📁 发现标签页: {} ({} 个条目)", "  ".repeat(depth), tab_title, nested_entries.len());
-                    
                     // 递归处理嵌套的条目
                     for nested_entry in nested_entries {
-                        collect_video_entries(nested_entry, entries, depth + 1);
+                        collect_tab_entries(nested_entry, entries, depth + 1);
                     }
                 } else {
                     // 这是一个实际的视频条目
@@ -585,7 +583,38 @@ impl VideoDownloader {
                         .unwrap_or_else(|_| "无法序列化".to_string());
                     tracing::info!("   原始条目[{}]: {}", i + 1, preview);
                 }
-                collect_video_entries(entry, &mut entries, 0);
+                
+                // 检查这个条目是否是一个 Tab（有 entries 字段表示是分组）
+                if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
+                    // 这是一个 Tab（如 Videos, Shorts, Live）
+                    let tab_title = entry.get("title").and_then(|t| t.as_str()).unwrap_or("视频");
+                    let tab_type = ChannelTabType::from_title(tab_title);
+                    
+                    tracing::info!("📁 发现标签页: {} ({} 个条目)", tab_title, nested_entries.len());
+                    
+                    // 收集这个 Tab 内的所有视频
+                    let mut tab_entries: Vec<ChannelVideoEntry> = Vec::new();
+                    for nested_entry in nested_entries {
+                        collect_tab_entries(nested_entry, &mut tab_entries, 1);
+                    }
+                    
+                    tracing::info!("   ↳ 实际视频数: {}", tab_entries.len());
+                    
+                    // 将 Tab 内的视频也添加到总列表（用于向后兼容）
+                    entries.extend(tab_entries.clone());
+                    
+                    // 保存 Tab 信息
+                    tabs.push(ChannelTab {
+                        tab_type,
+                        title: tab_title.to_string(),
+                        entries: tab_entries,
+                    });
+                } else {
+                    // 这是一个直接的视频条目（没有 Tab 结构的频道/播放列表）
+                    if let Some(video_entry) = parse_channel_entry(entry) {
+                        entries.push(video_entry);
+                    }
+                }
             }
         }
 
@@ -616,11 +645,23 @@ impl VideoDownloader {
         }
 
         let video_count = entries.len();
+        let tabs_count = tabs.len();
         tracing::info!(
-            "✅ 频道信息获取成功: {} - 共 {} 个视频",
+            "✅ 频道信息获取成功: {} - 共 {} 个视频, {} 个标签页",
             channel_data.title.as_deref().unwrap_or("未知频道"),
-            video_count
+            video_count,
+            tabs_count
         );
+
+        // 打印 Tab 信息用于调试
+        for tab in &tabs {
+            tracing::info!(
+                "📁 Tab: {} ({:?}) - {} 个视频",
+                tab.title,
+                tab.tab_type,
+                tab.entries.len()
+            );
+        }
 
         // 打印每个视频的详细信息用于调试
         for (i, entry) in entries.iter().take(5).enumerate() {
@@ -646,6 +687,7 @@ impl VideoDownloader {
             description: channel_data.description,
             video_count,
             thumbnail: channel_data.thumbnail,
+            tabs,
             entries,
         })
     }
