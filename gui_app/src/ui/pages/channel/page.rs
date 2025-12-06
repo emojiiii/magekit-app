@@ -853,55 +853,6 @@ impl ChannelPage {
             )
             // Tab 选择器
             .when_some(tab_buttons, |el, tabs| el.child(tabs))
-            // 分页控件（顶部）
-            .when(total_pages > 1, |el| {
-                let current_page = current_page;
-                let total_pages = total_pages;
-                el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_4()
-                        .py_2()
-                        // 上一页按钮
-                        .child(
-                            Button::new("prev-page-top")
-                                .outline()
-                                .small()
-                                .label("上一页")
-                                .disabled(current_page == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if this.current_page > 0 {
-                                        this.switch_page(this.current_page - 1, cx);
-                                    }
-                                }))
-                        )
-                        // 页码显示
-                        .child(
-                            div()
-                                .px_3()
-                                .py_1()
-                                .text_sm()
-                                .text_color(muted_foreground)
-                                .child(format!("第 {} / {} 页", current_page + 1, total_pages))
-                        )
-                        // 下一页按钮
-                        .child(
-                            Button::new("next-page-top")
-                                .outline()
-                                .small()
-                                .label("下一页")
-                                .disabled(current_page >= total_pages - 1)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let max_page = this.get_total_pages();
-                                    if this.current_page < max_page - 1 {
-                                        this.switch_page(this.current_page + 1, cx);
-                                    }
-                                }))
-                        )
-                )
-            })
             // 视频列表 - 使用 VirtualList
             .child(
                 div()
@@ -920,9 +871,53 @@ impl ChannelPage {
                     div()
                         .flex()
                         .items_center()
-                        .justify_center()
+                        .justify_between()
                         .gap_4()
                         .py_2()
+                        // 左侧：分页按钮
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                // 上一页按钮
+                                .child(
+                                    Button::new("prev-page-bottom")
+                                        .outline()
+                                        .small()
+                                        .label("上一页")
+                                        .disabled(current_page == 0)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if this.current_page > 0 {
+                                                this.switch_page(this.current_page - 1, cx);
+                                            }
+                                        }))
+                                )
+                                // 页码显示
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .py_1()
+                                        .text_sm()
+                                        .text_color(muted_foreground)
+                                        .child(format!("第 {} / {} 页", current_page + 1, total_pages))
+                                )
+                                // 下一页按钮
+                                .child(
+                                    Button::new("next-page-bottom")
+                                        .outline()
+                                        .small()
+                                        .label("下一页")
+                                        .disabled(current_page >= total_pages - 1)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            let max_page = this.get_total_pages();
+                                            if this.current_page < max_page - 1 {
+                                                this.switch_page(this.current_page + 1, cx);
+                                            }
+                                        }))
+                                )
+                        )
+                        // 右侧：显示统计
                         .child(
                             div()
                                 .text_sm()
