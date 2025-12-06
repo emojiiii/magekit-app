@@ -59,6 +59,7 @@ impl TaskItem {
 impl RenderOnce for TaskItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let task = &self.task;
+        let task_id = task.id;
         
         // 使用主题颜色
         let bg_color = cx.theme().background;
@@ -216,8 +217,10 @@ impl RenderOnce for TaskItem {
                     // 暂停按钮（下载中显示）
                     .when(is_downloading, |this| {
                         let handler = on_pause.clone();
+                        // 使用任务 ID 作为按钮 ID 的一部分，确保唯一性
+                        let btn_id = SharedString::from(format!("pause-{}", task_id));
                         this.child(
-                            Button::new("pause")
+                            Button::new(btn_id)
                                 .xsmall()
                                 .outline()
                                 .label("暂停")
@@ -229,8 +232,9 @@ impl RenderOnce for TaskItem {
                     // 继续按钮（暂停状态显示）
                     .when(is_paused, |this| {
                         let handler = on_resume.clone();
+                        let btn_id = SharedString::from(format!("resume-{}", task_id));
                         this.child(
-                            Button::new("resume")
+                            Button::new(btn_id)
                                 .xsmall()
                                 .primary()
                                 .label("继续")
@@ -242,8 +246,9 @@ impl RenderOnce for TaskItem {
                     // 取消按钮（活动状态显示）
                     .when(is_active, |this| {
                         let handler = on_cancel.clone();
+                        let btn_id = SharedString::from(format!("cancel-{}", task_id));
                         this.child(
-                            Button::new("cancel")
+                            Button::new(btn_id)
                                 .xsmall()
                                 .danger()
                                 .label("取消")
@@ -255,8 +260,9 @@ impl RenderOnce for TaskItem {
                     // 打开文件夹按钮
                     .when(is_completed, |this| {
                         let handler = on_open_folder.clone();
+                        let btn_id = SharedString::from(format!("open-{}", task_id));
                         this.child(
-                            Button::new("open")
+                            Button::new(btn_id)
                                 .xsmall()
                                 .outline()
                                 .label("打开文件夹")
@@ -268,8 +274,9 @@ impl RenderOnce for TaskItem {
                     // 删除按钮（非活动任务）
                     .when(!is_active, |this| {
                         let handler = on_delete.clone();
+                        let btn_id = SharedString::from(format!("delete-{}", task_id));
                         this.child(
-                            Button::new("delete")
+                            Button::new(btn_id)
                                 .xsmall()
                                 .danger()
                                 .label("删除")

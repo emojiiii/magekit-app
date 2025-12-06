@@ -546,24 +546,46 @@ impl VideoDownloader {
             DownloadError::extraction_failed(url, format!("Failed to parse channel JSON: {}", e))
         })?;
 
-        // 解析视频条目
+        // 解析视频条目 - 递归处理嵌套的 entries
         let mut entries: Vec<ChannelVideoEntry> = Vec::new();
 
         // 从 channel_data 的 entries 中获取视频信息
         if let Some(ref data_entries) = channel_data.entries {
-            tracing::info!("📋 解析 {} 个视频条目", data_entries.len());
+            tracing::info!("📋 解析 {} 个顶层条目", data_entries.len());
+            
+            // 递归收集所有视频条目
+            fn collect_video_entries(
+                entry: &serde_json::Value,
+                entries: &mut Vec<ChannelVideoEntry>,
+                depth: usize,
+            ) {
+                // 检查这个条目是否有嵌套的 entries（表示这是一个 "tab" 而不是视频）
+                if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
+                    // 这是一个包含嵌套视频的标签页（如 Videos, Shorts, Live）
+                    let tab_title = entry.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown Tab");
+                    tracing::info!("{}📁 发现标签页: {} ({} 个条目)", "  ".repeat(depth), tab_title, nested_entries.len());
+                    
+                    // 递归处理嵌套的条目
+                    for nested_entry in nested_entries {
+                        collect_video_entries(nested_entry, entries, depth + 1);
+                    }
+                } else {
+                    // 这是一个实际的视频条目
+                    if let Some(video_entry) = parse_channel_entry(entry) {
+                        entries.push(video_entry);
+                    }
+                }
+            }
+            
             for (i, entry) in data_entries.iter().enumerate() {
                 // 打印前 3 个条目的原始 JSON 用于调试
                 if i < 3 {
-                    tracing::info!(
-                        "   原始条目[{}]: {}",
-                        i + 1,
-                        serde_json::to_string(entry).unwrap_or_else(|_| "无法序列化".to_string())
-                    );
+                    let preview = serde_json::to_string(entry)
+                        .map(|s| if s.len() > 200 { format!("{}...", &s[..200]) } else { s })
+                        .unwrap_or_else(|_| "无法序列化".to_string());
+                    tracing::info!("   原始条目[{}]: {}", i + 1, preview);
                 }
-                if let Some(video_entry) = parse_channel_entry(entry) {
-                    entries.push(video_entry);
-                }
+                collect_video_entries(entry, &mut entries, 0);
             }
         }
 
@@ -1039,7 +1061,21 @@ struct ChannelEntryData {
     webpage_url: Option<String>,
     duration: Option<f64>,
     thumbnail: Option<String>,
+    /// YouTube 返回的缩略图数组
+    #[serde(default)]
+    thumbnails: Option<Vec<ThumbnailData>>,
     uploader: Option<String>,
+    view_count: Option<u64>,
+}
+
+/// 缩略图数据结构
+#[derive(Debug, Deserialize)]
+struct ThumbnailData {
+    url: String,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
+    width: Option<u32>,
 }
 
 /// 解析频道条目
@@ -1055,15 +1091,14 @@ fn parse_channel_entry(value: &serde_json::Value) -> Option<ChannelVideoEntry> {
         }
     });
 
-    // 为 Bilibili 视频生成默认缩略图 URL
+    // 获取缩略图：优先使用 thumbnail 字段，其次从 thumbnails 数组中获取第一个
     let thumbnail = entry.thumbnail.or_else(|| {
-        if entry.id.starts_with("BV") {
-            // Bilibili 缩略图格式: https://i0.hdslb.com/bfs/archive/{aid}.jpg
-            // 由于我们只有 BV 号，暂时不生成缩略图
-            None
-        } else {
-            None
-        }
+        entry.thumbnails.as_ref().and_then(|thumbs| {
+            // 尝试找到最高分辨率的缩略图
+            thumbs.iter()
+                .max_by_key(|t| t.height.unwrap_or(0))
+                .map(|t| t.url.clone())
+        })
     });
 
     Some(ChannelVideoEntry {
