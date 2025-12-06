@@ -354,6 +354,14 @@ impl ToolManager {
             .map_err(|e| DownloadError::internal(e.to_string()))?;
         Ok(())
     }
+    
+    /// 从持久化存储删除任务
+    pub async fn delete_task_status(&self, task_id: TaskId) -> DownloadResult<()> {
+        let mut persistence = self.persistence.lock().await;
+        persistence.remove_task(task_id)
+            .map_err(|e| DownloadError::internal(e.to_string()))?;
+        Ok(())
+    }
 
     /// 发送任务更新事件
     async fn send_task_update(&self, update: TaskUpdate) {

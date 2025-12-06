@@ -361,15 +361,20 @@ impl TasksPage {
         // 从本地列表中移除
         self.tasks.retain(|t| t.id != task_id);
         
-        // 从 AppState 中移除
+        // 从 AppState 中移除并从持久化存储删除
         let app_state = self.app_state.clone();
         cx.spawn(async move |_this, _cx| {
             smol::unblock(move || {
                 // 清理取消标志
                 app_state.cleanup_download_task(task_id);
                 
+                // 从内存中移除
                 let mut tasks = app_state.tasks.blocking_write();
                 tasks.remove(&task_id);
+                drop(tasks);
+                
+                // 从持久化存储删除
+                app_state.delete_task_from_persistence(task_id);
             }).await;
         }).detach();
         

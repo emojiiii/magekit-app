@@ -603,6 +603,7 @@ impl HomePage {
                 .as_ref()
                 .map(|p| p.clone())
                 .map_err(|e| e.to_string());
+            let app_state_for_final_save = app_state_for_cleanup.clone();
             smol::unblock(move || {
                 let mut tasks = tasks.blocking_write();
                 if let Some(task) = tasks.get_mut(&task_id) {
@@ -618,6 +619,9 @@ impl HomePage {
                                 task.total_bytes = Some(metadata.len());
                                 task.downloaded_bytes = metadata.len();
                             }
+                            
+                            // 保存完成状态到持久化存储
+                            app_state_for_final_save.save_task_to_persistence(task);
                         }
                         Err(error) => {
                             // 如果是暂停导致的错误，保持 Paused 状态
@@ -629,6 +633,8 @@ impl HomePage {
                                 task.state = TaskState::Failed(error);
                                 task.completed_at = Some(std::time::SystemTime::now());
                             }
+                            // 保存失败/取消状态到持久化存储
+                            app_state_for_final_save.save_task_to_persistence(task);
                         }
                     }
                 }
@@ -920,6 +926,7 @@ impl HomePage {
                 .as_ref()
                 .map(|p| p.clone())
                 .map_err(|e| e.to_string());
+            let app_state_for_final_save = app_state_for_cleanup.clone();
             smol::unblock(move || {
                 let mut tasks = tasks.blocking_write();
                 if let Some(task) = tasks.get_mut(&task_id) {
@@ -935,6 +942,9 @@ impl HomePage {
                                 task.total_bytes = Some(metadata.len());
                                 task.downloaded_bytes = metadata.len();
                             }
+                            
+                            // 保存完成状态到持久化存储
+                            app_state_for_final_save.save_task_to_persistence(task);
                         }
                         Err(error) => {
                             // 如果是暂停导致的错误，保持 Paused 状态
@@ -946,6 +956,8 @@ impl HomePage {
                                 task.state = TaskState::Failed(error);
                                 task.completed_at = Some(std::time::SystemTime::now());
                             }
+                            // 保存失败/取消状态到持久化存储
+                            app_state_for_final_save.save_task_to_persistence(task);
                         }
                     }
                 }

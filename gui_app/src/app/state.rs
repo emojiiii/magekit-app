@@ -143,6 +143,19 @@ impl AppState {
             }
         });
     }
+    
+    /// 从持久化存储删除任务
+    pub fn delete_task_from_persistence(&self, task_id: TaskId) {
+        let tool_manager = self.tool_manager.clone();
+        
+        self.runtime.spawn(async move {
+            if let Err(e) = tool_manager.delete_task_status(task_id).await {
+                tracing::error!("🚨 删除任务失败: {}", e);
+            } else {
+                tracing::info!("🗑️ 任务已从持久化存储删除: {}", task_id);
+            }
+        });
+    }
 }
 
 impl Default for AppState {
