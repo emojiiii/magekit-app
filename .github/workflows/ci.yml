@@ -11,7 +11,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # 代码格式检�?
+  # Format check
   fmt:
     name: Format Check
     runs-on: ubuntu-latest
@@ -26,7 +26,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  # macOS 构建
+  # macOS build
   build-macos:
     name: Build macOS
     runs-on: macos-latest
@@ -69,7 +69,7 @@ jobs:
           name: magekit-macos-universal
           path: target/universal-apple-darwin/release/magekit
 
-  # Windows 构建
+  # Windows build
   build-windows:
     name: Build Windows
     runs-on: windows-latest
@@ -99,7 +99,7 @@ jobs:
           name: magekit-windows-x64
           path: target/release/magekit.exe
 
-  # Linux 构建
+  # Linux build
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
@@ -167,7 +167,7 @@ jobs:
           name: magekit-linux-x64
           path: target/release/magekit
 
-  # 测试 (仅在 Ubuntu 上运行基本测�?
+  # Test (lib only)
   test:
     name: Test
     runs-on: ubuntu-22.04
