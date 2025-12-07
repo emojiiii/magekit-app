@@ -91,6 +91,9 @@ pub struct RecordingPage {
     is_loading: bool,
     monitoring_enabled: bool,
     
+    /// 最后一次添加房间的错误
+    last_add_error: Option<String>,
+    
     /// 监控定时器 ID
     check_task_running: Arc<RwLock<bool>>,
 }
@@ -134,6 +137,7 @@ impl RecordingPage {
             record_config,
             is_loading: false,
             monitoring_enabled: true,
+            last_add_error: None,
             check_task_running: Arc::new(RwLock::new(false)),
         };
         
@@ -376,7 +380,7 @@ impl RecordingPage {
         });
     }
 
-    /// 添加直播间
+    /// 添加直播间 - 立即添加到列表，后台获取信息
     fn add_room(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
         // 检查是否已存在
         if self.monitored_rooms.iter().any(|r| r.url == url) {
@@ -387,23 +391,56 @@ impl RecordingPage {
             return;
         }
 
-        self.is_loading = true;
-        cx.notify();
-        
-        let live_recorder = self.live_recorder.clone();
-        let runtime = self.app_state.runtime.clone();
-
         tracing::info!("🚀 开始添加直播间: {}", url);
 
-        window.push_notification(
-            Notification::info("正在获取直播间信息..."),
-            cx,
+        // 从 URL 推断平台
+        let platform = if url.contains("douyin") || url.contains("live.douyin") {
+            "抖音直播".to_string()
+        } else if url.contains("bilibili") || url.contains("live.bilibili") {
+            "B站直播".to_string()
+        } else if url.contains("huya") {
+            "虎牙直播".to_string()
+        } else if url.contains("douyu") {
+            "斗鱼直播".to_string()
+        } else if url.contains("kuaishou") || url.contains("live.kuaishou") {
+            "快手直播".to_string()
+        } else if url.contains("soop") || url.contains("afreeca") {
+            "SOOP".to_string()
+        } else {
+            "未知平台".to_string()
+        };
+
+        // 立即创建房间并添加到列表
+        let monitored_room = MonitoredRoom::new(
+            url.clone(),
+            platform,
+            String::new(), // room_id 稍后获取
+            "获取中...".to_string(), // anchor_name 稍后获取
         );
+        
+        let room_id = monitored_room.id;
+        
+        // 添加到列表，状态为 Unknown（加载中）
+        self.monitored_rooms.push(monitored_room);
+        self.room_states.insert(room_id, RuntimeRoomState {
+            status: LiveRoomStatus::Unknown,
+            is_recording: false,
+            current_task: None,
+            last_error: Some("正在获取直播间信息...".to_string()),
+            cover_url: None,
+            title: None,
+            recording_handle: None,
+        });
+        self.save_config();
+        cx.notify();
+        
+        // 后台获取房间详细信息
+        let live_recorder = self.live_recorder.clone();
+        let runtime = self.app_state.runtime.clone();
 
         cx.spawn(async move |this, cx| {
             let url_clone = url.clone();
             
-            // 首先尝试获取平台处理器（验证平台支持性）
             let result = runtime.spawn(async move {
                 live_recorder.check_room_status(&url_clone).await
             }).await;
@@ -412,32 +449,6 @@ impl RecordingPage {
                 Ok(Ok(room_info)) => {
                     tracing::info!("✅ 成功获取直播间信息: {} - {}", room_info.anchor_name, room_info.title);
 
-                    // 从 URL 推断平台
-                    let platform = if url.contains("douyin") || url.contains("live.douyin") {
-                        "抖音直播".to_string()
-                    } else if url.contains("bilibili") || url.contains("live.bilibili") {
-                        "B站直播".to_string()
-                    } else if url.contains("huya") {
-                        "虎牙直播".to_string()
-                    } else if url.contains("douyu") {
-                        "斗鱼直播".to_string()
-                    } else if url.contains("kuaishou") || url.contains("live.kuaishou") {
-                        "快手直播".to_string()
-                    } else if url.contains("soop") || url.contains("afreeca") {
-                        "SOOP".to_string()
-                    } else {
-                        "未知平台".to_string()
-                    };
-
-                    let monitored_room = MonitoredRoom::new(
-                        url,
-                        platform,
-                        room_info.room_id.clone(),
-                        room_info.anchor_name.clone(),
-                    );
-                    
-                    let room_id = monitored_room.id;
-                    
                     let status = match room_info.status {
                         live_recorder::types::LiveStatus::Live => LiveRoomStatus::Live,
                         live_recorder::types::LiveStatus::Offline => LiveRoomStatus::Offline,
@@ -446,31 +457,46 @@ impl RecordingPage {
                     };
                     let cover_url = room_info.cover_url.clone();
                     let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
+                    let anchor_name = room_info.anchor_name.clone();
+                    let real_room_id = room_info.room_id.clone();
 
                     let _ = this.update(cx, |this, cx| {
-                        this.monitored_rooms.push(monitored_room);
-                        this.room_states.insert(room_id, RuntimeRoomState {
-                            status,
-                            is_recording: false,
-                            current_task: None,
-                            last_error: None,
-                            cover_url,
-                            title,
-                            recording_handle: None,
-                        });
-                        this.is_loading = false;
+                        // 更新房间信息
+                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                            room.room_id = real_room_id;
+                            room.anchor_name = anchor_name;
+                            room.cached_title = title.clone();
+                            room.cached_cover_url = cover_url.clone();
+                        }
+                        
+                        // 更新运行时状态
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.status = status;
+                            state.last_error = None;
+                            state.cover_url = cover_url;
+                            state.title = title;
+                        }
+                        
                         this.save_config();
                         cx.notify();
                     });
-
-                    tracing::info!("🎉 成功添加直播间: {} - {}", room_info.anchor_name, room_info.title);
                 }
                 Ok(Err(e)) => {
                     let error_msg = Self::format_error(&e);
                     tracing::error!("❌ 获取直播间信息失败: {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
-                        this.is_loading = false;
+                        // 更新房间状态为错误，但保留在列表中
+                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                            room.anchor_name = "获取失败".to_string();
+                        }
+                        
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.status = LiveRoomStatus::Error(error_msg.clone());
+                            state.last_error = Some(error_msg);
+                        }
+                        
+                        this.save_config();
                         cx.notify();
                     });
                 }
@@ -479,7 +505,16 @@ impl RecordingPage {
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
-                        this.is_loading = false;
+                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                            room.anchor_name = "获取失败".to_string();
+                        }
+                        
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.status = LiveRoomStatus::Error(error_msg.clone());
+                            state.last_error = Some(error_msg);
+                        }
+                        
+                        this.save_config();
                         cx.notify();
                     });
                 }
@@ -1980,11 +2015,19 @@ impl RecordingPage {
 }
 
 impl Render for RecordingPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bg_color = theme.background;
         let title_color = theme.foreground;
         let desc_color = theme.muted_foreground;
+
+        // 检查是否有错误需要显示
+        if let Some(error) = self.last_add_error.take() {
+            window.push_notification(
+                Notification::error(&format!("添加失败: {}", error)),
+                cx,
+            );
+        }
 
         let rooms = self.monitored_rooms.clone();
         let live_count = self.room_states.values().filter(|s| s.status == LiveRoomStatus::Live).count();

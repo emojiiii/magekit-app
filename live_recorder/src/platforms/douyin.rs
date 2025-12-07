@@ -269,11 +269,44 @@ impl DouyinHandler {
         let data = json_data.get("data")
             .ok_or_else(|| RecorderError::InvalidResponseFormat("Missing data field".to_string()))?;
 
+        // 打印 data 的结构以便调试
+        tracing::debug!("📦 data 字段的 keys: {:?}", data.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+
         // 抖音 web API 返回的结构是 data.data[0]，而不是 data.room
-        let room_info = data.get("data")
-            .and_then(|d| d.as_array())
-            .and_then(|arr| arr.first())
+        let data_array = data.get("data")
+            .and_then(|d| d.as_array());
+        
+        // 检查数组是否存在且非空
+        if data_array.is_none() || data_array.map(|arr| arr.is_empty()).unwrap_or(true) {
+            // data.data 为空，说明直播间未开播或不存在
+            // 但可能有用户信息，尝试获取
+            let anchor_name = data.get("user")
+                .and_then(|u| u.get("nickname"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            
+            tracing::info!("ℹ️ 直播间未开播或不存在，主播: {}", anchor_name);
+            
+            // 返回离线状态的房间信息
+            let live_room_info = LiveRoomInfo {
+                room_id: String::new(),
+                anchor_name,
+                title: String::new(),
+                status: LiveStatus::Offline,
+                start_time: None,
+                viewer_count: None,
+                cover_url: None,
+                extra: HashMap::new(),
+            };
+            
+            return Ok((vec![], live_room_info));
+        }
+        
+        let room_info = data_array.unwrap().first()
             .ok_or_else(|| RecorderError::InvalidResponseFormat("Missing room data in data.data[0]".to_string()))?;
+        
+        tracing::debug!("📦 room_info 字段的 keys: {:?}", room_info.as_object().map(|o| o.keys().collect::<Vec<_>>()));
 
         // 主播名字在 data.user.nickname
         let anchor_name = data.get("user")
@@ -317,25 +350,106 @@ impl DouyinHandler {
         };
 
         if status != LiveStatus::Live {
+            tracing::info!("ℹ️ 直播间状态: {:?}，非直播中", status);
             return Ok((vec![], live_room_info));
         }
 
         // 解析流URL - 在 room_info.stream_url 中
         let stream_url = room_info.get("stream_url")
-            .ok_or_else(|| RecorderError::StreamNotAvailable("No stream URL available".to_string()))?;
+            .ok_or_else(|| {
+                tracing::error!("❌ room_info 中没有 stream_url 字段");
+                tracing::error!("   room_info keys: {:?}", room_info.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                RecorderError::StreamNotAvailable("No stream URL available".to_string())
+            })?;
 
+        tracing::debug!("📦 stream_url 字段的 keys: {:?}", stream_url.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+
+        // 新版本的流解析逻辑 - 参考 Python 版本
+        // 首先尝试从 live_core_sdk_data 获取原始流
+        let mut origin_flv: Option<String> = None;
+        let mut origin_hls: Option<String> = None;
+        
+        if let Some(live_core_sdk_data) = stream_url.get("live_core_sdk_data") {
+            tracing::debug!("📦 找到 live_core_sdk_data");
+            
+            // 尝试从 pull_datas 或 pull_data 获取 stream_data
+            let stream_data_str = stream_url.get("pull_datas")
+                .and_then(|pd| pd.as_object())
+                .and_then(|obj| obj.values().next())
+                .and_then(|v| v.get("stream_data"))
+                .and_then(|sd| sd.as_str())
+                .or_else(|| {
+                    live_core_sdk_data.get("pull_data")
+                        .and_then(|pd| pd.get("stream_data"))
+                        .and_then(|sd| sd.as_str())
+                });
+            
+            if let Some(stream_data_str) = stream_data_str {
+                if let Ok(stream_data) = serde_json::from_str::<serde_json::Value>(stream_data_str) {
+                    // 检查是否有 origin 数据
+                    if let Some(origin_main) = stream_data.get("data")
+                        .and_then(|d| d.get("origin"))
+                        .and_then(|o| o.get("main")) 
+                    {
+                        // 获取 sdk_params 中的编码信息
+                        let codec = origin_main.get("sdk_params")
+                            .and_then(|sp| sp.as_str())
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                            .and_then(|v| v.get("VCodec").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        
+                        // 获取 flv 和 hls URL
+                        if let Some(flv) = origin_main.get("flv").and_then(|f| f.as_str()) {
+                            origin_flv = Some(format!("{}&codec={}", flv, codec));
+                            tracing::info!("✅ 从 live_core_sdk_data 获取到 ORIGIN FLV: {}...", &origin_flv.as_ref().unwrap()[..100.min(origin_flv.as_ref().unwrap().len())]);
+                        }
+                        if let Some(hls) = origin_main.get("hls").and_then(|h| h.as_str()) {
+                            origin_hls = Some(format!("{}&codec={}", hls, codec));
+                            tracing::info!("✅ 从 live_core_sdk_data 获取到 ORIGIN HLS: {}...", &origin_hls.as_ref().unwrap()[..100.min(origin_hls.as_ref().unwrap().len())]);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 从 flv_pull_url 和 hls_pull_url_map 获取其他质量的流
         let flv_pull_url = stream_url.get("flv_pull_url")
             .and_then(|flv| flv.as_object());
 
         let hls_pull_url_map = stream_url.get("hls_pull_url_map")
             .and_then(|hls| hls.as_object());
 
+        tracing::debug!("📦 flv_pull_url 存在: {}, hls_pull_url_map 存在: {}", 
+            flv_pull_url.is_some(), hls_pull_url_map.is_some());
+        
+        if let Some(flv) = flv_pull_url {
+            tracing::debug!("📦 flv_pull_url keys: {:?}", flv.keys().collect::<Vec<_>>());
+        }
+        if let Some(hls) = hls_pull_url_map {
+            tracing::debug!("📦 hls_pull_url_map keys: {:?}", hls.keys().collect::<Vec<_>>());
+        }
+
         let mut streams = Vec::new();
 
-        // 质量映射
-        let quality_names = ["OD", "UHD", "HD", "SD", "LD"];
+        // 首先添加 ORIGIN 质量的流（如果有）
+        if origin_flv.is_some() || origin_hls.is_some() {
+            streams.push(StreamData {
+                quality: VideoQuality::Original,
+                url: StreamUrl {
+                    hls_url: origin_hls,
+                    flv_url: origin_flv,
+                    dash_url: None,
+                },
+                bitrate: None,
+                resolution: None,
+                codec: None,
+                cdn: None,
+            });
+        }
+
+        // 质量映射 - 跳过 ORIGIN (OD) 如果已经添加过
+        let quality_names = ["FULL_HD1", "HD1", "SD1", "SD2"];  // 抖音实际使用的质量名
         let quality_enums = [
-            VideoQuality::Original,
             VideoQuality::Ultra,
             VideoQuality::High,
             VideoQuality::Standard,
