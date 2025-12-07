@@ -77,22 +77,22 @@ jobs:
           APP_DIR="MageKit.app"
           mkdir -p "${APP_DIR}/Contents/MacOS"
           mkdir -p "${APP_DIR}/Contents/Resources"
-          
+
           # 复制二进制文件
           cp target/universal-apple-darwin/release/magekit "${APP_DIR}/Contents/MacOS/MageKit"
           chmod +x "${APP_DIR}/Contents/MacOS/MageKit"
-          
+
           # 复制主题文件
           if [ -d "themes" ]; then
             mkdir -p "${APP_DIR}/Contents/Resources/themes"
             cp -r themes/* "${APP_DIR}/Contents/Resources/themes/"
           fi
-          
+
           # 复制图标 (如果存在)
           if [ -f "assets/icon.icns" ]; then
             cp assets/icon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
           fi
-          
+
           # 创建 Info.plist
           cat > "${APP_DIR}/Contents/Info.plist" << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -131,7 +131,7 @@ jobs:
           mkdir -p dmg_contents
           cp -r MageKit.app dmg_contents/
           ln -s /Applications dmg_contents/Applications
-          
+
           # 创建 DMG
           hdiutil create -volname "MageKit" \
             -srcfolder dmg_contents \
@@ -184,24 +184,24 @@ jobs:
         run: |
           $version = "${{ needs.prepare.outputs.version }}"
           $releaseDir = "release-windows"
-          
+
           # 创建发布目录
           New-Item -ItemType Directory -Force -Path $releaseDir
-          
+
           # 复制主程序
           Copy-Item "target\release\magekit.exe" "$releaseDir\MageKit.exe"
-          
+
           # 复制主题文件
           if (Test-Path "themes") {
             Copy-Item -Recurse "themes" "$releaseDir\themes"
           }
-          
+
           # 创建 portable 标记文件 (便携版)
           New-Item -ItemType File -Path "$releaseDir\portable.txt" -Value "MageKit Portable Edition"
-          
+
           # 打包为 zip
           Compress-Archive -Path "$releaseDir\*" -DestinationPath "MageKit-$version-windows-x64-portable.zip"
-          
+
           # 单独复制 exe 用于直接下载
           Copy-Item "target\release\magekit.exe" "MageKit-$version-windows-x64.exe"
 
@@ -290,22 +290,22 @@ jobs:
       - name: Create AppDir structure
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          
+
           # 创建 AppDir 结构
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           mkdir -p AppDir/usr/share/magekit
-          
+
           # 复制二进制文件
           cp target/release/magekit AppDir/usr/bin/magekit
           chmod +x AppDir/usr/bin/magekit
-          
+
           # 复制主题文件
           if [ -d "themes" ]; then
             cp -r themes AppDir/usr/share/magekit/
           fi
-          
+
           # 创建 desktop 文件
           cat > AppDir/magekit.desktop << EOF
           [Desktop Entry]
@@ -318,9 +318,9 @@ jobs:
           Terminal=false
           StartupWMClass=MageKit
           EOF
-          
+
           cp AppDir/magekit.desktop AppDir/usr/share/applications/
-          
+
           # 创建简单图标 (如果没有真实图标)
           if [ -f "assets/icon.png" ]; then
             cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png
@@ -332,11 +332,11 @@ jobs:
               AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png 2>/dev/null || \
             echo "Warning: Could not create placeholder icon"
           fi
-          
+
           # 链接图标和 desktop 文件到 AppDir 根目录
           ln -sf usr/share/icons/hicolor/256x256/apps/magekit.png AppDir/magekit.png 2>/dev/null || true
           ln -sf usr/share/applications/magekit.desktop AppDir/magekit.desktop
-          
+
           # 创建 AppRun
           cat > AppDir/AppRun << 'APPRUN'
           #!/bin/bash
