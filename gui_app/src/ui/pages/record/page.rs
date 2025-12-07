@@ -628,13 +628,18 @@ impl RecordingPage {
             match result {
                 Ok(Ok(handle)) => {
                     tracing::info!("✅ 录制任务已启动: {}", anchor_name);
-                    // 保存 handle 以便后续停止录制
+                    // 保存 handle 以便后续停止录制和获取进度
                     let handle = Arc::new(TokioMutex::new(handle));
+                    let handle_clone = handle.clone();
+                    
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.recording_handle = Some(handle);
                         }
                         cx.notify();
+                        
+                        // 启动进度监控任务
+                        this.start_progress_monitor(room_id, handle_clone, cx);
                     });
                 }
                 Ok(Err(e)) => {
@@ -771,6 +776,72 @@ impl RecordingPage {
         cx.notify();
     }
 
+    /// 启动进度监控任务，定期获取录制进度并更新 UI
+    fn start_progress_monitor(
+        &self,
+        room_id: Uuid,
+        handle: Arc<TokioMutex<RecordingHandle>>,
+        cx: &mut Context<Self>,
+    ) {
+        let runtime = self.app_state.runtime.clone();
+        
+        cx.spawn(async move |this, cx| {
+            loop {
+                // 每秒获取一次进度
+                smol::Timer::after(std::time::Duration::from_secs(1)).await;
+                
+                // 检查是否还在录制
+                let still_recording = this.update(cx, |this, _cx| {
+                    this.room_states.get(&room_id)
+                        .map(|s| s.is_recording)
+                        .unwrap_or(false)
+                }).ok().unwrap_or(false);
+                
+                if !still_recording {
+                    tracing::info!("📊 进度监控停止: room_id={}", room_id);
+                    break;
+                }
+                
+                // 获取进度
+                let handle = handle.clone();
+                let progress = runtime.spawn(async move {
+                    let mut h = handle.lock().await;
+                    h.get_progress().await
+                }).await;
+                
+                match progress {
+                    Ok(Some(progress)) => {
+                        let _ = this.update(cx, |this, cx| {
+                            if let Some(state) = this.room_states.get_mut(&room_id) {
+                                // 更新录制任务的进度信息
+                                if let Some(ref mut task) = state.current_task {
+                                    task.duration = progress.duration;
+                                    task.recorded_bytes = progress.size;
+                                }
+                            }
+                            cx.notify();
+                        });
+                    }
+                    Ok(None) => {
+                        // 进度通道关闭，录制可能已结束
+                        tracing::info!("📊 进度通道关闭，录制可能已结束: room_id={}", room_id);
+                        let _ = this.update(cx, |this, cx| {
+                            if let Some(state) = this.room_states.get_mut(&room_id) {
+                                state.is_recording = false;
+                                state.recording_handle = None;
+                            }
+                            cx.notify();
+                        });
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️ 获取进度失败: {}", e);
+                    }
+                }
+            }
+        }).detach();
+    }
+
     /// 后台自动开始录制（无需 window，用于监控自动触发）
     fn start_recording_background(&mut self, room_id: Uuid, cx: &mut Context<Self>) {
         let room = match self.monitored_rooms.iter().find(|r| r.id == room_id) {
@@ -849,13 +920,18 @@ impl RecordingPage {
             match result {
                 Ok(Ok(handle)) => {
                     tracing::info!("✅ 自动录制任务已启动: {}", anchor_name);
-                    // 保存 handle 以便后续停止录制
+                    // 保存 handle 以便后续停止录制和获取进度
                     let handle = Arc::new(TokioMutex::new(handle));
+                    let handle_clone = handle.clone();
+                    
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.recording_handle = Some(handle);
                         }
                         cx.notify();
+                        
+                        // 启动进度监控任务
+                        this.start_progress_monitor(room_id, handle_clone, cx);
                     });
                 }
                 Ok(Err(e)) => {

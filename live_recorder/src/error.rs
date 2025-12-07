@@ -62,6 +62,9 @@ pub enum RecorderError {
 
     #[error("Authentication required: {0}")]
     AuthenticationRequired(String),
+
+    #[error("JavaScript execution error: {0}")]
+    JavaScriptError(String),
 }
 
 pub type RecorderResult<T> = Result<T, RecorderError>;

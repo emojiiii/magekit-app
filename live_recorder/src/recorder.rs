@@ -208,13 +208,9 @@ impl RecordingSession {
             error: None,
         });
 
-        // HLS 流必须使用 FFmpeg 录制，FLV 流可以直接下载
-        let is_hls = self.stream_url.contains(".m3u8");
-        let result = if is_hls || self.config.format == "mp4" {
-            self.record_with_ffmpeg().await
-        } else {
-            self.record_direct().await
-        };
+        // 始终使用 FFmpeg 录制，因为它更稳定，能处理直播流的各种问题
+        // 直接下载 FLV 流容易断开连接
+        let result = self.record_with_ffmpeg().await;
 
         // 发送最终状态
         let final_status = match &result {
@@ -253,6 +249,11 @@ impl RecordingSession {
         
         // 添加输入选项
         cmd.arg("-y"); // 覆盖输出文件
+        
+        // 重连选项 - 对于直播流很重要
+        cmd.arg("-reconnect").arg("1");
+        cmd.arg("-reconnect_streamed").arg("1");
+        cmd.arg("-reconnect_delay_max").arg("5");
         
         // 添加请求头（必须在 -i 之前）
         // 注意：每个 header 后面都需要 \r\n，包括最后一个
@@ -318,30 +319,80 @@ impl RecordingSession {
         
         cmd.arg(&self.output_path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);  // 当任务被 drop 时自动杀死进程
 
         info!("🎬 FFmpeg 命令已构建，开始录制...");
 
-        let child = cmd.spawn()?;
+        let mut child = cmd.spawn()?;
         
-        info!("🎬 FFmpeg 进程已启动");
+        info!("🎬 FFmpeg 进程已启动, PID: {:?}", child.id());
 
-        // 等待进程完成并获取输出
-        let output = child.wait_with_output().await?;
+        // 启动进度监控任务
+        let progress_tx = self.progress_tx.clone();
+        let start_time = self.start_time;
+        let output_path = self.output_path.clone();
         
-        if output.status.success() {
-            info!("✅ FFmpeg 录制完成");
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            tracing::error!("❌ FFmpeg stderr: {}", stderr);
-            if !stdout.is_empty() {
-                tracing::error!("❌ FFmpeg stdout: {}", stdout);
+        let progress_task = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(1));
+            loop {
+                ticker.tick().await;
+                
+                // 获取文件大小
+                let size = tokio::fs::metadata(&output_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                
+                let progress = RecordProgress {
+                    status: RecordStatus::Recording,
+                    start_time: Some(chrono::Utc::now()),
+                    duration: start_time.elapsed().as_secs(),
+                    size,
+                    speed: 0, // TODO: 计算速度
+                    error: None,
+                };
+                if progress_tx.send(progress).is_err() {
+                    break;
+                }
             }
-            Err(RecorderError::RecordingError(
-                format!("FFmpeg录制失败，退出码: {:?}\n错误: {}", output.status.code(), stderr)
-            ))
+        });
+
+        // 等待停止信号或进程结束
+        tokio::select! {
+            // 收到停止信号
+            _ = &mut self.stop_rx => {
+                info!("🛑 收到停止信号，终止 FFmpeg 进程...");
+                child.kill().await.ok();
+                progress_task.abort();
+                info!("✅ FFmpeg 进程已终止");
+                Ok(())
+            }
+            // FFmpeg 进程自己退出了（可能是流断开）
+            result = child.wait() => {
+                progress_task.abort();
+                match result {
+                    Ok(status) => {
+                        if status.success() || status.code() == Some(255) {
+                            // 255 通常表示被信号终止，这是正常的
+                            info!("✅ FFmpeg 录制完成");
+                            Ok(())
+                        } else {
+                            tracing::error!("❌ FFmpeg 退出码: {:?}", status.code());
+                            
+                            Err(RecorderError::RecordingError(
+                                format!("FFmpeg录制失败，退出码: {:?}", status.code())
+                            ))
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ 等待 FFmpeg 进程失败: {}", e);
+                        Err(RecorderError::RecordingError(
+                            format!("等待FFmpeg进程失败: {}", e)
+                        ))
+                    }
+                }
+            }
         }
     }
 
@@ -440,7 +491,6 @@ impl RecordingSession {
 
         info!("开始接收流数据...");
         
-        let mut chunk_count = 0u64;
         while let Some(chunk) = response.chunk().await? {
             // 检查停止信号
             if self.stop_rx.try_recv().is_ok() {
@@ -451,15 +501,9 @@ impl RecordingSession {
             let chunk_len = chunk.len() as u64;
             writer.write_all(&chunk).await?;
             downloaded += chunk_len;
-            chunk_count += 1;
             
             // 更新共享的下载进度
             downloaded_shared.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-
-            // 每100个chunk记录一次日志
-            if chunk_count % 100 == 0 {
-                info!("已接收 {} 个数据块，总大小: {} 字节", chunk_count, downloaded);
-            }
         }
 
         // 停止进度监控任务
