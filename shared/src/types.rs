@@ -716,6 +716,12 @@ pub struct MonitoredRoom {
     pub last_checked: Option<chrono::DateTime<chrono::Utc>>,
     /// 最后直播时间
     pub last_live_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 缓存的房间标题
+    #[serde(default)]
+    pub cached_title: Option<String>,
+    /// 缓存的封面图 URL
+    #[serde(default)]
+    pub cached_cover_url: Option<String>,
 }
 
 impl MonitoredRoom {
@@ -731,6 +737,8 @@ impl MonitoredRoom {
             added_at: chrono::Utc::now(),
             last_checked: None,
             last_live_at: None,
+            cached_title: None,
+            cached_cover_url: None,
         }
     }
 }

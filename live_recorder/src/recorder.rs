@@ -58,14 +58,18 @@ impl LiveRecorder {
         // 选择最佳的流
         let selected_stream = self.select_best_stream(&stream_info, &config.quality)?;
 
+        // 优先选择 HLS 流（使用 FFmpeg 录制）
         let stream_url = selected_stream
             .url
             .hls_url
             .clone()
             .or_else(|| selected_stream.url.flv_url.clone())
             .ok_or_else(|| RecorderError::StreamNotAvailable("没有可用的流URL".to_string()))?;
+        
+        // 检测是否是 HLS 流
+        let is_hls = stream_url.contains(".m3u8");
 
-        info!("选择流URL: {}", stream_url);
+        info!("选择流URL: {} (HLS: {})", stream_url, is_hls);
 
         // 创建输出文件路径
         let output_path = self.generate_output_path(&stream_info, &config);
@@ -204,7 +208,9 @@ impl RecordingSession {
             error: None,
         });
 
-        let result = if self.config.format == "mp4" {
+        // HLS 流必须使用 FFmpeg 录制，FLV 流可以直接下载
+        let is_hls = self.stream_url.contains(".m3u8");
+        let result = if is_hls || self.config.format == "mp4" {
             self.record_with_ffmpeg().await
         } else {
             self.record_direct().await
@@ -241,23 +247,42 @@ impl RecordingSession {
             return Err(RecorderError::FFmpegNotFound);
         }
 
-        let mut cmd = TokioCommand::new("ffmpeg");
-        cmd
-            .arg("-i")
-            .arg(&self.stream_url)
-            .arg("-c")
-            .arg("copy")
-            .arg("-f")
-            .arg("mp4")
-            .arg("-y") // 覆盖输出文件
-            .arg(&self.output_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+        info!("🎬 使用 FFmpeg 录制: {} -> {:?}", self.stream_url, self.output_path);
 
-        // 添加请求头
+        let mut cmd = TokioCommand::new("ffmpeg");
+        
+        // 添加输入选项
+        cmd.arg("-y"); // 覆盖输出文件
+        
+        // 添加请求头（必须在 -i 之前）
+        // 注意：每个 header 后面都需要 \r\n，包括最后一个
+        let mut headers = vec![
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
+        ];
+        
+        // 根据流 URL 添加特定的 Referer
+        if self.stream_url.contains("huya") {
+            headers.push("Referer: https://www.huya.com/".to_string());
+            headers.push("Origin: https://www.huya.com".to_string());
+        } else if self.stream_url.contains("douyin") {
+            headers.push("Referer: https://live.douyin.com/".to_string());
+            headers.push("Origin: https://live.douyin.com".to_string());
+        } else if self.stream_url.contains("douyu") {
+            headers.push("Referer: https://www.douyu.com/".to_string());
+            headers.push("Origin: https://www.douyu.com".to_string());
+        }
+        
         for (key, value) in &self.config.headers {
+            headers.push(format!("{}: {}", key, value));
+        }
+        
+        if !headers.is_empty() {
+            // FFmpeg 要求每个 header 以 \r\n 结尾
+            let headers_str = headers.iter()
+                .map(|h| format!("{}\r\n", h))
+                .collect::<String>();
             cmd.arg("-headers");
-            cmd.arg(format!("{}: {}", key, value));
+            cmd.arg(headers_str);
         }
 
         // 添加代理设置
@@ -266,53 +291,57 @@ impl RecordingSession {
             cmd.arg(proxy);
         }
 
-        let mut child = cmd.spawn()?;
+        cmd.arg("-i")
+            .arg(&self.stream_url)
+            .arg("-c")
+            .arg("copy");
+        
+        // 根据输出文件扩展名选择格式
+        let output_ext = self.output_path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("ts");
+        
+        match output_ext {
+            "mp4" => {
+                cmd.arg("-f").arg("mp4");
+            }
+            "ts" => {
+                cmd.arg("-f").arg("mpegts");
+            }
+            "flv" => {
+                cmd.arg("-f").arg("flv");
+            }
+            _ => {
+                cmd.arg("-f").arg("mpegts");
+            }
+        }
+        
+        cmd.arg(&self.output_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        // 启动进度监控任务
-        let progress_tx = self.progress_tx.clone();
-        let start_time = self.start_time;
-        tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(1));
-            loop {
-                ticker.tick().await;
-                let progress = RecordProgress {
-                    status: RecordStatus::Recording,
-                    start_time: Some(chrono::Utc::now()),
-                    duration: start_time.elapsed().as_secs(),
-                    size: 0,
-                    speed: 0,
-                    error: None,
-                };
-                if progress_tx.send(progress).is_err() {
-                    break;
-                }
-            }
-        });
+        info!("🎬 FFmpeg 命令已构建，开始录制...");
 
-        // 等待停止信号或进程完成
-        tokio::select! {
-            _ = &mut self.stop_rx => {
-                info!("收到停止信号，正在停止录制...");
-                child.kill().await?;
-                Ok(())
+        let child = cmd.spawn()?;
+        
+        info!("🎬 FFmpeg 进程已启动");
+
+        // 等待进程完成并获取输出
+        let output = child.wait_with_output().await?;
+        
+        if output.status.success() {
+            info!("✅ FFmpeg 录制完成");
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            tracing::error!("❌ FFmpeg stderr: {}", stderr);
+            if !stdout.is_empty() {
+                tracing::error!("❌ FFmpeg stdout: {}", stdout);
             }
-            status = child.wait() => {
-                match status {
-                    Ok(exit_status) => {
-                        if exit_status.success() {
-                            info!("录制完成");
-                            Ok(())
-                        } else {
-                            Err(RecorderError::RecordingError(
-                                format!("FFmpeg录制失败，退出码: {:?}", exit_status.code())
-                            ))
-                        }
-                    }
-                    Err(e) => Err(RecorderError::RecordingError(
-                        format!("FFmpeg进程错误: {}", e)
-                    ))
-                }
-            }
+            Err(RecorderError::RecordingError(
+                format!("FFmpeg录制失败，退出码: {:?}\n错误: {}", output.status.code(), stderr)
+            ))
         }
     }
 

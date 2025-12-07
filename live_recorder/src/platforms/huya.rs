@@ -6,6 +6,10 @@ use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
 use regex::Regex;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use md5::{Md5, Digest};
+use rand::Rng;
+use url::form_urlencoded;
 
 use crate::{
     error::{RecorderError, RecorderResult},
@@ -27,6 +31,72 @@ impl HuyaHandler {
             .expect("Failed to create HTTP client");
 
         Self { client }
+    }
+
+    /// 重新生成 anti-code（参考 py_demo 的实现）
+    /// 虎牙的流 URL 需要重新生成 anti-code 才能正常访问
+    fn generate_anti_code(&self, old_anti_code: &str, stream_name: &str) -> String {
+        let params_t = 100;
+        let sdk_version = 2403051612u64;
+
+        // sdk_id 是 13 位数毫秒级时间戳
+        let t13 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let sdk_sid = t13;
+
+        // 计算 uuid 和 uid 参数值
+        let init_uuid = ((t13 % 10_000_000_000u64 * 1000) + (rand::thread_rng().gen_range(0..1000))) % 4294967295u64;
+        let uid: u64 = rand::thread_rng().gen_range(1400000000000u64..1400009999999u64);
+        let seq_id = uid + sdk_sid;
+
+        // 计算 ws_time 参数值（16进制）
+        let target_unix_time = (t13 + 110624) / 1000;
+        let ws_time = format!("{:x}", target_unix_time).to_lowercase();
+
+        // 解析旧的 anti-code 参数
+        let query_params: HashMap<String, String> = form_urlencoded::parse(old_anti_code.as_bytes())
+            .into_owned()
+            .collect();
+
+        let fm = query_params.get("fm").map(|s| s.as_str()).unwrap_or("");
+        let ctype = query_params.get("ctype").map(|s| s.as_str()).unwrap_or("tars_mp");
+        let fs = query_params.get("fs").map(|s| s.as_str()).unwrap_or("bgct");
+
+        // fm 参数值是经过 URL 编码然后 base64 编码的
+        // 解码后类似 DWq8BcJ3h6DJt6TY_$0_$1_$2_$3
+        let fm_decoded = urlencoding::decode(fm).unwrap_or_default();
+        let ws_secret_pf = match BASE64.decode(fm_decoded.as_bytes()) {
+            Ok(decoded) => {
+                String::from_utf8_lossy(&decoded)
+                    .split('_')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            }
+            Err(_) => String::new(),
+        };
+
+        // 计算 wsSecret
+        let ws_secret_hash_input = format!("{}|{}|{}", seq_id, ctype, params_t);
+        let mut hasher1 = Md5::new();
+        hasher1.update(ws_secret_hash_input.as_bytes());
+        let ws_secret_hash = format!("{:x}", hasher1.finalize());
+        
+        let ws_secret_input = format!("{}_{}_{}_{}_{}", ws_secret_pf, uid, stream_name, ws_secret_hash, ws_time);
+        let mut hasher2 = Md5::new();
+        hasher2.update(ws_secret_input.as_bytes());
+        let ws_secret_md5 = format!("{:x}", hasher2.finalize());
+
+        // 构建新的 anti-code
+        let new_anti_code = format!(
+            "wsSecret={}&wsTime={}&seqid={}&ctype={}&ver=1&fs={}&uuid={}&u={}&t={}&sv={}&sdk_sid={}&codec=264",
+            ws_secret_md5, ws_time, seq_id, ctype, fs, init_uuid, uid, params_t, sdk_version, sdk_sid
+        );
+
+        tracing::debug!("🔑 生成新的 anti-code: {}", new_anti_code);
+        new_anti_code
     }
 
     /// 从微信小程序 API 获取流信息（更稳定）
@@ -95,15 +165,15 @@ impl HuyaHandler {
                         let hls_url_base = stream_item["sHlsUrl"].as_str().unwrap_or("");
                         let hls_anti_code = stream_item["sHlsAntiCode"].as_str().unwrap_or("");
 
-                        let mut flv_url = format!("{}/{}.flv?{}", flv_url_base, stream_name, flv_anti_code);
-                        let m3u8_url = format!("{}/{}.m3u8?{}", hls_url_base, stream_name, hls_anti_code);
+                        // 重新生成 anti-code（关键修复）
+                        let new_flv_anti_code = self.generate_anti_code(flv_anti_code, stream_name);
+                        let new_hls_anti_code = self.generate_anti_code(hls_anti_code, stream_name);
 
-                        // 如果是 TX CDN，进行特殊处理
-                        if cdn_type == "TX" {
-                            flv_url = flv_url
-                                .replace("&ctype=tars_mp", "&ctype=huya_webh5")
-                                .replace("&fs=bhct", "&fs=bgct");
-                        }
+                        let flv_url = format!("{}/{}.flv?{}", flv_url_base, stream_name, new_flv_anti_code);
+                        let mut m3u8_url = format!("{}/{}.m3u8?{}", hls_url_base, stream_name, new_hls_anti_code);
+
+                        // 如果是 TX CDN，进行特殊处理（不再需要，因为新的 anti-code 已经设置了正确的 ctype）
+                        // 但保留 HTTPS 转换
 
                         // 确保使用 HTTPS
                         let flv_url = if flv_url.starts_with("http://") {
@@ -113,6 +183,18 @@ impl HuyaHandler {
                         } else {
                             flv_url
                         };
+                        
+                        // m3u8 也要使用 HTTPS
+                        m3u8_url = if m3u8_url.starts_with("http://") {
+                            m3u8_url.replace("http://", "https://")
+                        } else if !m3u8_url.starts_with("https://") {
+                            format!("https://{}", m3u8_url)
+                        } else {
+                            m3u8_url
+                        };
+
+                        tracing::info!("🔗 虎牙 FLV URL: {}", flv_url);
+                        tracing::info!("🔗 虎牙 M3U8 URL: {}", m3u8_url);
 
                         streams.push(StreamData {
                             quality: VideoQuality::Original,

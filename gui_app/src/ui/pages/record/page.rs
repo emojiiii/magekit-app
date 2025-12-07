@@ -15,9 +15,11 @@ use gpui_component::WindowExt;
 use gpui_component::notification::Notification;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
+use gpui_component::radio::RadioGroup;
+use gpui_component::switch::Switch;
 use gpui_component::v_flex;
 use gpui_component::Sizable;
-use live_recorder::{LiveRecorder, RecordConfig, error::RecorderError};
+use live_recorder::{LiveRecorder, RecordConfig, recorder::RecordingHandle, error::RecorderError};
 use magekit_shared::types::{
     MonitoredRoom, LiveRoomStatus, LiveRecordConfig, LiveRecordQuality, RecordingTask
 };
@@ -27,10 +29,10 @@ use std::path::PathBuf;
 use uuid::Uuid;
 use chrono::Utc;
 use parking_lot::RwLock;
+use tokio::sync::Mutex as TokioMutex;
 
 
 /// 运行时房间状态（用于 UI 显示）
-#[derive(Clone)]
 struct RuntimeRoomState {
     status: LiveRoomStatus,
     is_recording: bool,
@@ -40,6 +42,22 @@ struct RuntimeRoomState {
     cover_url: Option<String>,
     /// 直播标题
     title: Option<String>,
+    /// 录制句柄（用于停止录制）
+    recording_handle: Option<Arc<TokioMutex<RecordingHandle>>>,
+}
+
+impl Clone for RuntimeRoomState {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status.clone(),
+            is_recording: self.is_recording,
+            current_task: self.current_task.clone(),
+            last_error: self.last_error.clone(),
+            cover_url: self.cover_url.clone(),
+            title: self.title.clone(),
+            recording_handle: self.recording_handle.clone(),
+        }
+    }
 }
 
 impl Default for RuntimeRoomState {
@@ -51,6 +69,7 @@ impl Default for RuntimeRoomState {
             last_error: None,
             cover_url: None,
             title: None,
+            recording_handle: None,
         }
     }
 }
@@ -92,10 +111,18 @@ impl RecordingPage {
         let monitored_rooms = config.monitored_rooms.clone();
         let record_config = config.live_record.clone();
         
-        // 初始化运行时状态
+        // 初始化运行时状态（从缓存恢复标题和封面）
         let mut room_states = HashMap::new();
         for room in &monitored_rooms {
-            room_states.insert(room.id, RuntimeRoomState::default());
+            room_states.insert(room.id, RuntimeRoomState {
+                status: LiveRoomStatus::Unknown,
+                is_recording: false,
+                current_task: None,
+                last_error: None,
+                cover_url: room.cached_cover_url.clone(),
+                title: room.cached_title.clone(),
+                recording_handle: None,
+            });
         }
 
         let page = Self {
@@ -170,15 +197,78 @@ impl RecordingPage {
                             live_recorder::types::LiveStatus::Unknown => LiveRoomStatus::Unknown,
                         };
                         
+                        // 提取房间信息用于缓存
+                        let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
+                        let cover_url = room_info.cover_url.clone();
+                        let is_live = status == LiveRoomStatus::Live;
+                        
+                        // 调试日志
+                        tracing::info!("📦 房间 {} 状态检查结果:", room_id);
+                        tracing::info!("   - 状态: {:?}", status);
+                        tracing::info!("   - 标题: {:?}", title);
+                        tracing::info!("   - 封面: {:?}", cover_url);
+                        tracing::info!("   - 主播: {}", room_info.anchor_name);
+                        
                         let _ = this.update(cx, |this, cx| {
+                            let is_recording = this.room_states.get(&room_id)
+                                .map(|s| s.is_recording)
+                                .unwrap_or(false);
+                            
+                            // 更新运行时状态
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 state.status = status;
                                 state.last_error = None;
+                                // 更新标题和封面
+                                if title.is_some() {
+                                    state.title = title.clone();
+                                }
+                                if cover_url.is_some() {
+                                    state.cover_url = cover_url.clone();
+                                }
                             }
                             
-                            // 更新最后检查时间
+                            // 更新持久化的房间信息（缓存标题、封面等）
+                            let mut need_save = false;
                             if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
                                 room.last_checked = Some(Utc::now());
+                                
+                                // 同步标题到缓存
+                                if title.is_some() && room.cached_title != title {
+                                    tracing::info!("📝 更新房间 {} 缓存标题: {:?} -> {:?}", room_id, room.cached_title, title);
+                                    room.cached_title = title;
+                                    need_save = true;
+                                }
+                                // 同步封面到缓存
+                                if cover_url.is_some() && room.cached_cover_url != cover_url {
+                                    tracing::info!("🖼️ 更新房间 {} 缓存封面: {:?}", room_id, cover_url);
+                                    room.cached_cover_url = cover_url;
+                                    need_save = true;
+                                }
+                                // 更新最后直播时间
+                                if is_live {
+                                    room.last_live_at = Some(Utc::now());
+                                    need_save = true;
+                                }
+                                
+                                tracing::info!("📊 房间 {} need_save={}", room_id, need_save);
+                            } else {
+                                tracing::warn!("⚠️ 找不到房间 {} 在 monitored_rooms 中", room_id);
+                            }
+                            
+                            // 保存配置（如果有更新）
+                            if need_save {
+                                this.save_config();
+                            }
+                            
+                            // 如果开启了监控且变为直播状态，自动开始录制
+                            let is_monitoring = this.monitored_rooms.iter()
+                                .find(|r| r.id == room_id)
+                                .map(|r| r.monitoring_enabled)
+                                .unwrap_or(false);
+                            
+                            if is_live && is_monitoring && !is_recording {
+                                tracing::info!("🎬 监控检测到直播，自动开始录制: {}", room_id);
+                                this.start_recording_background(room_id, cx);
                             }
                             
                             cx.notify();
@@ -366,6 +456,7 @@ impl RecordingPage {
                             last_error: None,
                             cover_url,
                             title,
+                            recording_handle: None,
                         });
                         this.is_loading = false;
                         this.save_config();
@@ -535,9 +626,16 @@ impl RecordingPage {
             }).await;
 
             match result {
-                Ok(Ok(_handle)) => {
+                Ok(Ok(handle)) => {
                     tracing::info!("✅ 录制任务已启动: {}", anchor_name);
-                    // 录制任务会在后台运行，我们需要监控它的进度
+                    // 保存 handle 以便后续停止录制
+                    let handle = Arc::new(TokioMutex::new(handle));
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.recording_handle = Some(handle);
+                        }
+                        cx.notify();
+                    });
                 }
                 Ok(Err(e)) => {
                     let error_msg = format!("录制失败: {}", e);
@@ -548,6 +646,7 @@ impl RecordingPage {
                             state.is_recording = false;
                             state.current_task = None;
                             state.last_error = Some(error_msg.clone());
+                            state.recording_handle = None;
                         }
                         cx.notify();
                     });
@@ -562,6 +661,7 @@ impl RecordingPage {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
                             state.current_task = None;
+                            state.recording_handle = None;
                         }
                         cx.notify();
                     });
@@ -572,19 +672,18 @@ impl RecordingPage {
 
     /// 停止录制
     fn stop_recording(&mut self, room_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(state) = self.room_states.get_mut(&room_id) {
+        // 获取录制任务信息用于转码
+        let (handle, output_path, should_transcode) = if let Some(state) = self.room_states.get_mut(&room_id) {
             state.is_recording = false;
             
-            // 检查是否需要转码
-            if self.record_config.auto_transcode {
-                if let Some(task) = &state.current_task {
-                    // TODO: 启动转码任务
-                    tracing::info!("📦 即将转码: {:?}", task.output_path);
-                }
-            }
+            let output_path = state.current_task.as_ref().map(|t| t.output_path.clone());
+            let should_transcode = self.record_config.auto_transcode && output_path.is_some();
             
             state.current_task = None;
-        }
+            (state.recording_handle.take(), output_path, should_transcode)
+        } else {
+            (None, None, false)
+        };
 
         let anchor_name = self.monitored_rooms
             .iter()
@@ -592,11 +691,202 @@ impl RecordingPage {
             .map(|r| r.anchor_name.clone())
             .unwrap_or_default();
 
+        // 异步停止录制并转码
+        if let Some(handle) = handle {
+            let runtime = self.app_state.runtime.clone();
+            let app_state = self.app_state.clone();
+            let anchor_name_for_log = anchor_name.clone();
+            
+            cx.spawn(async move |_this, _cx| {
+                // 先停止录制
+                let stop_result = runtime.spawn(async move {
+                    let mut h = handle.lock().await;
+                    h.stop().await
+                }).await;
+                
+                match stop_result {
+                    Ok(Ok(_)) => {
+                        tracing::info!("✅ 录制已停止: {}", anchor_name_for_log);
+                        
+                        // 如果需要转码
+                        if should_transcode {
+                            if let Some(input_path) = output_path {
+                                // 生成 MP4 输出路径
+                                let mp4_path = input_path.with_extension("mp4");
+                                
+                                tracing::info!("🔄 开始转码: {:?} -> {:?}", input_path, mp4_path);
+                                
+                                // 获取 ffmpeg 路径
+                                let ffmpeg_path = app_state.tool_manager.storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
+                                
+                                // 检查 ffmpeg 是否存在
+                                let ffmpeg = if ffmpeg_path.exists() {
+                                    Some(ffmpeg_path)
+                                } else {
+                                    which::which("ffmpeg").ok()
+                                };
+                                
+                                if let Some(ffmpeg) = ffmpeg {
+                                    // 使用 ffmpeg 转码
+                                    let transcode_result = std::process::Command::new(&ffmpeg)
+                                        .arg("-i")
+                                        .arg(&input_path)
+                                        .arg("-c")
+                                        .arg("copy")
+                                        .arg("-y")
+                                        .arg(&mp4_path)
+                                        .output();
+                                    
+                                    match transcode_result {
+                                        Ok(output) => {
+                                            if output.status.success() {
+                                                tracing::info!("✅ 转码完成: {:?}", mp4_path);
+                                                // 可选：删除原文件
+                                                // let _ = std::fs::remove_file(&input_path);
+                                            } else {
+                                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                                tracing::error!("❌ 转码失败: {}", stderr);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("❌ 启动 ffmpeg 失败: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!("⚠️ 未找到 ffmpeg，跳过转码");
+                                }
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => tracing::error!("❌ 停止录制失败: {}", e),
+                    Err(e) => tracing::error!("❌ 停止录制任务失败: {}", e),
+                }
+            }).detach();
+        }
+
         window.push_notification(
             Notification::success(&format!("停止录制: {}", anchor_name)),
             cx,
         );
         cx.notify();
+    }
+
+    /// 后台自动开始录制（无需 window，用于监控自动触发）
+    fn start_recording_background(&mut self, room_id: Uuid, cx: &mut Context<Self>) {
+        let room = match self.monitored_rooms.iter().find(|r| r.id == room_id) {
+            Some(r) => r.clone(),
+            None => return,
+        };
+
+        let state = self.room_states.get(&room_id).cloned().unwrap_or_default();
+        
+        // 检查是否正在直播
+        if state.status != LiveRoomStatus::Live {
+            return;
+        }
+
+        // 检查是否已在录制
+        if state.is_recording {
+            return;
+        }
+
+        let output_path = self.generate_output_path(&room);
+        let live_recorder = self.live_recorder.clone();
+        let runtime = self.app_state.runtime.clone();
+        let url = room.url.clone();
+        let anchor_name = room.anchor_name.clone();
+        
+        // 创建输出目录
+        if let Some(parent) = output_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::error!("❌ 无法创建输出目录: {}", e);
+                return;
+            }
+        }
+
+        // 更新状态
+        if let Some(state) = self.room_states.get_mut(&room_id) {
+            state.is_recording = true;
+            state.current_task = Some(RecordingTask {
+                id: Uuid::new_v4(),
+                room_id,
+                output_path: output_path.clone(),
+                start_time: Utc::now(),
+                duration: 0,
+                recorded_bytes: 0,
+                status: magekit_shared::types::RecordingTaskStatus::Recording,
+            });
+        }
+        cx.notify();
+
+        tracing::info!("🎥 自动开始录制: {} -> {:?}", anchor_name, output_path);
+
+        // 创建录制配置
+        let config = RecordConfig {
+            output_path_template: output_path.to_string_lossy().to_string(),
+            format: self.record_config.record_format.clone(),
+            quality: match self.record_config.quality {
+                LiveRecordQuality::Original => live_recorder::types::VideoQuality::Original,
+                LiveRecordQuality::Blue => live_recorder::types::VideoQuality::Blue,
+                LiveRecordQuality::Ultra => live_recorder::types::VideoQuality::Ultra,
+                LiveRecordQuality::High => live_recorder::types::VideoQuality::High,
+                LiveRecordQuality::Standard => live_recorder::types::VideoQuality::Standard,
+            },
+            segment_duration: self.record_config.segment_duration,
+            retry_count: self.record_config.retry_count,
+            timeout: self.record_config.reconnect_delay,
+            max_duration: None,
+            include_danmaku: false,
+            proxy: None,
+            headers: std::collections::HashMap::new(),
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = runtime.spawn(async move {
+                live_recorder.start_recording(&url, config).await
+            }).await;
+
+            match result {
+                Ok(Ok(handle)) => {
+                    tracing::info!("✅ 自动录制任务已启动: {}", anchor_name);
+                    // 保存 handle 以便后续停止录制
+                    let handle = Arc::new(TokioMutex::new(handle));
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.recording_handle = Some(handle);
+                        }
+                        cx.notify();
+                    });
+                }
+                Ok(Err(e)) => {
+                    let error_msg = format!("自动录制失败: {}", e);
+                    tracing::error!("❌ {}", error_msg);
+                    
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.is_recording = false;
+                            state.current_task = None;
+                            state.last_error = Some(error_msg.clone());
+                            state.recording_handle = None;
+                        }
+                        cx.notify();
+                    });
+                }
+                Err(e) => {
+                    let error_msg = format!("任务执行失败: {}", e);
+                    tracing::error!("❌ {}", error_msg);
+                    
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(state) = this.room_states.get_mut(&room_id) {
+                            state.is_recording = false;
+                            state.current_task = None;
+                            state.recording_handle = None;
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+        }).detach();
     }
 
     /// 删除直播间
@@ -651,6 +941,8 @@ impl RecordingPage {
         let runtime = self.app_state.runtime.clone();
         let url = room.url.clone();
 
+        tracing::info!("🔄 开始刷新房间: {} ({})", room.anchor_name, room_id);
+
         cx.spawn(async move |this, cx| {
             // 获取完整的流信息（包括封面图和标题）
             let result = runtime.spawn(async move {
@@ -669,28 +961,69 @@ impl RecordingPage {
                     let cover_url = room_info.cover_url.clone();
                     let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
                     let anchor_name = room_info.anchor_name.clone();
+                    let is_live = status == LiveRoomStatus::Live;
+
+                    // 调试日志
+                    tracing::info!("📦 刷新房间 {} 结果:", room_id);
+                    tracing::info!("   - 状态: {:?}", status);
+                    tracing::info!("   - 标题: {:?}", title);
+                    tracing::info!("   - 封面: {:?}", cover_url);
+                    tracing::info!("   - 主播: {}", anchor_name);
 
                     let _ = this.update(cx, |this, cx| {
+                        // 更新运行时状态
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = status;
                             state.last_error = None;
-                            state.cover_url = cover_url;
-                            state.title = title;
+                            state.cover_url = cover_url.clone();
+                            state.title = title.clone();
                         }
-                        // 更新主播名称（如果之前是 Unknown）
+                        
+                        // 更新持久化的房间信息（缓存标题、封面等）
+                        let mut need_save = false;
                         if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
                             room.last_checked = Some(Utc::now());
+                            
+                            // 更新主播名称（如果之前是 Unknown）
                             if room.anchor_name == "Unknown" || room.anchor_name.starts_with("Unknown-") {
+                                tracing::info!("📝 更新房间 {} 主播名: {} -> {}", room_id, room.anchor_name, anchor_name);
                                 room.anchor_name = anchor_name;
-                                // 保存更新
-                                this.save_config();
+                                need_save = true;
+                            }
+                            
+                            // 同步标题到缓存
+                            if title.is_some() && room.cached_title != title {
+                                tracing::info!("📝 更新房间 {} 缓存标题: {:?} -> {:?}", room_id, room.cached_title, title);
+                                room.cached_title = title;
+                                need_save = true;
+                            }
+                            
+                            // 同步封面到缓存
+                            if cover_url.is_some() && room.cached_cover_url != cover_url {
+                                tracing::info!("🖼️ 更新房间 {} 缓存封面: {:?}", room_id, cover_url);
+                                room.cached_cover_url = cover_url;
+                                need_save = true;
+                            }
+                            
+                            // 更新最后直播时间
+                            if is_live {
+                                room.last_live_at = Some(Utc::now());
+                                need_save = true;
                             }
                         }
+                        
+                        // 保存配置（如果有更新）
+                        if need_save {
+                            tracing::info!("💾 保存房间 {} 的缓存更新", room_id);
+                            this.save_config();
+                        }
+                        
                         cx.notify();
                     });
                 }
                 Ok(Err(e)) => {
                     let error = format!("{}", e);
+                    tracing::error!("❌ 刷新房间 {} 失败: {}", room_id, error);
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = LiveRoomStatus::Error(error.clone());
@@ -701,6 +1034,7 @@ impl RecordingPage {
                 }
                 Err(e) => {
                     let error = format!("任务执行失败: {}", e);
+                    tracing::error!("❌ 刷新房间 {} 任务失败: {}", room_id, error);
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = LiveRoomStatus::Error(error.clone());
@@ -713,270 +1047,521 @@ impl RecordingPage {
         }).detach();
     }
 
-    /// 显示设置弹窗
+    /// 显示设置弹窗（可编辑版本）
     fn show_settings_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let config = self.record_config.clone();
+        let this = cx.entity().clone();
 
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let config = config.clone();
+        // 格式选项
+        let format_options = ["ts", "mkv", "flv", "mp4"];
+        let format_index = format_options.iter().position(|&f| f == config.record_format.as_str()).unwrap_or(0);
+        
+        // 质量选项
+        let quality_options = [
+            LiveRecordQuality::Original,
+            LiveRecordQuality::Blue,
+            LiveRecordQuality::Ultra,
+            LiveRecordQuality::High,
+            LiveRecordQuality::Standard,
+        ];
+        let quality_index = quality_options.iter().position(|q| *q == config.quality).unwrap_or(0);
+        
+        // 使用 Arc<RwLock> 存储选择状态（因为 Dialog 闭包需要 Fn）
+        let selected_format = Arc::new(RwLock::new(format_index));
+        let selected_quality = Arc::new(RwLock::new(quality_index));
+        let auto_transcode = Arc::new(RwLock::new(config.auto_transcode));
+
+        // 在 open_dialog 之前创建所有 InputState
+        let interval_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("60")
+                .default_value(config.check_interval.to_string())
+        });
+        let segment_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("留空关闭")
+                .default_value(config.segment_duration.map(|d| d.to_string()).unwrap_or_default())
+        });
+        let retry_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("3")
+                .default_value(config.retry_count.to_string())
+        });
+        let reconnect_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("30")
+                .default_value(config.reconnect_delay.to_string())
+        });
+        let path_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("recordings")
+                .default_value(config.output_base_path.to_string_lossy().to_string())
+        });
+
+        // Clone for closures
+        let interval_input_clone = interval_input.clone();
+        let segment_input_clone = segment_input.clone();
+        let retry_input_clone = retry_input.clone();
+        let reconnect_input_clone = reconnect_input.clone();
+        let path_input_clone = path_input.clone();
+        let selected_format_clone = selected_format.clone();
+        let selected_quality_clone = selected_quality.clone();
+        let auto_transcode_clone = auto_transcode.clone();
+
+        window.open_dialog(cx, move |dialog, _window, cx| {
+            let selected_format = selected_format.clone();
+            let selected_quality = selected_quality.clone();
+            let auto_transcode = auto_transcode.clone();
+            let theme = cx.theme();
+            let border_color = theme.border;
+            let muted_fg = theme.muted_foreground;
 
             dialog
-                .title("📹 录制设置")
-                .h(px(520.0))
-                .w(px(480.0))
-                .child(
+                .title("录制设置")
+                .h(px(580.0))
+                .w(px(500.0))
+                .child({
+                    let selected_format = selected_format.clone();
+                    let selected_quality = selected_quality.clone();
+                    let auto_transcode = auto_transcode.clone();
+
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap_4()
-                        .p_4()
-                        // === 录制格式 ===
+                        .id("settings-scroll")
+                        .overflow_y_scroll()
+                        .p_5()
                         .child(
                             div()
                                 .flex()
-                                .items_center()
-                                .justify_between()
+                                .flex_col()
+                                .gap_5()
+                                // === 输出设置分组 ===
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap_1()
+                                        .gap_4()
+                                        .p_4()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(border_color)
+                                        // 分组标题
                                         .child(
                                             div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("🎬 录制格式")
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .pb_2()
+                                                .border_b_1()
+                                                .border_color(border_color)
+                                                .child(
+                                                    div()
+                                                        .text_base()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .child("🎬 输出设置")
+                                                )
                                         )
+                                        // 录制格式
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("ts|mkv|flv|mp4 (ts 最稳定)")
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child("录制格式")
+                                                )
+                                                .child({
+                                                    let selected_format = selected_format.clone();
+                                                    let current_idx = *selected_format.read();
+                                                    RadioGroup::horizontal("format-radio")
+                                                        .children(["TS", "MKV", "FLV", "MP4"])
+                                                        .selected_index(Some(current_idx))
+                                                        .on_click({
+                                                            let selected_format = selected_format.clone();
+                                                            move |idx: &usize, _window, _cx| {
+                                                                *selected_format.write() = *idx;
+                                                            }
+                                                        })
+                                                })
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(muted_fg)
+                                                        .child("TS 最稳定，MP4 兼容性最好")
+                                                )
                                         )
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(gpui::rgb(0x3b82f6))
-                                        .child(config.record_format.to_uppercase())
-                                )
-                        )
-                        // === 视频质量 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
+                                        // 视频质量
                                         .child(
                                             div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("📊 视频质量")
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child("视频质量")
+                                                )
+                                                .child({
+                                                    let selected_quality = selected_quality.clone();
+                                                    let current_idx = *selected_quality.read();
+                                                    RadioGroup::horizontal("quality-radio")
+                                                        .children(["原画", "蓝光", "超清", "高清", "标清"])
+                                                        .selected_index(Some(current_idx))
+                                                        .on_click({
+                                                            let selected_quality = selected_quality.clone();
+                                                            move |idx: &usize, _window, _cx| {
+                                                                *selected_quality.write() = *idx;
+                                                            }
+                                                        })
+                                                })
                                         )
+                                        // 自动转码开关
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("原画|蓝光|超清|高清|标清")
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .pt_2()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .child("录制后自动转码")
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(muted_fg)
+                                                                .child("录制完成后自动转为 MP4 格式")
+                                                        )
+                                                )
+                                                .child({
+                                                    let auto_transcode = auto_transcode.clone();
+                                                    let checked = *auto_transcode.read();
+                                                    Switch::new("auto-transcode")
+                                                        .checked(checked)
+                                                        .on_click({
+                                                            let auto_transcode = auto_transcode.clone();
+                                                            move |checked: &bool, _window, _cx| {
+                                                                *auto_transcode.write() = *checked;
+                                                            }
+                                                        })
+                                                })
                                         )
                                 )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(gpui::rgb(0x22c55e))
-                                        .child(config.quality.display_name())
-                                )
-                        )
-                        // === 检测间隔 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("⏱️ 检测间隔")
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("检测直播状态的时间间隔")
-                                        )
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(format!("{} 秒", config.check_interval))
-                                )
-                        )
-                        // === 分段录制 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("📁 分段录制")
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("视频分段时间（秒）")
-                                        )
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(if let Some(dur) = config.segment_duration {
-                                            format!("{} 秒", dur)
-                                        } else {
-                                            "关闭".to_string()
-                                        })
-                                )
-                        )
-                        // === 重试设置 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
+                                // === 监控设置分组 ===
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap_1()
+                                        .gap_4()
+                                        .p_4()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(border_color)
+                                        // 分组标题
                                         .child(
                                             div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("🔄 重试设置")
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .pb_2()
+                                                .border_b_1()
+                                                .border_color(border_color)
+                                                .child(
+                                                    div()
+                                                        .text_base()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .child("⏱️ 监控设置")
+                                                )
                                         )
+                                        // 检测间隔
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("断流后自动重连")
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .child("检测间隔")
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(muted_fg)
+                                                                .child("检查直播间状态的时间间隔（最小 10 秒）")
+                                                        )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .w(px(80.0))
+                                                                .child(Input::new(&interval_input).small())
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(muted_fg)
+                                                                .child("秒")
+                                                        )
+                                                )
+                                        )
+                                        // 重试设置
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child("重连设置")
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .w(px(50.0))
+                                                                        .child(Input::new(&retry_input).small())
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(muted_fg)
+                                                                        .child("次")
+                                                                )
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(muted_fg)
+                                                                        .child("间隔")
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .w(px(50.0))
+                                                                        .child(Input::new(&reconnect_input).small())
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(muted_fg)
+                                                                        .child("秒")
+                                                                )
+                                                        )
+                                                )
                                         )
                                 )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .child(format!("{} 次 / {} 秒", config.retry_count, config.reconnect_delay))
-                                )
-                        )
-                        // === 自动转码 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
+                                // === 高级设置分组 ===
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap_1()
+                                        .gap_4()
+                                        .p_4()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(border_color)
+                                        // 分组标题
                                         .child(
                                             div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("🔄 录制后自动转码")
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .pb_2()
+                                                .border_b_1()
+                                                .border_color(border_color)
+                                                .child(
+                                                    div()
+                                                        .text_base()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .child("⚙️ 高级设置")
+                                                )
                                         )
+                                        // 分段录制
                                         .child(
                                             div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("录制完成后自动转为 mp4 格式")
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .child("分段录制")
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(muted_fg)
+                                                                .child("按固定时长分割文件（留空关闭）")
+                                                        )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .w(px(80.0))
+                                                                .child(Input::new(&segment_input).small())
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(muted_fg)
+                                                                .child("秒")
+                                                        )
+                                                )
                                         )
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(if config.auto_transcode { gpui::rgb(0x22c55e) } else { gpui::rgb(0x6b7280) })
-                                        .child(if config.auto_transcode { "开启" } else { "关闭" })
+                                        // 保存路径
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child("保存路径")
+                                                )
+                                                .child(Input::new(&path_input).small())
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(muted_fg)
+                                                        .child("相对于下载路径的保存目录")
+                                                )
+                                        )
                                 )
                         )
-                        // === 保存路径 ===
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child("📂 保存路径")
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(gpui::rgb(0x888888))
-                                                .child("相对于下载路径")
-                                        )
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(gpui::rgb(0x9ca3af))
-                                        .max_w(px(200.0))
-                                        .overflow_x_hidden()
-                                        .text_ellipsis()
-                                        .child(config.output_base_path.to_string_lossy().to_string())
-                                )
-                        )
-                )
-                .footer(move |_, _, _, _| {
-                    vec![
-                        Button::new("close-settings")
-                            .label("关闭")
-                            .on_click(|_event, window, cx| {
-                                window.close_dialog(cx);
-                            }),
-                    ]
+                })
+                .footer({
+                    let interval_input = interval_input_clone.clone();
+                    let segment_input = segment_input_clone.clone();
+                    let retry_input = retry_input_clone.clone();
+                    let reconnect_input = reconnect_input_clone.clone();
+                    let path_input = path_input_clone.clone();
+                    let selected_format = selected_format_clone.clone();
+                    let selected_quality = selected_quality_clone.clone();
+                    let auto_transcode = auto_transcode_clone.clone();
+                    let this = this.clone();
+
+                    move |_, _, _, _| {
+                        let interval_input = interval_input.clone();
+                        let segment_input = segment_input.clone();
+                        let retry_input = retry_input.clone();
+                        let reconnect_input = reconnect_input.clone();
+                        let path_input = path_input.clone();
+                        let selected_format = selected_format.clone();
+                        let selected_quality = selected_quality.clone();
+                        let auto_transcode = auto_transcode.clone();
+                        let this = this.clone();
+
+                        vec![
+                            Button::new("save-settings")
+                                .primary()
+                                .label("保存")
+                                .on_click(move |_event, window, cx| {
+                                    // 从 RadioGroup 获取选择
+                                    let format_options = ["ts", "mkv", "flv", "mp4"];
+                                    let quality_options = [
+                                        LiveRecordQuality::Original,
+                                        LiveRecordQuality::Blue,
+                                        LiveRecordQuality::Ultra,
+                                        LiveRecordQuality::High,
+                                        LiveRecordQuality::Standard,
+                                    ];
+                                    
+                                    let format_idx = *selected_format.read();
+                                    let quality_idx = *selected_quality.read();
+                                    let transcode = *auto_transcode.read();
+                                    
+                                    let format = format_options[format_idx].to_string();
+                                    let quality = quality_options[quality_idx].clone();
+                                    
+                                    // 从输入框读取值
+                                    let interval = interval_input.read(cx).text().to_string()
+                                        .trim().parse::<u64>().unwrap_or(60).max(10);
+                                    let segment_str = segment_input.read(cx).text().to_string();
+                                    let segment = segment_str.trim().parse::<u64>().ok();
+                                    let retry = retry_input.read(cx).text().to_string()
+                                        .trim().parse::<u32>().unwrap_or(3).max(1);
+                                    let reconnect = reconnect_input.read(cx).text().to_string()
+                                        .trim().parse::<u64>().unwrap_or(30).max(5);
+                                    let path = path_input.read(cx).text().to_string().trim().to_string();
+                                    
+                                    // 更新配置
+                                    let _ = this.update(cx, |page, cx| {
+                                        page.record_config.record_format = format;
+                                        page.record_config.quality = quality;
+                                        page.record_config.auto_transcode = transcode;
+                                        page.record_config.check_interval = interval;
+                                        page.record_config.segment_duration = segment;
+                                        page.record_config.retry_count = retry;
+                                        page.record_config.reconnect_delay = reconnect;
+                                        page.record_config.output_base_path = PathBuf::from(
+                                            if path.is_empty() { "recordings".to_string() } else { path }
+                                        );
+                                        page.save_record_config();
+                                        cx.notify();
+                                    });
+                                    
+                                    window.push_notification(
+                                        Notification::success("设置已保存"),
+                                        cx,
+                                    );
+                                    window.close_dialog(cx);
+                                }),
+                            Button::new("close-settings")
+                                .label("取消")
+                                .on_click(|_event, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        ]
+                    }
                 })
         });
-    }
-
-    /// 更新录制配置
-    fn update_record_config<F>(&mut self, f: F, cx: &mut Context<Self>)
-    where
-        F: FnOnce(&mut LiveRecordConfig),
-    {
-        f(&mut self.record_config);
-        self.save_record_config();
-        cx.notify();
     }
 
     /// 保存录制配置到 AppConfig
@@ -1244,16 +1829,6 @@ impl RecordingPage {
                     .items_center()
                     .gap_1()
                     .flex_shrink_0()
-                    // 刷新按钮
-                    .child(
-                        Button::new(SharedString::from(format!("refresh-{}", room_id)))
-                            .icon(gpui_component::IconName::Replace)
-                            .ghost()
-                            .xsmall()
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.refresh_room(room_id, cx);
-                            }))
-                    )
                     // 录制/停止按钮
                     .when(is_live && !is_recording, |el| {
                         el.child(
@@ -1384,14 +1959,6 @@ impl Render for RecordingPage {
                                 div()
                                     .flex()
                                     .gap_3()
-                                    .child(
-                                        Button::new("refresh-all")
-                                            .icon(gpui_component::IconName::Replace)
-                                            .ghost()
-                                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                                this.check_all_rooms(cx);
-                                            })),
-                                    )
                                     .child(
                                         Button::new("add-room")
                                             .icon(gpui_component::IconName::Plus)
