@@ -1,7 +1,7 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
 use futures_util::StreamExt;
-use magekit_shared::{ToolType, UpdateChannel, get_temp_dir};
+use magekit_shared::{create_tokio_command, get_temp_dir, ToolType, UpdateChannel};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
@@ -261,7 +261,7 @@ impl ToolUpdater {
     #[cfg(target_os = "macos")]
     async fn download_ffmpeg_macos(&self) -> ToolManagerResult<()> {
         // macOS版本可以使用brew安装
-        let output = Command::new("brew")
+        let output = create_tokio_command("brew")
             .arg("install")
             .arg("ffmpeg")
             .output()
@@ -283,7 +283,7 @@ impl ToolUpdater {
     #[cfg(target_os = "linux")]
     async fn download_ffmpeg_linux(&self) -> ToolManagerResult<()> {
         // Linux版本可以使用apt/yum等包管理器
-        let output = Command::new("apt")
+        let output = create_tokio_command("apt")
             .arg("install")
             .arg("-y")
             .arg("ffmpeg")
