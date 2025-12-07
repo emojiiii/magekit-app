@@ -3,7 +3,7 @@
 //! 提供带有侧边栏导航的应用主布局
 
 use crate::app::GlobalAppState;
-use crate::ui::pages::{HomePage, SettingsPage, ToolsPage};
+use crate::ui::pages::{HomePage, SettingsPage, ToolsPage, RecordingPage};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -48,6 +48,7 @@ impl RenderOnce for SettingsPageWrapper {
     }
 }
 
+
 /// 创建首页包装器
 pub fn stateful_home_page() -> impl IntoElement {
     HomePageWrapper
@@ -62,6 +63,23 @@ pub fn stateful_tools_page() -> impl IntoElement {
 pub fn stateful_settings_page() -> impl IntoElement {
     SettingsPageWrapper
 }
+
+/// 录制页包装器 - 创建 RecordingPage Entity
+#[derive(IntoElement)]
+pub struct RecordingPageWrapper;
+
+impl RenderOnce for RecordingPageWrapper {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let app_state = cx.global::<GlobalAppState>().0.clone();
+        cx.new(|cx| RecordingPage::new(app_state, window, cx))
+    }
+}
+
+/// 创建录制页包装器
+pub fn stateful_recording_page() -> impl IntoElement {
+    RecordingPageWrapper
+}
+
 
 /// 导航项
 #[derive(Debug, Clone)]
@@ -99,6 +117,7 @@ impl RenderOnce for AppLayout {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let nav_items = vec![
             NavItem::new("/", "首页", "🏠"),
+            NavItem::new("/record", "录制", "🎥"),
             NavItem::new("/channel", "频道", "👥"),
             NavItem::new("/tasks", "任务", "📋"),
             NavItem::new("/tools", "工具", "🔧"),

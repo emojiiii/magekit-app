@@ -13,6 +13,7 @@ path = "src/main.rs"
 # 内部依赖
 magekit-shared = { path = "../shared" }
 magekit-tool-manager = { path = "../tool_manager" }
+live_recorder = { path = "../live_recorder" }
 
 # GPUI dependencies
 gpui = { workspace = true }
@@ -43,6 +44,12 @@ tracing-subscriber = { workspace = true }
 # UUID
 uuid = { workspace = true }
 
+# 时间处理
+chrono = { workspace = true }
+
+# 随机数
+rand = "0.8"
+
 # 同步原语
 parking_lot = "0.12"
 
@@ -57,3 +64,4 @@ reqwest_client = { workspace = true }
 
 # 临时文件（用于 Cookie）
 tempfile = "3"
+open = "5.3.3"

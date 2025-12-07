@@ -1,0 +1,19 @@
+[package]
+name = "xbogus"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rquickjs = { version = "0.10.0", features = [
+    "full-async",
+    "parallel",
+    "macro",
+] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1.4"

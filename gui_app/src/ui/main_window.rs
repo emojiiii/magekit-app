@@ -10,7 +10,7 @@ use crate::ui::layout::{
     AppLayout, 
     not_found_page
 };
-use crate::ui::pages::{HomePage, ToolsPage, SettingsPage, TasksPage, ChannelPage};
+use crate::ui::pages::{HomePage, ToolsPage, SettingsPage, TasksPage, ChannelPage, RecordingPage};
 use std::sync::Arc;
 
 /// 主窗口组件
@@ -28,7 +28,9 @@ pub struct MainWindow {
     settings_page: Entity<SettingsPage>,
     /// 缓存的频道页 Entity
     channel_page: Entity<ChannelPage>,
-}
+    /// 缓存的录制页 Entity
+    recording_page: Entity<RecordingPage>,
+    }
 
 impl MainWindow {
     /// 创建新的主窗口
@@ -39,7 +41,8 @@ impl MainWindow {
         let tools_page = cx.new(|cx| ToolsPage::new(app_state.clone(), window, cx));
         let settings_page = cx.new(|cx| SettingsPage::new(app_state.clone(), window, cx));
         let channel_page = cx.new(|cx| ChannelPage::new(app_state.clone(), window, cx));
-        
+        let recording_page = cx.new(|cx| RecordingPage::new(app_state.clone(), window, cx));
+
         Self {
             app_state,
             home_page,
@@ -47,6 +50,7 @@ impl MainWindow {
             tools_page,
             settings_page,
             channel_page,
+            recording_page,
         }
     }
 }
@@ -61,6 +65,7 @@ impl Render for MainWindow {
         let tools_page = self.tools_page.clone();
         let settings_page = self.settings_page.clone();
         let channel_page = self.channel_page.clone();
+        let recording_page = self.recording_page.clone();
         
         div()
             .flex()
@@ -95,6 +100,12 @@ impl Render for MainWindow {
                             Route::new()
                                 .path("tools")
                                 .element(tools_page)
+                        )
+                        .child(
+                            // 录制页面 - 使用缓存的 Entity
+                            Route::new()
+                                .path("record")
+                                .element(recording_page)
                         )
                         .child(
                             // 设置页面 - 使用缓存的 Entity
