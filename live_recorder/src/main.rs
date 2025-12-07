@@ -16,12 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new("live-recorder")
         .version("0.1.0")
         .about("一个可扩展的直播录制工具")
-        .arg(
-            Arg::new("url")
-                .help("直播间URL")
-                .required(true)
-                .index(1),
-        )
+        .arg(Arg::new("url").help("直播间URL").required(true).index(1))
         .arg(
             Arg::new("output")
                 .short('o')
@@ -123,7 +118,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 开始录制
-    info!("开始录制: {} (质量: {:?}, 格式: {})", url, quality_clone, format);
+    info!(
+        "开始录制: {} (质量: {:?}, 格式: {})",
+        url, quality_clone, format
+    );
 
     match recorder.start_recording(url, config).await {
         Ok(mut handle) => {

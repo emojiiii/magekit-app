@@ -1,8 +1,8 @@
 //! 测试多平台直播流获取
-//! 
+//!
 //! 运行示例: cargo run --example test_platforms
 
-use live_recorder::platforms::{PlatformFactory, PlatformCookies};
+use live_recorder::platforms::{PlatformCookies, PlatformFactory};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,34 +35,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("========================================");
         println!("📺 测试 {} 平台", platform_name);
         println!("🔗 URL: {}", url);
-        
+
         match factory.get_handler_for_url(url) {
             Ok(handler) => {
                 println!("✅ 找到处理器: {}", handler.platform_name());
-                
+
                 // 提取房间ID
                 match handler.extract_room_id(url).await {
                     Ok(room_id) => {
                         println!("🏠 房间ID: {}", room_id);
-                        
+
                         // 构建 cookies
                         let platform_cookies = if let Some(c) = cookies {
                             PlatformCookies::new().with_cookie(c)
                         } else {
                             PlatformCookies::new()
                         };
-                        
+
                         // 获取流信息（带 cookies）
-                        match handler.get_stream_info_with_cookies(&room_id, &platform_cookies).await {
+                        match handler
+                            .get_stream_info_with_cookies(&room_id, &platform_cookies)
+                            .await
+                        {
                             Ok(stream_info) => {
                                 println!("👤 主播: {}", stream_info.room.anchor_name);
                                 println!("📝 标题: {}", stream_info.room.title);
                                 println!("🔴 状态: {:?}", stream_info.room.status);
                                 println!("📡 可用流: {} 个", stream_info.streams.len());
-                                
+
                                 for (i, stream) in stream_info.streams.iter().enumerate() {
-                                    println!("   流 #{}: 质量={:?}, CDN={:?}, 码率={:?}", 
-                                        i + 1, 
+                                    println!(
+                                        "   流 #{}: 质量={:?}, CDN={:?}, 码率={:?}",
+                                        i + 1,
                                         stream.quality,
                                         stream.cdn,
                                         stream.bitrate

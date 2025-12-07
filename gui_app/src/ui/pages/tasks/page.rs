@@ -1,11 +1,11 @@
 //! 任务列表页面主组件
 
-use gpui::*;
-use gpui::prelude::FluentBuilder;
-use gpui_component::*;
-use gpui_component::button::{Button, ButtonVariants};
 use crate::app::AppState;
-use magekit_shared::{TaskStatus, TaskState, TaskId};
+use gpui::prelude::FluentBuilder;
+use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::*;
+use magekit_shared::{TaskId, TaskState, TaskStatus};
 use std::sync::Arc;
 
 use super::widgets::TaskItem;
@@ -42,54 +42,56 @@ impl TasksPage {
     pub fn new(app_state: Arc<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 初始加载任务列表
         let tasks = Self::load_tasks_sync(&app_state);
-        
+
         let page = Self {
             app_state: app_state.clone(),
             tasks,
             filter: TaskFilter::All,
             is_loading: false,
         };
-        
+
         // 启动定时刷新任务（200ms 刷新一次，比 1 秒更实时）
         let app_state_for_timer = app_state.clone();
         cx.spawn(async move |this, cx| {
             loop {
                 // 等待 200ms - 更快的刷新率
                 Timer::after(std::time::Duration::from_millis(200)).await;
-                
+
                 // 从 AppState 加载最新任务
                 let app_state = app_state_for_timer.clone();
                 let tasks: Vec<TaskStatus> = smol::unblock(move || {
                     let tasks = app_state.tasks.blocking_read();
                     tasks.values().cloned().collect()
-                }).await;
-                
+                })
+                .await;
+
                 // 更新本地任务列表
                 let should_continue = this.update(cx, |this, cx| {
                     // 检查是否有变化
-                    let has_change = this.tasks.len() != tasks.len() || 
-                       this.tasks.iter().zip(tasks.iter()).any(|(a, b)| {
-                           a.id != b.id || 
-                           a.progress != b.progress || 
-                           a.state != b.state ||
-                           a.speed != b.speed ||
-                           a.downloaded_bytes != b.downloaded_bytes
-                       });
-                    
+                    let has_change = this.tasks.len() != tasks.len()
+                        || this.tasks.iter().zip(tasks.iter()).any(|(a, b)| {
+                            a.id != b.id
+                                || a.progress != b.progress
+                                || a.state != b.state
+                                || a.speed != b.speed
+                                || a.downloaded_bytes != b.downloaded_bytes
+                        });
+
                     if has_change {
                         this.tasks = tasks;
                         cx.notify();
                     }
                     true
                 });
-                
+
                 if should_continue.is_err() {
                     // 组件已销毁，退出循环
                     break;
                 }
             }
-        }).detach();
-        
+        })
+        .detach();
+
         page
     }
 
@@ -106,21 +108,21 @@ impl TasksPage {
     fn refresh_tasks(&mut self, cx: &mut Context<Self>) {
         self.is_loading = true;
         cx.notify();
-        
+
         let app_state = self.app_state.clone();
-        
+
         cx.spawn(async move |this, cx| {
             // 使用 smol::unblock 避免阻塞
-            let tasks: Vec<TaskStatus> = smol::unblock(move || {
-                Self::load_tasks_sync(&app_state)
-            }).await;
-            
+            let tasks: Vec<TaskStatus> =
+                smol::unblock(move || Self::load_tasks_sync(&app_state)).await;
+
             let _ = this.update(cx, |this, cx| {
                 this.tasks = tasks;
                 this.is_loading = false;
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 
     /// 设置筛选器
@@ -131,11 +133,15 @@ impl TasksPage {
 
     /// 获取筛选后的任务列表
     fn filtered_tasks(&self) -> Vec<&TaskStatus> {
-        self.tasks.iter().filter(|task| {
-            match self.filter {
+        self.tasks
+            .iter()
+            .filter(|task| match self.filter {
                 TaskFilter::All => true,
                 TaskFilter::Downloading => {
-                    matches!(task.state, TaskState::Downloading | TaskState::Paused | TaskState::Queued)
+                    matches!(
+                        task.state,
+                        TaskState::Downloading | TaskState::Paused | TaskState::Queued
+                    )
                 }
                 TaskFilter::Completed => {
                     matches!(task.state, TaskState::Completed)
@@ -143,22 +149,22 @@ impl TasksPage {
                 TaskFilter::Failed => {
                     matches!(task.state, TaskState::Failed(_) | TaskState::Cancelled)
                 }
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// 暂停任务
     fn pause_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("⏸️ 暂停任务: {}", task_id);
-        
+
         // 调用暂停下载进程
         self.app_state.pause_download_task(task_id);
-        
+
         // 更新本地状态
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             task.state = TaskState::Paused;
         }
-        
+
         // 更新 AppState 中的任务状态
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
@@ -169,23 +175,25 @@ impl TasksPage {
                     // 保存任务状态
                     app_state.save_task_to_persistence(task);
                 }
-            }).await;
-            
+            })
+            .await;
+
             let _ = this.update(cx, |_this, cx| {
                 cx.notify();
             });
-        }).detach();
-        
+        })
+        .detach();
+
         cx.notify();
     }
 
     /// 恢复任务
     fn resume_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("▶️ 恢复任务: {}", task_id);
-        
+
         // 从本地任务列表中获取任务信息
         let task_info = self.tasks.iter().find(|t| t.id == task_id).cloned();
-        
+
         if let Some(task) = task_info {
             // 检查是否有下载参数
             if let Some(params) = &task.download_params {
@@ -193,7 +201,7 @@ impl TasksPage {
                 if let Some(local_task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                     local_task.state = TaskState::Downloading;
                 }
-                
+
                 let app_state = self.app_state.clone();
                 let url = task.url.clone();
                 let title = task.title.clone();
@@ -205,12 +213,12 @@ impl TasksPage {
                     download_subtitles: params.download_subtitles,
                     audio_only: params.audio_only,
                 };
-                
+
                 // 克隆 tasks 用于进度回调
                 let tasks_for_callback = app_state.tasks.clone();
-                
+
                 // 创建进度回调
-                let progress_callback: std::sync::Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> = 
+                let progress_callback: std::sync::Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> =
                     std::sync::Arc::new(move |percent, speed, downloaded, total| {
                         let mut tasks = tasks_for_callback.blocking_write();
                         if let Some(task) = tasks.get_mut(&task_id) {
@@ -220,7 +228,7 @@ impl TasksPage {
                             task.total_bytes = if total > 0 { Some(total) } else { None };
                         }
                     });
-                
+
                 // 启动恢复下载
                 let handle = app_state.resume_download_in_background(
                     task_id,
@@ -231,11 +239,11 @@ impl TasksPage {
                     progress_callback,
                     title,
                 );
-                
+
                 // 更新 AppState 中的任务状态
                 let tasks_for_update = app_state.tasks.clone();
                 let app_state_for_cleanup = app_state.clone();
-                
+
                 cx.spawn(async move |_this, _cx| {
                     // 更新状态为 Downloading
                     {
@@ -245,9 +253,10 @@ impl TasksPage {
                             if let Some(task) = tasks.get_mut(&task_id) {
                                 task.state = TaskState::Downloading;
                             }
-                        }).await;
+                        })
+                        .await;
                     }
-                    
+
                     // 等待下载完成
                     tracing::info!("⏳ 等待恢复下载完成");
                     loop {
@@ -257,18 +266,24 @@ impl TasksPage {
                         }
                         gpui::Timer::after(std::time::Duration::from_millis(100)).await;
                     }
-                    
+
                     // 获取结果
                     let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
-                        handle.join().unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
-                    }).await;
-                    
+                        handle
+                            .join()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
+                    })
+                    .await;
+
                     // 清理标志
                     app_state_for_cleanup.cleanup_download_task(task_id);
-                    
+
                     // 更新最终状态
                     let tasks = tasks_for_update.clone();
-                    let result_for_task = result.as_ref().map(|p| p.clone()).map_err(|e| e.to_string());
+                    let result_for_task = result
+                        .as_ref()
+                        .map(|p| p.clone())
+                        .map_err(|e| e.to_string());
                     let app_state_for_save = app_state_for_cleanup.clone();
                     smol::unblock(move || {
                         let mut tasks = tasks.blocking_write();
@@ -299,41 +314,43 @@ impl TasksPage {
                             // 保存任务状态到持久化存储
                             app_state_for_save.save_task_to_persistence(task);
                         }
-                    }).await;
-                    
+                    })
+                    .await;
+
                     match result {
                         Ok(path) => tracing::info!("✅ 恢复下载完成: {}", path.display()),
                         Err(e) => tracing::error!("❌ 恢复下载失败: {}", e),
                     }
-                }).detach();
+                })
+                .detach();
             } else {
                 tracing::warn!("⚠️ 任务没有保存下载参数，无法恢复: {}", task_id);
             }
         }
-        
+
         cx.notify();
     }
 
     /// 取消任务
     fn cancel_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("取消任务: {}", task_id);
-        
+
         // 首先调用取消下载进程
         self.app_state.cancel_download_task(task_id);
-        
+
         // 更新本地状态
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             task.state = TaskState::Cancelled;
             task.completed_at = Some(std::time::SystemTime::now());
         }
-        
+
         // 更新 AppState 中的任务状态
         let app_state = self.app_state.clone();
         cx.spawn(async move |this, cx| {
             smol::unblock(move || {
                 // 清理取消标志
                 app_state.cleanup_download_task(task_id);
-                
+
                 let mut tasks = app_state.tasks.blocking_write();
                 if let Some(task) = tasks.get_mut(&task_id) {
                     task.state = TaskState::Cancelled;
@@ -341,43 +358,47 @@ impl TasksPage {
                     // 保存任务状态
                     app_state.save_task_to_persistence(task);
                 }
-            }).await;
-            
+            })
+            .await;
+
             let _ = this.update(cx, |_this, cx| {
                 cx.notify();
             });
-        }).detach();
-        
+        })
+        .detach();
+
         cx.notify();
     }
 
     /// 删除任务
     fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("删除任务: {}", task_id);
-        
+
         // 首先取消下载进程（如果还在运行）
         self.app_state.cancel_download_task(task_id);
-        
+
         // 从本地列表中移除
         self.tasks.retain(|t| t.id != task_id);
-        
+
         // 从 AppState 中移除并从持久化存储删除
         let app_state = self.app_state.clone();
         cx.spawn(async move |_this, _cx| {
             smol::unblock(move || {
                 // 清理取消标志
                 app_state.cleanup_download_task(task_id);
-                
+
                 // 从内存中移除
                 let mut tasks = app_state.tasks.blocking_write();
                 tasks.remove(&task_id);
                 drop(tasks);
-                
+
                 // 从持久化存储删除
                 app_state.delete_task_from_persistence(task_id);
-            }).await;
-        }).detach();
-        
+            })
+            .await;
+        })
+        .detach();
+
         cx.notify();
     }
 
@@ -387,21 +408,15 @@ impl TasksPage {
             if let Some(parent) = path.parent() {
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = std::process::Command::new("open")
-                        .arg(parent)
-                        .spawn();
+                    let _ = std::process::Command::new("open").arg(parent).spawn();
                 }
                 #[cfg(target_os = "windows")]
                 {
-                    let _ = std::process::Command::new("explorer")
-                        .arg(parent)
-                        .spawn();
+                    let _ = std::process::Command::new("explorer").arg(parent).spawn();
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(parent)
-                        .spawn();
+                    let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
                 }
             }
         }
@@ -410,14 +425,17 @@ impl TasksPage {
     /// 清空已完成的任务
     fn clear_completed(&mut self, cx: &mut Context<Self>) {
         // 获取要删除的任务 ID
-        let completed_ids: Vec<TaskId> = self.tasks.iter()
+        let completed_ids: Vec<TaskId> = self
+            .tasks
+            .iter()
             .filter(|t| matches!(t.state, TaskState::Completed))
             .map(|t| t.id)
             .collect();
-        
+
         // 从本地列表中移除
-        self.tasks.retain(|t| !matches!(t.state, TaskState::Completed));
-        
+        self.tasks
+            .retain(|t| !matches!(t.state, TaskState::Completed));
+
         // 从 AppState 中移除
         if !completed_ids.is_empty() {
             let app_state = self.app_state.clone();
@@ -427,10 +445,12 @@ impl TasksPage {
                     for id in completed_ids {
                         tasks.remove(&id);
                     }
-                }).await;
-            }).detach();
+                })
+                .await;
+            })
+            .detach();
         }
-        
+
         cx.notify();
     }
 }
@@ -440,7 +460,7 @@ impl Render for TasksPage {
         let filtered_tasks = self.filtered_tasks();
         let task_count = filtered_tasks.len();
         let is_empty = task_count == 0;
-        
+
         // 使用主题颜色
         let bg_color = cx.theme().background;
 
@@ -460,12 +480,8 @@ impl Render for TasksPage {
                     // 筛选栏
                     .child(self.render_filter_bar(cx))
                     // 任务列表
-                    .when(is_empty, |this| {
-                        this.child(self.render_empty_state(cx))
-                    })
-                    .when(!is_empty, |this| {
-                        this.child(self.render_task_list(cx))
-                    })
+                    .when(is_empty, |this| this.child(self.render_empty_state(cx)))
+                    .when(!is_empty, |this| this.child(self.render_task_list(cx))),
             )
     }
 }
@@ -475,7 +491,7 @@ impl TasksPage {
         // 使用主题颜色
         let title_color = cx.theme().foreground;
         let desc_color = cx.theme().muted_foreground;
-        
+
         div()
             .flex()
             .items_center()
@@ -490,14 +506,14 @@ impl TasksPage {
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
                             .text_color(title_color)
-                            .child("📥 任务列表")
+                            .child("📥 任务列表"),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(desc_color)
-                            .child(format!("共 {} 个任务", self.tasks.len()))
-                    )
+                            .child(format!("共 {} 个任务", self.tasks.len())),
+                    ),
             )
             .child(
                 div()
@@ -505,7 +521,10 @@ impl TasksPage {
                     .items_center()
                     .gap(px(8.0))
                     .child({
-                        let has_completed = self.tasks.iter().any(|t| matches!(t.state, TaskState::Completed));
+                        let has_completed = self
+                            .tasks
+                            .iter()
+                            .any(|t| matches!(t.state, TaskState::Completed));
                         Button::new("clear")
                             .xsmall()
                             .outline()
@@ -522,8 +541,8 @@ impl TasksPage {
                             .label("刷新")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh_tasks(cx);
-                            }))
-                    )
+                            })),
+                    ),
             )
     }
 
@@ -543,7 +562,7 @@ impl TasksPage {
             .children(filters.into_iter().map(|filter| {
                 let is_active = filter == current_filter;
                 let label = filter.label();
-                
+
                 Button::new(SharedString::from(format!("filter-{:?}", filter)))
                     .xsmall()
                     .map(|btn| {
@@ -564,7 +583,7 @@ impl TasksPage {
         // 使用主题颜色
         let text_color = cx.theme().muted_foreground;
         let muted_color = cx.theme().muted_foreground;
-        
+
         div()
             .flex()
             .flex_col()
@@ -572,11 +591,7 @@ impl TasksPage {
             .justify_center()
             .py(px(80.0))
             .gap(px(16.0))
-            .child(
-                div()
-                    .text_2xl()
-                    .child("📭")
-            )
+            .child(div().text_2xl().child("📭"))
             .child(
                 div()
                     .text_lg()
@@ -586,19 +601,19 @@ impl TasksPage {
                         TaskFilter::Downloading => "没有正在下载的任务",
                         TaskFilter::Completed => "没有已完成的任务",
                         TaskFilter::Failed => "没有失败的任务",
-                    })
+                    }),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(muted_color)
-                    .child("在首页粘贴视频链接开始下载")
+                    .child("在首页粘贴视频链接开始下载"),
             )
     }
 
     fn render_task_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filtered_tasks = self.filtered_tasks();
-        
+
         div()
             .flex()
             .flex_col()
@@ -606,7 +621,7 @@ impl TasksPage {
             .children(filtered_tasks.into_iter().map(|task| {
                 let task_id = task.id;
                 let task_clone = task.clone();
-                
+
                 TaskItem::new(task.clone())
                     .on_pause(cx.listener(move |this, _, _, cx| {
                         this.pause_task(task_id, cx);

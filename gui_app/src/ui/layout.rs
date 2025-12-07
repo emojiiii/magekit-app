@@ -3,7 +3,7 @@
 //! 提供带有侧边栏导航的应用主布局
 
 use crate::app::GlobalAppState;
-use crate::ui::pages::{HomePage, SettingsPage, ToolsPage, RecordingPage};
+use crate::ui::pages::{HomePage, RecordingPage, SettingsPage, ToolsPage};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -48,7 +48,6 @@ impl RenderOnce for SettingsPageWrapper {
     }
 }
 
-
 /// 创建首页包装器
 pub fn stateful_home_page() -> impl IntoElement {
     HomePageWrapper
@@ -79,7 +78,6 @@ impl RenderOnce for RecordingPageWrapper {
 pub fn stateful_recording_page() -> impl IntoElement {
     RecordingPageWrapper
 }
-
 
 /// 导航项
 #[derive(Debug, Clone)]
@@ -192,7 +190,7 @@ fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
     let text_color = cx.theme().sidebar_foreground;
     let hover_bg = cx.theme().sidebar_accent;
     let hover_text = cx.theme().sidebar_accent_foreground;
-    
+
     // 获取当前路由
     let location = use_location(cx);
     let current_path = location.pathname.clone();
@@ -206,14 +204,15 @@ fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
         .border_color(border_color)
         .child(
             // 导航列表
-            div().flex().flex_col().p(px(8.0)).gap(px(4.0)).children(
-                nav_items
-                    .into_iter()
-                    .map(move |item| {
-                        let is_active = current_path == item.path;
-                        render_nav_item(item, text_color, hover_bg, hover_text, is_active)
-                    }),
-            ),
+            div()
+                .flex()
+                .flex_col()
+                .p(px(8.0))
+                .gap(px(4.0))
+                .children(nav_items.into_iter().map(move |item| {
+                    let is_active = current_path == item.path;
+                    render_nav_item(item, text_color, hover_bg, hover_text, is_active)
+                })),
         )
 }
 
@@ -225,31 +224,25 @@ fn render_nav_item(
     hover_text: Hsla,
     is_active: bool,
 ) -> impl IntoElement {
-    NavLink::new()
-        .to(item.path)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(12.0))
-                .px(px(12.0))
-                .py(px(10.0))
-                .rounded(px(6.0))
-                .when(is_active, |this| {
-                    this.bg(hover_bg).text_color(hover_text)
-                })
-                .when(!is_active, |this| {
-                    this.text_color(text_color)
-                })
-                .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-                .child(div().text_base().child(item.icon))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(item.label),
-                ),
-        )
+    NavLink::new().to(item.path).child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .rounded(px(6.0))
+            .when(is_active, |this| this.bg(hover_bg).text_color(hover_text))
+            .when(!is_active, |this| this.text_color(text_color))
+            .hover(move |this| this.bg(hover_bg).text_color(hover_text))
+            .child(div().text_base().child(item.icon))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(item.label),
+            ),
+    )
 }
 
 /// 首页 - 下载面板 + 快速操作

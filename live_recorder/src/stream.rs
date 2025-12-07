@@ -1,5 +1,4 @@
 /// 流处理相关的工具函数
-
 use crate::{
     error::RecorderResult,
     types::{StreamData, VideoQuality},
@@ -52,12 +51,12 @@ impl StreamParser {
     pub fn estimate_bitrate(_url: &str, quality: &VideoQuality) -> Option<u64> {
         // 这里可以根据URL中的信息或质量来估算码率
         match quality {
-            VideoQuality::Original => Some(8000000),  // 8 Mbps
-            VideoQuality::Blue => Some(8000000),      // 8 Mbps
-            VideoQuality::Ultra => Some(6000000),     // 6 Mbps
-            VideoQuality::High => Some(4000000),      // 4 Mbps
-            VideoQuality::Standard => Some(2000000),  // 2 Mbps
-            VideoQuality::Low => Some(1000000),       // 1 Mbps
+            VideoQuality::Original => Some(8000000), // 8 Mbps
+            VideoQuality::Blue => Some(8000000),     // 8 Mbps
+            VideoQuality::Ultra => Some(6000000),    // 6 Mbps
+            VideoQuality::High => Some(4000000),     // 4 Mbps
+            VideoQuality::Standard => Some(2000000), // 2 Mbps
+            VideoQuality::Low => Some(1000000),      // 1 Mbps
         }
     }
 }

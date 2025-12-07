@@ -32,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(stream_info) => {
             println!("可用流:");
             for (i, stream) in stream_info.streams.iter().enumerate() {
-                println!("  {}. 质量: {:?}, HLS: {}, FLV: {}",
+                println!(
+                    "  {}. 质量: {:?}, HLS: {}, FLV: {}",
                     i + 1,
                     stream.quality,
                     stream.url.hls_url.is_some(),

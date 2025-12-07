@@ -2,8 +2,8 @@
 //!
 //! 提供统一的卡片样式容器
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::ActiveTheme;
 
 /// 卡片组件 - 带有统一样式的容器
@@ -50,7 +50,8 @@ impl Card {
         I: IntoIterator<Item = E>,
         E: IntoElement,
     {
-        self.children.extend(children.into_iter().map(|c| c.into_any_element()));
+        self.children
+            .extend(children.into_iter().map(|c| c.into_any_element()));
         self
     }
 }
@@ -60,7 +61,7 @@ impl RenderOnce for Card {
         let bg_color = cx.theme().background;
         let border_color = cx.theme().border;
         let text_color = cx.theme().foreground;
-        
+
         div()
             .flex()
             .flex_col()
@@ -72,22 +73,16 @@ impl RenderOnce for Card {
             .rounded(px(12.0))
             .when_some(self.title, |el, title| {
                 el.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(text_color)
-                                .when_some(self.icon.clone(), |el, icon| {
-                                    el.child(format!("{} {}", icon, title))
-                                })
-                                .when(self.icon.is_none(), |el| {
-                                    el.child(title)
-                                })
-                        )
+                    div().flex().items_center().gap(px(8.0)).child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(text_color)
+                            .when_some(self.icon.clone(), |el, icon| {
+                                el.child(format!("{} {}", icon, title))
+                            })
+                            .when(self.icon.is_none(), |el| el.child(title)),
+                    ),
                 )
             })
             .children(self.children)

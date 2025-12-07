@@ -309,20 +309,20 @@ impl ToolManager {
     /// 获取所有任务状态（包括持久化的任务）
     pub async fn get_all_tasks(&self) -> Vec<TaskStatus> {
         let mut all_tasks: HashMap<TaskId, TaskStatus> = HashMap::new();
-        
+
         // 1. 先从持久化存储加载任务
         let persistence = self.persistence.lock().await;
         for persisted_task in persistence.get_all_tasks() {
             all_tasks.insert(persisted_task.status.id, persisted_task.status.clone());
         }
         drop(persistence);
-        
+
         // 2. 再从内存中加载正在运行的任务（覆盖持久化的旧状态）
         let tasks = self.tasks.read().await;
         for (task_id, task_handle) in tasks.iter() {
             all_tasks.insert(*task_id, task_handle.status.clone());
         }
-        
+
         all_tasks.into_values().collect()
     }
 
@@ -332,11 +332,11 @@ impl ToolManager {
 
         if let Some(task) = tasks.get_mut(&task_id) {
             task.status.state = state.clone();
-            
+
             // 同步保存到持久化存储
             let status = task.status.clone();
             drop(tasks);
-            
+
             let _ = self.save_task_status(&status).await;
 
             self.send_task_update(TaskUpdate::StateChanged(task_id, state))
@@ -346,19 +346,21 @@ impl ToolManager {
             Err(DownloadError::task_not_found(task_id))
         }
     }
-    
+
     /// 保存任务状态到持久化存储
     pub async fn save_task_status(&self, status: &TaskStatus) -> DownloadResult<()> {
         let mut persistence = self.persistence.lock().await;
-        persistence.update_task_status(status.id, status.clone())
+        persistence
+            .update_task_status(status.id, status.clone())
             .map_err(|e| DownloadError::internal(e.to_string()))?;
         Ok(())
     }
-    
+
     /// 从持久化存储删除任务
     pub async fn delete_task_status(&self, task_id: TaskId) -> DownloadResult<()> {
         let mut persistence = self.persistence.lock().await;
-        persistence.remove_task(task_id)
+        persistence
+            .remove_task(task_id)
             .map_err(|e| DownloadError::internal(e.to_string()))?;
         Ok(())
     }

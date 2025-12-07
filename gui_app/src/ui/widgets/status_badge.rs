@@ -2,8 +2,8 @@
 //!
 //! 显示各种状态的小标签
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 
 /// 徽章类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,19 +94,13 @@ impl RenderOnce for StatusBadge {
             .border_1()
             .border_color(border)
             .rounded(px(6.0))
-            .when_some(self.icon, |el, icon| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .child(icon)
-                )
-            })
+            .when_some(self.icon, |el, icon| el.child(div().text_xs().child(icon)))
             .child(
                 div()
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(text)
-                    .child(self.label)
+                    .child(self.label),
             )
     }
 }

@@ -38,7 +38,10 @@ pub enum ToolStatus {
     /// 未安装
     NotInstalled,
     /// 已安装 (version: 版本号, is_system: 是否是系统安装)
-    Installed { version: Option<String>, is_system: bool },
+    Installed {
+        version: Option<String>,
+        is_system: bool,
+    },
 }
 
 /// 视频下载选项

@@ -34,17 +34,27 @@ impl LiveRecorderCore {
     }
 
     /// 检查直播间状态
-    pub async fn check_room_status(&self, url: &str) -> crate::error::RecorderResult<crate::types::LiveRoomInfo> {
+    pub async fn check_room_status(
+        &self,
+        url: &str,
+    ) -> crate::error::RecorderResult<crate::types::LiveRoomInfo> {
         self.recorder.check_room_status(url).await
     }
 
     /// 获取可用流信息
-    pub async fn get_stream_info(&self, url: &str) -> crate::error::RecorderResult<crate::types::StreamInfo> {
+    pub async fn get_stream_info(
+        &self,
+        url: &str,
+    ) -> crate::error::RecorderResult<crate::types::StreamInfo> {
         self.recorder.get_stream_info(url).await
     }
 
     /// 快速录制方法（使用默认配置）
-    pub async fn quick_record(&self, url: &str, output_path: &str) -> crate::error::RecorderResult<crate::recorder::RecordingHandle> {
+    pub async fn quick_record(
+        &self,
+        url: &str,
+        output_path: &str,
+    ) -> crate::error::RecorderResult<crate::recorder::RecordingHandle> {
         let config = RecordConfig {
             output_path_template: output_path.to_string(),
             quality: VideoQuality::Original,
@@ -54,7 +64,11 @@ impl LiveRecorderCore {
     }
 
     /// 使用自定义配置录制
-    pub async fn record(&self, url: &str, config: RecordConfig) -> crate::error::RecorderResult<crate::recorder::RecordingHandle> {
+    pub async fn record(
+        &self,
+        url: &str,
+        config: RecordConfig,
+    ) -> crate::error::RecorderResult<crate::recorder::RecordingHandle> {
         self.start_recording(url, config).await
     }
 

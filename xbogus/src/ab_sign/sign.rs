@@ -1,10 +1,10 @@
 //! AB-Sign 主签名函数
 
+use super::base64_custom::result_encrypt;
 use super::rc4::rc4_encrypt;
 use super::sm3::SM3;
-use super::base64_custom::result_encrypt;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 生成随机字节
 fn gener_random(random_num: u16, option: &[u8; 2]) -> [u8; 4] {
@@ -162,24 +162,97 @@ fn generate_rc4_bb_str(
     b.insert(71, 0);
 
     // 计算校验和
-    let checksum = b[&18] ^ b[&20] ^ b[&26] ^ b[&30] ^ b[&38] ^ b[&40] ^ b[&42] ^ b[&21] ^
-        b[&27] ^ b[&31] ^ b[&35] ^ b[&39] ^ b[&41] ^ b[&43] ^ b[&22] ^ b[&28] ^
-        b[&32] ^ b[&36] ^ b[&23] ^ b[&29] ^ b[&33] ^ b[&37] ^ b[&44] ^ b[&45] ^
-        b[&46] ^ b[&47] ^ b[&48] ^ b[&49] ^ b[&50] ^ b[&24] ^ b[&25] ^ b[&52] ^
-        b[&53] ^ b[&54] ^ b[&55] ^ b[&57] ^ b[&58] ^ b[&59] ^ b[&60] ^ b[&65] ^
-        b[&66] ^ b[&70] ^ b[&71];
+    let checksum = b[&18]
+        ^ b[&20]
+        ^ b[&26]
+        ^ b[&30]
+        ^ b[&38]
+        ^ b[&40]
+        ^ b[&42]
+        ^ b[&21]
+        ^ b[&27]
+        ^ b[&31]
+        ^ b[&35]
+        ^ b[&39]
+        ^ b[&41]
+        ^ b[&43]
+        ^ b[&22]
+        ^ b[&28]
+        ^ b[&32]
+        ^ b[&36]
+        ^ b[&23]
+        ^ b[&29]
+        ^ b[&33]
+        ^ b[&37]
+        ^ b[&44]
+        ^ b[&45]
+        ^ b[&46]
+        ^ b[&47]
+        ^ b[&48]
+        ^ b[&49]
+        ^ b[&50]
+        ^ b[&24]
+        ^ b[&25]
+        ^ b[&52]
+        ^ b[&53]
+        ^ b[&54]
+        ^ b[&55]
+        ^ b[&57]
+        ^ b[&58]
+        ^ b[&59]
+        ^ b[&60]
+        ^ b[&65]
+        ^ b[&66]
+        ^ b[&70]
+        ^ b[&71];
     b.insert(72, checksum);
 
     // 构建最终字节数组 - 按照 Python 版本的顺序
     let mut bb: Vec<u8> = vec![
-        b[&18] as u8, b[&20] as u8, b[&52] as u8, b[&26] as u8, b[&30] as u8, b[&34] as u8,
-        b[&58] as u8, b[&38] as u8, b[&40] as u8, b[&53] as u8, b[&42] as u8, b[&21] as u8,
-        b[&27] as u8, b[&54] as u8, b[&55] as u8, b[&31] as u8, b[&35] as u8, b[&57] as u8,
-        b[&39] as u8, b[&41] as u8, b[&43] as u8, b[&22] as u8, b[&28] as u8, b[&32] as u8,
-        b[&60] as u8, b[&36] as u8, b[&23] as u8, b[&29] as u8, b[&33] as u8, b[&37] as u8,
-        b[&44] as u8, b[&45] as u8, b[&59] as u8, b[&46] as u8, b[&47] as u8, b[&48] as u8,
-        b[&49] as u8, b[&50] as u8, b[&24] as u8, b[&25] as u8, b[&65] as u8, b[&66] as u8,
-        b[&70] as u8, b[&71] as u8,
+        b[&18] as u8,
+        b[&20] as u8,
+        b[&52] as u8,
+        b[&26] as u8,
+        b[&30] as u8,
+        b[&34] as u8,
+        b[&58] as u8,
+        b[&38] as u8,
+        b[&40] as u8,
+        b[&53] as u8,
+        b[&42] as u8,
+        b[&21] as u8,
+        b[&27] as u8,
+        b[&54] as u8,
+        b[&55] as u8,
+        b[&31] as u8,
+        b[&35] as u8,
+        b[&57] as u8,
+        b[&39] as u8,
+        b[&41] as u8,
+        b[&43] as u8,
+        b[&22] as u8,
+        b[&28] as u8,
+        b[&32] as u8,
+        b[&60] as u8,
+        b[&36] as u8,
+        b[&23] as u8,
+        b[&29] as u8,
+        b[&33] as u8,
+        b[&37] as u8,
+        b[&44] as u8,
+        b[&45] as u8,
+        b[&59] as u8,
+        b[&46] as u8,
+        b[&47] as u8,
+        b[&48] as u8,
+        b[&49] as u8,
+        b[&50] as u8,
+        b[&24] as u8,
+        b[&25] as u8,
+        b[&65] as u8,
+        b[&66] as u8,
+        b[&70] as u8,
+        b[&71] as u8,
     ];
     bb.extend_from_slice(&window_env_list);
     bb.push(b[&72] as u8);
@@ -219,11 +292,11 @@ mod tests {
     fn test_ab_sign() {
         let query = "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&language=zh-CN&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome&browser_version=116.0.0.0&web_rid=313899056971&msToken=";
         let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-        
+
         let result = ab_sign(query, ua);
         println!("AB-Sign result: {}", result);
         println!("Result length: {}", result.len());
-        
+
         assert!(!result.is_empty());
         assert!(result.ends_with('='));
     }
@@ -233,43 +306,61 @@ mod tests {
         let query = "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&language=zh-CN&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome&browser_version=116.0.0.0&web_rid=313899056971&msToken=";
         let ua = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
         let suffix = "cus";
-        
+
         let mut sm3 = SM3::new();
-        
+
         // 1. URL params + suffix
         let combined = format!("{}{}", query, suffix);
         let url_params_hash1 = sm3.sum(Some(combined.as_bytes()));
-        println!("1. url_params_hash1 (first 8): {:?}", &url_params_hash1[..8]);
-        
+        println!(
+            "1. url_params_hash1 (first 8): {:?}",
+            &url_params_hash1[..8]
+        );
+
         let url_search_params_list = sm3.sum(Some(&url_params_hash1));
-        println!("2. url_search_params_list (first 8): {:?}", &url_search_params_list[..8]);
-        println!("   Index 21, 22: {}, {}", url_search_params_list[21], url_search_params_list[22]);
-        
+        println!(
+            "2. url_search_params_list (first 8): {:?}",
+            &url_search_params_list[..8]
+        );
+        println!(
+            "   Index 21, 22: {}, {}",
+            url_search_params_list[21], url_search_params_list[22]
+        );
+
         // 2. suffix SM3
         let suffix_hash1 = sm3.sum(Some(suffix.as_bytes()));
         println!("\n3. suffix_hash1 (first 8): {:?}", &suffix_hash1[..8]);
-        
+
         let cus = sm3.sum(Some(&suffix_hash1));
         println!("4. cus (first 8): {:?}", &cus[..8]);
         println!("   Index 21, 22: {}, {}", cus[21], cus[22]);
-        
+
         // 3. UA processing
         let ua_key = format!("{}{}{}", '\u{0}', '\u{1}', '\u{e}');
         let encrypted_ua = rc4_encrypt(ua, &ua_key);
         println!("\n5. encrypted_ua length: {}", encrypted_ua.chars().count());
         let ua_bytes: Vec<u8> = encrypted_ua.chars().take(10).map(|c| c as u8).collect();
         println!("   encrypted_ua bytes (first 10): {:?}", ua_bytes);
-        
+
         let encoded_ua = result_encrypt(&encrypted_ua, "s3");
-        println!("6. encoded_ua: {}...", &encoded_ua[..50.min(encoded_ua.len())]);
-        
+        println!(
+            "6. encoded_ua: {}...",
+            &encoded_ua[..50.min(encoded_ua.len())]
+        );
+
         let ua_hash = sm3.sum(Some(encoded_ua.as_bytes()));
         println!("7. ua_hash (first 8): {:?}", &ua_hash[..8]);
         println!("   Index 23, 24: {}, {}", ua_hash[23], ua_hash[24]);
-        
+
         // 验证与 Python 的值匹配
-        assert_eq!(&url_params_hash1[..8], &[75, 86, 209, 161, 203, 85, 160, 130]);
-        assert_eq!(&url_search_params_list[..8], &[153, 33, 102, 41, 195, 105, 130, 182]);
+        assert_eq!(
+            &url_params_hash1[..8],
+            &[75, 86, 209, 161, 203, 85, 160, 130]
+        );
+        assert_eq!(
+            &url_search_params_list[..8],
+            &[153, 33, 102, 41, 195, 105, 130, 182]
+        );
         assert_eq!(url_search_params_list[21], 199);
         assert_eq!(url_search_params_list[22], 124);
     }

@@ -1,11 +1,11 @@
 // gui_app/src/ui/batch_panel.rs
 //! 批量操作面板组件 - 批量URL导入、下载模板、分类管理
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::*;
 use magekit_shared::types::DownloadOptions;
 use std::sync::Arc;
 
@@ -157,10 +157,30 @@ impl BatchPanel {
             templates: vec![DownloadTemplate::default()],
             current_template: 0,
             categories: vec![
-                Category { name: "音乐".to_string(), icon: "🎵".to_string(), output_dir: Some("~/Downloads/Music".to_string()), count: 0 },
-                Category { name: "视频".to_string(), icon: "🎬".to_string(), output_dir: Some("~/Downloads/Videos".to_string()), count: 0 },
-                Category { name: "教程".to_string(), icon: "📚".to_string(), output_dir: Some("~/Downloads/Tutorials".to_string()), count: 0 },
-                Category { name: "其他".to_string(), icon: "📁".to_string(), output_dir: None, count: 0 },
+                Category {
+                    name: "音乐".to_string(),
+                    icon: "🎵".to_string(),
+                    output_dir: Some("~/Downloads/Music".to_string()),
+                    count: 0,
+                },
+                Category {
+                    name: "视频".to_string(),
+                    icon: "🎬".to_string(),
+                    output_dir: Some("~/Downloads/Videos".to_string()),
+                    count: 0,
+                },
+                Category {
+                    name: "教程".to_string(),
+                    icon: "📚".to_string(),
+                    output_dir: Some("~/Downloads/Tutorials".to_string()),
+                    count: 0,
+                },
+                Category {
+                    name: "其他".to_string(),
+                    icon: "📁".to_string(),
+                    output_dir: None,
+                    count: 0,
+                },
             ],
             import_text: String::new(),
             callback: None,
@@ -201,11 +221,12 @@ impl BatchPanel {
             .lines()
             .filter(|line| {
                 let trimmed = line.trim();
-                !trimmed.is_empty() && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+                !trimmed.is_empty()
+                    && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
             })
             .map(|s| s.trim().to_string())
             .collect();
-        
+
         self.add_urls(urls);
     }
 
@@ -257,12 +278,18 @@ impl BatchPanel {
 
     /// 获取待处理项目数
     pub fn pending_count(&self) -> usize {
-        self.items.iter().filter(|i| i.status == BatchItemStatus::Pending || i.status == BatchItemStatus::Parsed).count()
+        self.items
+            .iter()
+            .filter(|i| i.status == BatchItemStatus::Pending || i.status == BatchItemStatus::Parsed)
+            .count()
     }
 
     /// 获取选中项目
     pub fn get_selected_items(&self) -> Vec<&BatchItem> {
-        self.items.iter().filter(|i| self.selected_ids.contains(&i.id)).collect()
+        self.items
+            .iter()
+            .filter(|i| self.selected_ids.contains(&i.id))
+            .collect()
     }
 }
 
@@ -291,15 +318,15 @@ impl Render for BatchPanel {
                             .border_r_1()
                             .border_color(border)
                             .child(self.render_import_area(cx))
-                            .child(self.render_item_list(cx))
+                            .child(self.render_item_list(cx)),
                     )
                     // 右侧：设置面板
                     .child(
                         v_flex()
                             .w(px(300.0))
                             .p_4()
-                            .child(self.render_settings_panel(cx))
-                    )
+                            .child(self.render_settings_panel(cx)),
+                    ),
             )
             // 底部操作栏
             .child(self.render_footer(cx))
@@ -335,14 +362,14 @@ impl BatchPanel {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg)
-                            .child("📦 批量下载")
+                            .child("📦 批量下载"),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("{} 个项目", total))
-                    )
+                            .child(format!("{} 个项目", total)),
+                    ),
             )
             // 统计信息
             .child(
@@ -352,14 +379,14 @@ impl BatchPanel {
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("待下载: {}", pending))
+                            .child(format!("待下载: {}", pending)),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("已选: {}", selected))
-                    )
+                            .child(format!("已选: {}", selected)),
+                    ),
             )
     }
 
@@ -383,21 +410,21 @@ impl BatchPanel {
                         Button::new("paste-urls")
                             .outline()
                             .small()
-                            .label("📋 从剪贴板粘贴")
+                            .label("📋 从剪贴板粘贴"),
                     )
                     .child(
                         Button::new("import-file")
                             .outline()
                             .small()
-                            .label("📁 从文件导入")
-                    )
+                            .label("📁 从文件导入"),
+                    ),
             )
             // 提示文本
             .child(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child("支持粘贴多个URL，每行一个")
+                    .child("支持粘贴多个URL，每行一个"),
             )
     }
 
@@ -419,16 +446,12 @@ impl BatchPanel {
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .child(
-                    div()
-                        .text_2xl()
-                        .child("📥")
-                )
+                .child(div().text_2xl().child("📥"))
                 .child(
                     div()
                         .text_sm()
                         .text_color(muted)
-                        .child("粘贴或导入URL开始批量下载")
+                        .child("粘贴或导入URL开始批量下载"),
                 )
         } else {
             // 项目列表
@@ -446,21 +469,16 @@ impl BatchPanel {
                         .border_color(border)
                         .child(
                             Checkbox::new("select-all-batch")
-                                .checked(self.selected_ids.len() == self.items.len())
+                                .checked(self.selected_ids.len() == self.items.len()),
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(muted)
-                                .child("全选")
-                        )
+                        .child(div().text_sm().text_color(muted).child("全选"))
                         .child(div().flex_1())
                         .child(
                             Button::new("clear-completed")
                                 .ghost()
                                 .xsmall()
-                                .label("清除已完成")
-                        )
+                                .label("清除已完成"),
+                        ),
                 )
                 // 列表
                 .child(
@@ -469,8 +487,18 @@ impl BatchPanel {
                         .overflow_hidden()
                         .children(self.items.iter().map(|item| {
                             let is_selected = self.selected_ids.contains(&item.id);
-                            render_batch_item_inline(item, is_selected, fg, muted, border, primary, danger, success, accent)
-                        }))
+                            render_batch_item_inline(
+                                item,
+                                is_selected,
+                                fg,
+                                muted,
+                                border,
+                                primary,
+                                danger,
+                                success,
+                                accent,
+                            )
+                        })),
                 )
         }
     }
@@ -494,22 +522,24 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("下载模板")
+                            .child("下载模板"),
                     )
                     .child(
                         v_flex()
                             .gap_1()
                             .children(self.templates.iter().enumerate().map(|(idx, template)| {
                                 let is_current = idx == self.current_template;
-                                render_template_item_inline(&template, is_current, fg, muted, border, bg)
-                            }))
+                                render_template_item_inline(
+                                    &template, is_current, fg, muted, border, bg,
+                                )
+                            })),
                     )
                     .child(
                         Button::new("new-template")
                             .ghost()
                             .small()
-                            .label("+ 新建模板")
-                    )
+                            .label("+ 新建模板"),
+                    ),
             )
             // 分类
             .child(
@@ -520,16 +550,15 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("分类")
+                            .child("分类"),
                     )
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(self.categories.iter().map(|cat| {
-                                render_category_badge(&cat, muted, border, bg)
-                            }))
-                    )
+                        h_flex().gap_1().flex_wrap().children(
+                            self.categories
+                                .iter()
+                                .map(|cat| render_category_badge(&cat, muted, border, bg)),
+                        ),
+                    ),
             )
             // 输出设置
             .child(
@@ -540,7 +569,7 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("输出设置")
+                            .child("输出设置"),
                     )
                     .child(
                         v_flex()
@@ -552,15 +581,15 @@ impl BatchPanel {
                                 h_flex()
                                     .justify_between()
                                     .child(div().text_xs().text_color(muted).child("保存位置"))
-                                    .child(div().text_xs().child("~/Downloads"))
+                                    .child(div().text_xs().child("~/Downloads")),
                             )
                             .child(
                                 h_flex()
                                     .justify_between()
                                     .child(div().text_xs().text_color(muted).child("文件名格式"))
-                                    .child(div().text_xs().child("%(title)s.%(ext)s"))
-                            )
-                    )
+                                    .child(div().text_xs().child("%(title)s.%(ext)s")),
+                            ),
+                    ),
             )
     }
 
@@ -583,32 +612,28 @@ impl BatchPanel {
             .border_color(border)
             // 左侧：清空按钮
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("clear-all")
-                            .ghost()
-                            .label("清空列表")
-                            .disabled(!has_items)
-                    )
+                h_flex().gap_2().child(
+                    Button::new("clear-all")
+                        .ghost()
+                        .label("清空列表")
+                        .disabled(!has_items),
+                ),
             )
             // 右侧：下载按钮
             .child(
                 h_flex()
                     .gap_2()
                     .when(has_selected, |this| {
-                        this.child(
-                            Button::new("download-selected")
-                                .outline()
-                                .label(SharedString::from(format!("下载选中 ({})", self.selected_ids.len())))
-                        )
+                        this.child(Button::new("download-selected").outline().label(
+                            SharedString::from(format!("下载选中 ({})", self.selected_ids.len())),
+                        ))
                     })
                     .child(
                         Button::new("download-all")
                             .primary()
                             .label(SharedString::from(format!("全部下载 ({})", pending)))
-                            .disabled(pending == 0)
-                    )
+                            .disabled(pending == 0),
+                    ),
             )
     }
 }
@@ -625,8 +650,12 @@ fn render_batch_item_inline(
     success: Hsla,
     accent: Hsla,
 ) -> impl IntoElement {
-    let bg = if is_selected { accent.opacity(0.1) } else { Hsla::transparent_black() };
-    
+    let bg = if is_selected {
+        accent.opacity(0.1)
+    } else {
+        Hsla::transparent_black()
+    };
+
     let status_color = match &item.status {
         BatchItemStatus::Pending => muted,
         BatchItemStatus::Parsing => primary,
@@ -651,10 +680,7 @@ fn render_batch_item_inline(
         .border_color(border)
         .cursor_pointer()
         // 选择框
-        .child(
-            Checkbox::new(SharedString::from(format!("batch-item-{}", id)))
-                .checked(is_selected)
-        )
+        .child(Checkbox::new(SharedString::from(format!("batch-item-{}", id))).checked(is_selected))
         // 标题/URL
         .child(
             v_flex()
@@ -667,7 +693,7 @@ fn render_batch_item_inline(
                         .text_color(fg)
                         .overflow_hidden()
                         .text_ellipsis()
-                        .child(title)
+                        .child(title),
                 )
                 .when(item.title.is_some(), |this| {
                     this.child(
@@ -676,9 +702,9 @@ fn render_batch_item_inline(
                             .text_color(muted)
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(item.url.clone())
+                            .child(item.url.clone()),
                     )
-                })
+                }),
         )
         // 状态
         .child(
@@ -689,14 +715,14 @@ fn render_batch_item_inline(
                 .rounded(px(4.0))
                 .bg(status_color.opacity(0.1))
                 .text_color(status_color)
-                .child(status_label)
+                .child(status_label),
         )
         // 删除按钮
         .child(
             Button::new(SharedString::from(format!("delete-batch-{}", id)))
                 .ghost()
                 .xsmall()
-                .icon(IconName::Close)
+                .icon(IconName::Close),
         )
 }
 
@@ -717,20 +743,19 @@ fn render_template_item_inline(
         .rounded_md()
         .border_1()
         .border_color(if is_current { fg } else { border })
-        .bg(if is_current { bg } else { Hsla::transparent_black() })
+        .bg(if is_current {
+            bg
+        } else {
+            Hsla::transparent_black()
+        })
         .cursor_pointer()
-        .child(
-            div()
-                .text_sm()
-                .text_color(fg)
-                .child(template.name.clone())
-        )
+        .child(div().text_sm().text_color(fg).child(template.name.clone()))
         .when(template.description.is_some(), |this| {
             this.child(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child(template.description.clone().unwrap())
+                    .child(template.description.clone().unwrap()),
             )
         })
 }
@@ -752,22 +777,14 @@ fn render_category_badge(
         .border_color(border)
         .bg(bg)
         .cursor_pointer()
-        .child(
-            div()
-                .text_sm()
-                .child(category.icon.clone())
-        )
-        .child(
-            div()
-                .text_xs()
-                .child(category.name.clone())
-        )
+        .child(div().text_sm().child(category.icon.clone()))
+        .child(div().text_xs().child(category.name.clone()))
         .when(category.count > 0, |this| {
             this.child(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child(format!("({})", category.count))
+                    .child(format!("({})", category.count)),
             )
         })
 }

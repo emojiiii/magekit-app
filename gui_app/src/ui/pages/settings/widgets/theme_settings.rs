@@ -116,7 +116,7 @@ impl RenderOnce for ThemeSettingsCard {
                                                 let is_current = theme_name == current_theme_name;
                                                 let handler = on_change.clone();
                                                 let click_name = theme_name.clone();
-                                                
+
                                                 // 深色主题用月亮图标，浅色主题用太阳图标
                                                 let icon = if *is_dark {
                                                     IconName::Moon

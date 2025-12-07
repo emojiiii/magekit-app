@@ -2,15 +2,12 @@
 //!
 //! 应用程序的主窗口，使用路由系统管理页面切换。
 
+use crate::app::AppState;
+use crate::ui::layout::{AppLayout, not_found_page};
+use crate::ui::pages::{ChannelPage, HomePage, RecordingPage, SettingsPage, TasksPage, ToolsPage};
 use gpui::*;
 use gpui_component::*;
 use gpui_router::{Route, Routes};
-use crate::app::AppState;
-use crate::ui::layout::{
-    AppLayout, 
-    not_found_page
-};
-use crate::ui::pages::{HomePage, ToolsPage, SettingsPage, TasksPage, ChannelPage, RecordingPage};
 use std::sync::Arc;
 
 /// 主窗口组件
@@ -30,7 +27,7 @@ pub struct MainWindow {
     channel_page: Entity<ChannelPage>,
     /// 缓存的录制页 Entity
     recording_page: Entity<RecordingPage>,
-    }
+}
 
 impl MainWindow {
     /// 创建新的主窗口
@@ -58,7 +55,7 @@ impl MainWindow {
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        
+
         // 克隆 Entity handles 用于路由
         let home_page = self.home_page.clone();
         let tasks_page = self.tasks_page.clone();
@@ -66,7 +63,7 @@ impl Render for MainWindow {
         let settings_page = self.settings_page.clone();
         let channel_page = self.channel_page.clone();
         let recording_page = self.recording_page.clone();
-        
+
         div()
             .flex()
             .flex_col()
@@ -79,47 +76,33 @@ impl Render for MainWindow {
                         .layout(AppLayout::new())
                         .child(
                             // 首页 - 下载页面 (index route) - 使用缓存的 Entity
-                            Route::new()
-                                .index()
-                                .element(home_page)
+                            Route::new().index().element(home_page),
                         )
                         .child(
                             // 任务页面 - 使用缓存的 Entity
-                            Route::new()
-                                .path("tasks")
-                                .element(tasks_page)
+                            Route::new().path("tasks").element(tasks_page),
                         )
                         .child(
                             // 频道页面 - 使用缓存的 Entity
-                            Route::new()
-                                .path("channel")
-                                .element(channel_page)
+                            Route::new().path("channel").element(channel_page),
                         )
                         .child(
                             // 工具管理页面 - 使用缓存的 Entity
-                            Route::new()
-                                .path("tools")
-                                .element(tools_page)
+                            Route::new().path("tools").element(tools_page),
                         )
                         .child(
                             // 录制页面 - 使用缓存的 Entity
-                            Route::new()
-                                .path("record")
-                                .element(recording_page)
+                            Route::new().path("record").element(recording_page),
                         )
                         .child(
                             // 设置页面 - 使用缓存的 Entity
-                            Route::new()
-                                .path("settings")
-                                .element(settings_page)
+                            Route::new().path("settings").element(settings_page),
                         )
                         .child(
                             // 404 页面
-                            Route::new()
-                                .path("{*not_match}")
-                                .element(not_found_page())
-                        )
-                )
+                            Route::new().path("{*not_match}").element(not_found_page()),
+                        ),
+                ),
             )
             // 渲染对话框和通知层
             .children(Root::render_dialog_layer(window, cx))

@@ -8,29 +8,28 @@
 //! - 支持 TS 录制和录制后转码
 
 use crate::app::AppState;
-use gpui::*;
+use chrono::Utc;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::ActiveTheme;
+use gpui_component::Sizable;
 use gpui_component::WindowExt;
-use gpui_component::notification::Notification;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
+use gpui_component::notification::Notification;
 use gpui_component::radio::RadioGroup;
 use gpui_component::switch::Switch;
 use gpui_component::v_flex;
-use gpui_component::Sizable;
-use live_recorder::{LiveRecorder, RecordConfig, recorder::RecordingHandle, error::RecorderError};
+use live_recorder::{LiveRecorder, RecordConfig, error::RecorderError, recorder::RecordingHandle};
 use magekit_shared::types::{
-    MonitoredRoom, LiveRoomStatus, LiveRecordConfig, LiveRecordQuality, RecordingTask
+    LiveRecordConfig, LiveRecordQuality, LiveRoomStatus, MonitoredRoom, RecordingTask,
 };
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::path::PathBuf;
-use uuid::Uuid;
-use chrono::Utc;
 use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
-
+use uuid::Uuid;
 
 /// 运行时房间状态（用于 UI 显示）
 struct RuntimeRoomState {
@@ -79,21 +78,21 @@ pub struct RecordingPage {
     app_state: Arc<AppState>,
     live_recorder: Arc<LiveRecorder>,
     url_input: Entity<InputState>,
-    
+
     /// 持久化的监控房间列表（从 AppConfig 加载）
     monitored_rooms: Vec<MonitoredRoom>,
     /// 运行时状态（不持久化）
     room_states: HashMap<Uuid, RuntimeRoomState>,
     /// 录制配置（从 AppConfig 加载）
     record_config: LiveRecordConfig,
-    
+
     /// UI 状态
     is_loading: bool,
     monitoring_enabled: bool,
-    
+
     /// 最后一次添加房间的错误
     last_add_error: Option<String>,
-    
+
     /// 监控定时器 ID
     check_task_running: Arc<RwLock<bool>>,
 }
@@ -113,19 +112,22 @@ impl RecordingPage {
         let config = app_state.config.blocking_read().clone();
         let monitored_rooms = config.monitored_rooms.clone();
         let record_config = config.live_record.clone();
-        
+
         // 初始化运行时状态（从缓存恢复标题和封面）
         let mut room_states = HashMap::new();
         for room in &monitored_rooms {
-            room_states.insert(room.id, RuntimeRoomState {
-                status: LiveRoomStatus::Unknown,
-                is_recording: false,
-                current_task: None,
-                last_error: None,
-                cover_url: room.cached_cover_url.clone(),
-                title: room.cached_title.clone(),
-                recording_handle: None,
-            });
+            room_states.insert(
+                room.id,
+                RuntimeRoomState {
+                    status: LiveRoomStatus::Unknown,
+                    is_recording: false,
+                    current_task: None,
+                    last_error: None,
+                    cover_url: room.cached_cover_url.clone(),
+                    title: room.cached_title.clone(),
+                    recording_handle: None,
+                },
+            );
         }
 
         let page = Self {
@@ -140,10 +142,10 @@ impl RecordingPage {
             last_add_error: None,
             check_task_running: Arc::new(RwLock::new(false)),
         };
-        
+
         // 启动监控任务
         page.start_monitoring_task(cx);
-        
+
         page
     }
 
@@ -151,47 +153,48 @@ impl RecordingPage {
     fn start_monitoring_task(&self, cx: &mut Context<Self>) {
         let check_interval = self.record_config.check_interval;
         let check_running = self.check_task_running.clone();
-        
+
         // 检查是否已在运行
         if *check_running.read() {
             return;
         }
         *check_running.write() = true;
-        
+
         tracing::info!("🚀 启动监控任务，检测间隔: {} 秒", check_interval);
-        
+
         // 立即执行一次检测
         self.check_all_rooms(cx);
     }
 
     /// 检查所有房间状态
     fn check_all_rooms(&self, cx: &mut Context<Self>) {
-        let rooms: Vec<_> = self.monitored_rooms
+        let rooms: Vec<_> = self
+            .monitored_rooms
             .iter()
             .filter(|r| r.monitoring_enabled)
             .cloned()
             .collect();
-        
+
         if rooms.is_empty() {
             return;
         }
-        
+
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
-        
+
         tracing::info!("🔍 开始检查 {} 个房间状态...", rooms.len());
-        
+
         cx.spawn(async move |this, cx| {
             for room in rooms {
                 let recorder = live_recorder.clone();
                 let url = room.url.clone();
                 let room_id = room.id;
-                
+
                 // 在 tokio runtime 中执行
-                let result = runtime.spawn(async move {
-                    recorder.check_room_status(&url).await
-                }).await;
-                
+                let result = runtime
+                    .spawn(async move { recorder.check_room_status(&url).await })
+                    .await;
+
                 match result {
                     Ok(Ok(room_info)) => {
                         let status = match room_info.status {
@@ -200,24 +203,30 @@ impl RecordingPage {
                             live_recorder::types::LiveStatus::Playback => LiveRoomStatus::Playback,
                             live_recorder::types::LiveStatus::Unknown => LiveRoomStatus::Unknown,
                         };
-                        
+
                         // 提取房间信息用于缓存
-                        let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
+                        let title = if room_info.title.is_empty() {
+                            None
+                        } else {
+                            Some(room_info.title.clone())
+                        };
                         let cover_url = room_info.cover_url.clone();
                         let is_live = status == LiveRoomStatus::Live;
-                        
+
                         // 调试日志
                         tracing::info!("📦 房间 {} 状态检查结果:", room_id);
                         tracing::info!("   - 状态: {:?}", status);
                         tracing::info!("   - 标题: {:?}", title);
                         tracing::info!("   - 封面: {:?}", cover_url);
                         tracing::info!("   - 主播: {}", room_info.anchor_name);
-                        
+
                         let _ = this.update(cx, |this, cx| {
-                            let is_recording = this.room_states.get(&room_id)
+                            let is_recording = this
+                                .room_states
+                                .get(&room_id)
                                 .map(|s| s.is_recording)
                                 .unwrap_or(false);
-                            
+
                             // 更新运行时状态
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 state.status = status;
@@ -230,21 +239,32 @@ impl RecordingPage {
                                     state.cover_url = cover_url.clone();
                                 }
                             }
-                            
+
                             // 更新持久化的房间信息（缓存标题、封面等）
                             let mut need_save = false;
-                            if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                            if let Some(room) =
+                                this.monitored_rooms.iter_mut().find(|r| r.id == room_id)
+                            {
                                 room.last_checked = Some(Utc::now());
-                                
+
                                 // 同步标题到缓存
                                 if title.is_some() && room.cached_title != title {
-                                    tracing::info!("📝 更新房间 {} 缓存标题: {:?} -> {:?}", room_id, room.cached_title, title);
+                                    tracing::info!(
+                                        "📝 更新房间 {} 缓存标题: {:?} -> {:?}",
+                                        room_id,
+                                        room.cached_title,
+                                        title
+                                    );
                                     room.cached_title = title;
                                     need_save = true;
                                 }
                                 // 同步封面到缓存
                                 if cover_url.is_some() && room.cached_cover_url != cover_url {
-                                    tracing::info!("🖼️ 更新房间 {} 缓存封面: {:?}", room_id, cover_url);
+                                    tracing::info!(
+                                        "🖼️ 更新房间 {} 缓存封面: {:?}",
+                                        room_id,
+                                        cover_url
+                                    );
                                     room.cached_cover_url = cover_url;
                                     need_save = true;
                                 }
@@ -253,28 +273,30 @@ impl RecordingPage {
                                     room.last_live_at = Some(Utc::now());
                                     need_save = true;
                                 }
-                                
+
                                 tracing::info!("📊 房间 {} need_save={}", room_id, need_save);
                             } else {
                                 tracing::warn!("⚠️ 找不到房间 {} 在 monitored_rooms 中", room_id);
                             }
-                            
+
                             // 保存配置（如果有更新）
                             if need_save {
                                 this.save_config();
                             }
-                            
+
                             // 如果开启了自动录制且变为直播状态，自动开始录制
-                            let auto_record_enabled = this.monitored_rooms.iter()
+                            let auto_record_enabled = this
+                                .monitored_rooms
+                                .iter()
                                 .find(|r| r.id == room_id)
                                 .map(|r| r.auto_record)
                                 .unwrap_or(false);
-                            
+
                             if is_live && auto_record_enabled && !is_recording {
                                 tracing::info!("🎬 自动录制检测到直播，开始录制: {}", room_id);
                                 this.start_recording_background(room_id, cx);
                             }
-                            
+
                             cx.notify();
                         });
                     }
@@ -300,9 +322,10 @@ impl RecordingPage {
                     }
                 }
             }
-            
+
             tracing::info!("✅ 房间状态检查完成");
-        }).detach();
+        })
+        .detach();
     }
 
     /// 保存配置到文件
@@ -310,11 +333,11 @@ impl RecordingPage {
         let mut config = self.app_state.config.blocking_write();
         config.monitored_rooms = self.monitored_rooms.clone();
         config.live_record = self.record_config.clone();
-        
+
         // 保存到文件（需要克隆，因为 save_app_config 需要 &AppConfig）
         let config_clone = config.clone();
         drop(config); // 释放锁
-        
+
         if let Err(e) = magekit_shared::utils::save_app_config(&config_clone) {
             tracing::error!("❌ 保存配置失败: {}", e);
         } else {
@@ -337,39 +360,31 @@ impl RecordingPage {
                 .child(
                     v_flex()
                         .gap_4()
-                        .child(
-                            div()
-                                .text_sm()
-                                .child("请输入直播间链接")
-                        )
+                        .child(div().text_sm().child("请输入直播间链接"))
                         .child(Input::new(&url_input).cleanable(true))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(gpui::rgb(0x888888))
-                                .child("支持的平台：抖音直播、B站直播、虎牙直播、斗鱼直播、快手直播、SOOP")
-                        )
+                        .child(div().text_xs().text_color(gpui::rgb(0x888888)).child(
+                            "支持的平台：抖音直播、B站直播、虎牙直播、斗鱼直播、快手直播、SOOP",
+                        )),
                 )
                 .footer(move |_, _, _, _| {
                     let url_input = url_input.clone();
                     let this = this.clone();
 
                     vec![
-                        Button::new("confirm-add")
-                            .primary()
-                            .label("添加")
-                            .on_click(move |_event, window, cx| {
+                        Button::new("confirm-add").primary().label("添加").on_click(
+                            move |_event, window, cx| {
                                 let url = url_input.read(cx).text().to_string().trim().to_string();
-                                
+
                                 if !url.is_empty() {
                                     let this = this.clone();
                                     let _ = this.update(cx, |this, cx| {
                                         this.add_room(url, window, cx);
                                     });
                                 }
-                                
+
                                 window.close_dialog(cx);
-                            }),
+                            },
+                        ),
                         Button::new("cancel-add")
                             .label("取消")
                             .on_click(|_event, window, cx| {
@@ -384,10 +399,7 @@ impl RecordingPage {
     fn add_room(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
         // 检查是否已存在
         if self.monitored_rooms.iter().any(|r| r.url == url) {
-            window.push_notification(
-                Notification::warning("该直播间已在监控列表中"),
-                cx,
-            );
+            window.push_notification(Notification::warning("该直播间已在监控列表中"), cx);
             return;
         }
 
@@ -414,40 +426,47 @@ impl RecordingPage {
         let monitored_room = MonitoredRoom::new(
             url.clone(),
             platform,
-            String::new(), // room_id 稍后获取
+            String::new(),           // room_id 稍后获取
             "获取中...".to_string(), // anchor_name 稍后获取
         );
-        
+
         let room_id = monitored_room.id;
-        
+
         // 添加到列表，状态为 Unknown（加载中）
         self.monitored_rooms.push(monitored_room);
-        self.room_states.insert(room_id, RuntimeRoomState {
-            status: LiveRoomStatus::Unknown,
-            is_recording: false,
-            current_task: None,
-            last_error: Some("正在获取直播间信息...".to_string()),
-            cover_url: None,
-            title: None,
-            recording_handle: None,
-        });
+        self.room_states.insert(
+            room_id,
+            RuntimeRoomState {
+                status: LiveRoomStatus::Unknown,
+                is_recording: false,
+                current_task: None,
+                last_error: Some("正在获取直播间信息...".to_string()),
+                cover_url: None,
+                title: None,
+                recording_handle: None,
+            },
+        );
         self.save_config();
         cx.notify();
-        
+
         // 后台获取房间详细信息
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
 
         cx.spawn(async move |this, cx| {
             let url_clone = url.clone();
-            
-            let result = runtime.spawn(async move {
-                live_recorder.check_room_status(&url_clone).await
-            }).await;
+
+            let result = runtime
+                .spawn(async move { live_recorder.check_room_status(&url_clone).await })
+                .await;
 
             match result {
                 Ok(Ok(room_info)) => {
-                    tracing::info!("✅ 成功获取直播间信息: {} - {}", room_info.anchor_name, room_info.title);
+                    tracing::info!(
+                        "✅ 成功获取直播间信息: {} - {}",
+                        room_info.anchor_name,
+                        room_info.title
+                    );
 
                     let status = match room_info.status {
                         live_recorder::types::LiveStatus::Live => LiveRoomStatus::Live,
@@ -456,19 +475,25 @@ impl RecordingPage {
                         live_recorder::types::LiveStatus::Unknown => LiveRoomStatus::Unknown,
                     };
                     let cover_url = room_info.cover_url.clone();
-                    let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
+                    let title = if room_info.title.is_empty() {
+                        None
+                    } else {
+                        Some(room_info.title.clone())
+                    };
                     let anchor_name = room_info.anchor_name.clone();
                     let real_room_id = room_info.room_id.clone();
 
                     let _ = this.update(cx, |this, cx| {
                         // 更新房间信息
-                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                        if let Some(room) =
+                            this.monitored_rooms.iter_mut().find(|r| r.id == room_id)
+                        {
                             room.room_id = real_room_id;
                             room.anchor_name = anchor_name;
                             room.cached_title = title.clone();
                             room.cached_cover_url = cover_url.clone();
                         }
-                        
+
                         // 更新运行时状态
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = status;
@@ -476,7 +501,7 @@ impl RecordingPage {
                             state.cover_url = cover_url;
                             state.title = title;
                         }
-                        
+
                         this.save_config();
                         cx.notify();
                     });
@@ -487,15 +512,17 @@ impl RecordingPage {
 
                     let _ = this.update(cx, |this, cx| {
                         // 更新房间状态为错误，但保留在列表中
-                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                        if let Some(room) =
+                            this.monitored_rooms.iter_mut().find(|r| r.id == room_id)
+                        {
                             room.anchor_name = "获取失败".to_string();
                         }
-                        
+
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = LiveRoomStatus::Error(error_msg.clone());
                             state.last_error = Some(error_msg);
                         }
-                        
+
                         this.save_config();
                         cx.notify();
                     });
@@ -505,28 +532,34 @@ impl RecordingPage {
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
-                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                        if let Some(room) =
+                            this.monitored_rooms.iter_mut().find(|r| r.id == room_id)
+                        {
                             room.anchor_name = "获取失败".to_string();
                         }
-                        
+
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = LiveRoomStatus::Error(error_msg.clone());
                             state.last_error = Some(error_msg);
                         }
-                        
+
                         this.save_config();
                         cx.notify();
                     });
                 }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     /// 格式化错误消息（友好显示）
     fn format_error(error: &RecorderError) -> String {
         match error {
             RecorderError::UnsupportedPlatform(url) => {
-                format!("不支持的平台: {}\n支持的平台: 抖音、B站、虎牙、斗鱼、快手、SOOP", url)
+                format!(
+                    "不支持的平台: {}\n支持的平台: 抖音、B站、虎牙、斗鱼、快手、SOOP",
+                    url
+                )
             }
             RecorderError::RoomNotFound(room_id) => {
                 format!("直播间不存在: {}", room_id)
@@ -546,25 +579,32 @@ impl RecordingPage {
             RecorderError::AuthenticationFailed(msg) => {
                 format!("认证失败: {}", msg)
             }
-            RecorderError::NetworkTimeout => {
-                "网络超时".to_string()
-            }
-            _ => format!("{}", error)
+            RecorderError::NetworkTimeout => "网络超时".to_string(),
+            _ => format!("{}", error),
         }
     }
 
     /// 生成录制输出路径
     fn generate_output_path(&self, room: &MonitoredRoom) -> PathBuf {
-        let download_path = self.app_state.config.blocking_read().download.default_output_path.clone();
+        let download_path = self
+            .app_state
+            .config
+            .blocking_read()
+            .download
+            .default_output_path
+            .clone();
         let record_base = download_path.join("record");
-        
+
         // 格式: {base}/record/{平台}/{主播名}/{主播名}_{时间}.ts
         let platform_dir = record_base.join(&room.platform);
         let anchor_dir = platform_dir.join(&room.anchor_name);
-        
+
         let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S_%3f");
-        let filename = format!("{}_{}.{}", room.anchor_name, timestamp, self.record_config.record_format);
-        
+        let filename = format!(
+            "{}_{}.{}",
+            room.anchor_name, timestamp, self.record_config.record_format
+        );
+
         anchor_dir.join(filename)
     }
 
@@ -576,22 +616,16 @@ impl RecordingPage {
         };
 
         let state = self.room_states.get(&room_id).cloned().unwrap_or_default();
-        
+
         // 检查是否正在直播
         if state.status != LiveRoomStatus::Live {
-            window.push_notification(
-                Notification::warning("直播间未开播，无法录制"),
-                cx,
-            );
+            window.push_notification(Notification::warning("直播间未开播，无法录制"), cx);
             return;
         }
 
         // 检查是否已在录制
         if state.is_recording {
-            window.push_notification(
-                Notification::warning("该直播间已在录制中"),
-                cx,
-            );
+            window.push_notification(Notification::warning("该直播间已在录制中"), cx);
             return;
         }
 
@@ -600,7 +634,7 @@ impl RecordingPage {
         let runtime = self.app_state.runtime.clone();
         let url = room.url.clone();
         let anchor_name = room.anchor_name.clone();
-        
+
         // 创建输出目录
         if let Some(parent) = output_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -656,9 +690,9 @@ impl RecordingPage {
         };
 
         cx.spawn(async move |this, cx| {
-            let result = runtime.spawn(async move {
-                live_recorder.start_recording(&url, config).await
-            }).await;
+            let result = runtime
+                .spawn(async move { live_recorder.start_recording(&url, config).await })
+                .await;
 
             match result {
                 Ok(Ok(handle)) => {
@@ -666,13 +700,13 @@ impl RecordingPage {
                     // 保存 handle 以便后续停止录制和获取进度
                     let handle = Arc::new(TokioMutex::new(handle));
                     let handle_clone = handle.clone();
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.recording_handle = Some(handle);
                         }
                         cx.notify();
-                        
+
                         // 启动进度监控任务
                         this.start_progress_monitor(room_id, handle_clone, cx);
                     });
@@ -680,7 +714,7 @@ impl RecordingPage {
                 Ok(Err(e)) => {
                     let error_msg = format!("录制失败: {}", e);
                     tracing::error!("❌ {}", error_msg);
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
@@ -690,13 +724,13 @@ impl RecordingPage {
                         }
                         cx.notify();
                     });
-                    
+
                     tracing::error!("❌ 录制失败: {}", error_msg);
                 }
                 Err(e) => {
                     let error_msg = format!("任务执行失败: {}", e);
                     tracing::error!("❌ {}", error_msg);
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
@@ -707,25 +741,28 @@ impl RecordingPage {
                     });
                 }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     /// 停止录制
     fn stop_recording(&mut self, room_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
         // 获取录制任务信息用于转码
-        let (handle, output_path, should_transcode) = if let Some(state) = self.room_states.get_mut(&room_id) {
-            state.is_recording = false;
-            
-            let output_path = state.current_task.as_ref().map(|t| t.output_path.clone());
-            let should_transcode = self.record_config.auto_transcode && output_path.is_some();
-            
-            state.current_task = None;
-            (state.recording_handle.take(), output_path, should_transcode)
-        } else {
-            (None, None, false)
-        };
+        let (handle, output_path, should_transcode) =
+            if let Some(state) = self.room_states.get_mut(&room_id) {
+                state.is_recording = false;
 
-        let anchor_name = self.monitored_rooms
+                let output_path = state.current_task.as_ref().map(|t| t.output_path.clone());
+                let should_transcode = self.record_config.auto_transcode && output_path.is_some();
+
+                state.current_task = None;
+                (state.recording_handle.take(), output_path, should_transcode)
+            } else {
+                (None, None, false)
+            };
+
+        let anchor_name = self
+            .monitored_rooms
             .iter()
             .find(|r| r.id == room_id)
             .map(|r| r.anchor_name.clone())
@@ -736,36 +773,41 @@ impl RecordingPage {
             let runtime = self.app_state.runtime.clone();
             let app_state = self.app_state.clone();
             let anchor_name_for_log = anchor_name.clone();
-            
+
             cx.spawn(async move |_this, _cx| {
                 // 先停止录制
-                let stop_result = runtime.spawn(async move {
-                    let mut h = handle.lock().await;
-                    h.stop().await
-                }).await;
-                
+                let stop_result = runtime
+                    .spawn(async move {
+                        let mut h = handle.lock().await;
+                        h.stop().await
+                    })
+                    .await;
+
                 match stop_result {
                     Ok(Ok(_)) => {
                         tracing::info!("✅ 录制已停止: {}", anchor_name_for_log);
-                        
+
                         // 如果需要转码
                         if should_transcode {
                             if let Some(input_path) = output_path {
                                 // 生成 MP4 输出路径
                                 let mp4_path = input_path.with_extension("mp4");
-                                
+
                                 tracing::info!("🔄 开始转码: {:?} -> {:?}", input_path, mp4_path);
-                                
+
                                 // 获取 ffmpeg 路径
-                                let ffmpeg_path = app_state.tool_manager.storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
-                                
+                                let ffmpeg_path = app_state
+                                    .tool_manager
+                                    .storage
+                                    .get_tool_path(magekit_shared::ToolType::Ffmpeg);
+
                                 // 检查 ffmpeg 是否存在
                                 let ffmpeg = if ffmpeg_path.exists() {
                                     Some(ffmpeg_path)
                                 } else {
                                     which::which("ffmpeg").ok()
                                 };
-                                
+
                                 if let Some(ffmpeg) = ffmpeg {
                                     // 使用 ffmpeg 转码（无窗口模式）
                                     let transcode_result = magekit_shared::create_command(&ffmpeg)
@@ -776,7 +818,7 @@ impl RecordingPage {
                                         .arg("-y")
                                         .arg(&mp4_path)
                                         .output();
-                                    
+
                                     match transcode_result {
                                         Ok(output) => {
                                             if output.status.success() {
@@ -784,7 +826,8 @@ impl RecordingPage {
                                                 // 可选：删除原文件
                                                 // let _ = std::fs::remove_file(&input_path);
                                             } else {
-                                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                                let stderr =
+                                                    String::from_utf8_lossy(&output.stderr);
                                                 tracing::error!("❌ 转码失败: {}", stderr);
                                             }
                                         }
@@ -801,7 +844,8 @@ impl RecordingPage {
                     Ok(Err(e)) => tracing::error!("❌ 停止录制失败: {}", e),
                     Err(e) => tracing::error!("❌ 停止录制任务失败: {}", e),
                 }
-            }).detach();
+            })
+            .detach();
         }
 
         window.push_notification(
@@ -819,31 +863,37 @@ impl RecordingPage {
         cx: &mut Context<Self>,
     ) {
         let runtime = self.app_state.runtime.clone();
-        
+
         cx.spawn(async move |this, cx| {
             loop {
                 // 每秒获取一次进度
                 smol::Timer::after(std::time::Duration::from_secs(1)).await;
-                
+
                 // 检查是否还在录制
-                let still_recording = this.update(cx, |this, _cx| {
-                    this.room_states.get(&room_id)
-                        .map(|s| s.is_recording)
-                        .unwrap_or(false)
-                }).ok().unwrap_or(false);
-                
+                let still_recording = this
+                    .update(cx, |this, _cx| {
+                        this.room_states
+                            .get(&room_id)
+                            .map(|s| s.is_recording)
+                            .unwrap_or(false)
+                    })
+                    .ok()
+                    .unwrap_or(false);
+
                 if !still_recording {
                     tracing::info!("📊 进度监控停止: room_id={}", room_id);
                     break;
                 }
-                
+
                 // 获取进度
                 let handle = handle.clone();
-                let progress = runtime.spawn(async move {
-                    let mut h = handle.lock().await;
-                    h.get_progress().await
-                }).await;
-                
+                let progress = runtime
+                    .spawn(async move {
+                        let mut h = handle.lock().await;
+                        h.get_progress().await
+                    })
+                    .await;
+
                 match progress {
                     Ok(Some(progress)) => {
                         let _ = this.update(cx, |this, cx| {
@@ -874,7 +924,8 @@ impl RecordingPage {
                     }
                 }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     /// 后台自动开始录制（无需 window，用于监控自动触发）
@@ -885,7 +936,7 @@ impl RecordingPage {
         };
 
         let state = self.room_states.get(&room_id).cloned().unwrap_or_default();
-        
+
         // 检查是否正在直播
         if state.status != LiveRoomStatus::Live {
             return;
@@ -901,7 +952,7 @@ impl RecordingPage {
         let runtime = self.app_state.runtime.clone();
         let url = room.url.clone();
         let anchor_name = room.anchor_name.clone();
-        
+
         // 创建输出目录
         if let Some(parent) = output_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -948,9 +999,9 @@ impl RecordingPage {
         };
 
         cx.spawn(async move |this, cx| {
-            let result = runtime.spawn(async move {
-                live_recorder.start_recording(&url, config).await
-            }).await;
+            let result = runtime
+                .spawn(async move { live_recorder.start_recording(&url, config).await })
+                .await;
 
             match result {
                 Ok(Ok(handle)) => {
@@ -958,13 +1009,13 @@ impl RecordingPage {
                     // 保存 handle 以便后续停止录制和获取进度
                     let handle = Arc::new(TokioMutex::new(handle));
                     let handle_clone = handle.clone();
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.recording_handle = Some(handle);
                         }
                         cx.notify();
-                        
+
                         // 启动进度监控任务
                         this.start_progress_monitor(room_id, handle_clone, cx);
                     });
@@ -972,7 +1023,7 @@ impl RecordingPage {
                 Ok(Err(e)) => {
                     let error_msg = format!("自动录制失败: {}", e);
                     tracing::error!("❌ {}", error_msg);
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
@@ -986,7 +1037,7 @@ impl RecordingPage {
                 Err(e) => {
                     let error_msg = format!("任务执行失败: {}", e);
                     tracing::error!("❌ {}", error_msg);
-                    
+
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
@@ -997,7 +1048,8 @@ impl RecordingPage {
                     });
                 }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     /// 删除直播间
@@ -1005,10 +1057,7 @@ impl RecordingPage {
         // 检查是否正在录制
         if let Some(state) = self.room_states.get(&room_id) {
             if state.is_recording {
-                window.push_notification(
-                    Notification::warning("请先停止录制再删除"),
-                    cx,
-                );
+                window.push_notification(Notification::warning("请先停止录制再删除"), cx);
                 return;
             }
         }
@@ -1017,11 +1066,8 @@ impl RecordingPage {
             self.monitored_rooms.remove(index);
             self.room_states.remove(&room_id);
             self.save_config();
-            
-            window.push_notification(
-                Notification::info("直播间已移除"),
-                cx,
-            );
+
+            window.push_notification(Notification::info("直播间已移除"), cx);
             cx.notify();
         }
     }
@@ -1056,9 +1102,9 @@ impl RecordingPage {
 
         cx.spawn(async move |this, cx| {
             // 获取完整的流信息（包括封面图和标题）
-            let result = runtime.spawn(async move {
-                live_recorder.get_stream_info(&url).await
-            }).await;
+            let result = runtime
+                .spawn(async move { live_recorder.get_stream_info(&url).await })
+                .await;
 
             match result {
                 Ok(Ok(stream_info)) => {
@@ -1070,7 +1116,11 @@ impl RecordingPage {
                         live_recorder::types::LiveStatus::Unknown => LiveRoomStatus::Unknown,
                     };
                     let cover_url = room_info.cover_url.clone();
-                    let title = if room_info.title.is_empty() { None } else { Some(room_info.title.clone()) };
+                    let title = if room_info.title.is_empty() {
+                        None
+                    } else {
+                        Some(room_info.title.clone())
+                    };
                     let anchor_name = room_info.anchor_name.clone();
                     let is_live = status == LiveRoomStatus::Live;
 
@@ -1089,46 +1139,60 @@ impl RecordingPage {
                             state.cover_url = cover_url.clone();
                             state.title = title.clone();
                         }
-                        
+
                         // 更新持久化的房间信息（缓存标题、封面等）
                         let mut need_save = false;
-                        if let Some(room) = this.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+                        if let Some(room) =
+                            this.monitored_rooms.iter_mut().find(|r| r.id == room_id)
+                        {
                             room.last_checked = Some(Utc::now());
-                            
+
                             // 更新主播名称（如果之前是 Unknown）
-                            if room.anchor_name == "Unknown" || room.anchor_name.starts_with("Unknown-") {
-                                tracing::info!("📝 更新房间 {} 主播名: {} -> {}", room_id, room.anchor_name, anchor_name);
+                            if room.anchor_name == "Unknown"
+                                || room.anchor_name.starts_with("Unknown-")
+                            {
+                                tracing::info!(
+                                    "📝 更新房间 {} 主播名: {} -> {}",
+                                    room_id,
+                                    room.anchor_name,
+                                    anchor_name
+                                );
                                 room.anchor_name = anchor_name;
                                 need_save = true;
                             }
-                            
+
                             // 同步标题到缓存
                             if title.is_some() && room.cached_title != title {
-                                tracing::info!("📝 更新房间 {} 缓存标题: {:?} -> {:?}", room_id, room.cached_title, title);
+                                tracing::info!(
+                                    "📝 更新房间 {} 缓存标题: {:?} -> {:?}",
+                                    room_id,
+                                    room.cached_title,
+                                    title
+                                );
                                 room.cached_title = title;
                                 need_save = true;
                             }
-                            
+
                             // 同步封面到缓存
                             if cover_url.is_some() && room.cached_cover_url != cover_url {
                                 tracing::info!("🖼️ 更新房间 {} 缓存封面: {:?}", room_id, cover_url);
                                 room.cached_cover_url = cover_url;
                                 need_save = true;
                             }
-                            
+
                             // 更新最后直播时间
                             if is_live {
                                 room.last_live_at = Some(Utc::now());
                                 need_save = true;
                             }
                         }
-                        
+
                         // 保存配置（如果有更新）
                         if need_save {
                             tracing::info!("💾 保存房间 {} 的缓存更新", room_id);
                             this.save_config();
                         }
-                        
+
                         cx.notify();
                     });
                 }
@@ -1155,7 +1219,8 @@ impl RecordingPage {
                     });
                 }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     /// 显示设置弹窗（可编辑版本）
@@ -1165,8 +1230,11 @@ impl RecordingPage {
 
         // 格式选项
         let format_options = ["ts", "mkv", "flv", "mp4"];
-        let format_index = format_options.iter().position(|&f| f == config.record_format.as_str()).unwrap_or(0);
-        
+        let format_index = format_options
+            .iter()
+            .position(|&f| f == config.record_format.as_str())
+            .unwrap_or(0);
+
         // 质量选项
         let quality_options = [
             LiveRecordQuality::Original,
@@ -1175,8 +1243,11 @@ impl RecordingPage {
             LiveRecordQuality::High,
             LiveRecordQuality::Standard,
         ];
-        let quality_index = quality_options.iter().position(|q| *q == config.quality).unwrap_or(0);
-        
+        let quality_index = quality_options
+            .iter()
+            .position(|q| *q == config.quality)
+            .unwrap_or(0);
+
         // 使用 Arc<RwLock> 存储选择状态（因为 Dialog 闭包需要 Fn）
         let selected_format = Arc::new(RwLock::new(format_index));
         let selected_quality = Arc::new(RwLock::new(quality_index));
@@ -1191,7 +1262,12 @@ impl RecordingPage {
         let segment_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("留空关闭")
-                .default_value(config.segment_duration.map(|d| d.to_string()).unwrap_or_default())
+                .default_value(
+                    config
+                        .segment_duration
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
+                )
         });
         let retry_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -1623,14 +1699,11 @@ impl RecordingPage {
                                         LiveRecordQuality::High,
                                         LiveRecordQuality::Standard,
                                     ];
-                                    
                                     let format_idx = *selected_format.read();
                                     let quality_idx = *selected_quality.read();
                                     let transcode = *auto_transcode.read();
-                                    
                                     let format = format_options[format_idx].to_string();
                                     let quality = quality_options[quality_idx].clone();
-                                    
                                     // 从输入框读取值
                                     let interval = interval_input.read(cx).text().to_string()
                                         .trim().parse::<u64>().unwrap_or(60).max(10);
@@ -1641,7 +1714,6 @@ impl RecordingPage {
                                     let reconnect = reconnect_input.read(cx).text().to_string()
                                         .trim().parse::<u64>().unwrap_or(30).max(5);
                                     let path = path_input.read(cx).text().to_string().trim().to_string();
-                                    
                                     // 更新配置
                                     let _ = this.update(cx, |page, cx| {
                                         page.record_config.record_format = format;
@@ -1657,7 +1729,6 @@ impl RecordingPage {
                                         page.save_record_config();
                                         cx.notify();
                                     });
-                                    
                                     window.push_notification(
                                         Notification::success("设置已保存"),
                                         cx,
@@ -1716,13 +1787,13 @@ impl RecordingPage {
 
         // 平台颜色映射
         let platform_color = match room.platform.as_str() {
-            "douyin" => gpui::rgb(0x000000),  // 黑色
+            "douyin" => gpui::rgb(0x000000),   // 黑色
             "bilibili" => gpui::rgb(0xfb7299), // B站粉
-            "huya" => gpui::rgb(0xff9600),    // 虎牙橙
-            "douyu" => gpui::rgb(0xff5d23),   // 斗鱼橙
+            "huya" => gpui::rgb(0xff9600),     // 虎牙橙
+            "douyu" => gpui::rgb(0xff5d23),    // 斗鱼橙
             "kuaishou" => gpui::rgb(0xff4906), // 快手橙
-            "soop" => gpui::rgb(0x5b6edc),    // SOOP 蓝紫
-            _ => gpui::rgb(0x6366f1),         // 默认紫色
+            "soop" => gpui::rgb(0x5b6edc),     // SOOP 蓝紫
+            _ => gpui::rgb(0x6366f1),          // 默认紫色
         };
 
         // 平台显示名称
@@ -1760,11 +1831,7 @@ impl RecordingPage {
                     .flex_shrink_0()
                     // 显示封面图或占位符
                     .when_some(cover_url.clone(), |el, url| {
-                        el.child(
-                            img(url)
-                                .size_full()
-                                .object_fit(ObjectFit::Cover),
-                        )
+                        el.child(img(url).size_full().object_fit(ObjectFit::Cover))
                     })
                     .when(cover_url.is_none(), |el| {
                         el.child(
@@ -1773,11 +1840,7 @@ impl RecordingPage {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(
-                                    div()
-                                        .text_2xl()
-                                        .child("📺"),
-                                ),
+                                .child(div().text_2xl().child("📺")),
                         )
                     })
                     // 直播状态角标
@@ -1818,12 +1881,7 @@ impl RecordingPage {
                                         .bg(gpui::rgb(0xef4444))
                                         .rounded_full(),
                                 )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(gpui::white())
-                                        .child("REC"),
-                                ),
+                                .child(div().text_xs().text_color(gpui::white()).child("REC")),
                         )
                     }),
             )
@@ -1900,11 +1958,7 @@ impl RecordingPage {
                                     .items_center()
                                     .gap(px(4.0))
                                     .child(
-                                        div()
-                                            .w(px(6.0))
-                                            .h(px(6.0))
-                                            .bg(status_color)
-                                            .rounded_full(),
+                                        div().w(px(6.0)).h(px(6.0)).bg(status_color).rounded_full(),
                                     )
                                     .child(
                                         div()
@@ -1948,7 +2002,7 @@ impl RecordingPage {
                                 .xsmall()
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     this.start_recording(room_id, window, cx);
-                                }))
+                                })),
                         )
                     })
                     .when(is_recording, |el| {
@@ -1960,7 +2014,7 @@ impl RecordingPage {
                                 .danger()
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     this.stop_recording(room_id, window, cx);
-                                }))
+                                })),
                         )
                     })
                     // 打开直播间
@@ -1980,13 +2034,17 @@ impl RecordingPage {
                     // 监控开关
                     .child(
                         Button::new(SharedString::from(format!("monitor-{}", room_id)))
-                            .icon(if is_monitoring { gpui_component::IconName::Minus } else { gpui_component::IconName::ArrowRight })
+                            .icon(if is_monitoring {
+                                gpui_component::IconName::Minus
+                            } else {
+                                gpui_component::IconName::ArrowRight
+                            })
                             .label(if is_monitoring { "暂停" } else { "监控" })
                             .xsmall()
                             .ghost()
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.toggle_monitoring(room_id, cx);
-                            }))
+                            })),
                     )
                     // 刷新按钮
                     .child(
@@ -1997,7 +2055,7 @@ impl RecordingPage {
                             .xsmall()
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.refresh_room(room_id, cx);
-                            }))
+                            })),
                     )
                     // 删除按钮
                     .child(
@@ -2008,7 +2066,7 @@ impl RecordingPage {
                             .xsmall()
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 this.remove_room(room_id, window, cx);
-                            }))
+                            })),
                     ),
             )
     }
@@ -2023,14 +2081,15 @@ impl Render for RecordingPage {
 
         // 检查是否有错误需要显示
         if let Some(error) = self.last_add_error.take() {
-            window.push_notification(
-                Notification::error(&format!("添加失败: {}", error)),
-                cx,
-            );
+            window.push_notification(Notification::error(&format!("添加失败: {}", error)), cx);
         }
 
         let rooms = self.monitored_rooms.clone();
-        let live_count = self.room_states.values().filter(|s| s.status == LiveRoomStatus::Live).count();
+        let live_count = self
+            .room_states
+            .values()
+            .filter(|s| s.status == LiveRoomStatus::Live)
+            .count();
         let recording_count = self.room_states.values().filter(|s| s.is_recording).count();
 
         div()
@@ -2062,17 +2121,12 @@ impl Render for RecordingPage {
                                             .text_color(title_color)
                                             .child("🎥 直播录制"),
                                     )
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(desc_color)
-                                            .child(format!(
-                                                "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
-                                                rooms.len(),
-                                                live_count,
-                                                recording_count
-                                            )),
-                                    ),
+                                    .child(div().text_sm().text_color(desc_color).child(format!(
+                                        "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
+                                        rooms.len(),
+                                        live_count,
+                                        recording_count
+                                    ))),
                             )
                             .child(
                                 div()
@@ -2105,62 +2159,50 @@ impl Render for RecordingPage {
                                 .items_center()
                                 .justify_center()
                                 .p_4()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(desc_color)
-                                        .child("正在加载...")
-                                )
+                                .child(div().text_sm().text_color(desc_color).child("正在加载...")),
                         )
                     })
                     // 直播间列表
-                    .child(
-                        if rooms.is_empty() {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .p(px(80.0))
-                                .gap_4()
-                                .child(
-                                    div()
-                                        .text_2xl()
-                                        .text_color(desc_color)
-                                        .child("📺"),
-                                )
-                                .child(
-                                    div()
-                                        .text_lg()
-                                        .text_color(desc_color)
-                                        .child("暂无监控的直播间"),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(desc_color)
-                                        .child("点击上方「添加直播间」按钮开始监控"),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(desc_color)
-                                        .child("支持：抖音、B站、虎牙、斗鱼、快手、SOOP"),
-                                )
-                                .into_any_element()
-                        } else {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .children(
-                                    rooms.iter().map(|room| {
-                                        self.render_room_card(room, cx).into_any_element()
-                                    })
-                                )
-                                .into_any_element()
-                        }
-                    ),
+                    .child(if rooms.is_empty() {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .p(px(80.0))
+                            .gap_4()
+                            .child(div().text_2xl().text_color(desc_color).child("📺"))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .text_color(desc_color)
+                                    .child("暂无监控的直播间"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(desc_color)
+                                    .child("点击上方「添加直播间」按钮开始监控"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(desc_color)
+                                    .child("支持：抖音、B站、虎牙、斗鱼、快手、SOOP"),
+                            )
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .children(
+                                rooms
+                                    .iter()
+                                    .map(|room| self.render_room_card(room, cx).into_any_element()),
+                            )
+                            .into_any_element()
+                    }),
             )
     }
 }

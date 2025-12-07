@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// 直播状态
@@ -150,7 +150,8 @@ impl Default for RecordConfig {
         );
 
         Self {
-            output_path_template: "./downloads/{platform}/{anchor_name}_{room_id}_{timestamp}.mp4".to_string(),
+            output_path_template: "./downloads/{platform}/{anchor_name}_{room_id}_{timestamp}.mp4"
+                .to_string(),
             quality: VideoQuality::Original,
             format: "mp4".to_string(),
             max_duration: None,

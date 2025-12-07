@@ -8,8 +8,8 @@ use crate::app::AppState;
 use gpui::*;
 use gpui_component::input::InputState;
 use gpui_component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
-use magekit_shared::types::Theme as AppTheme;
 use magekit_shared::PlatformCookie;
+use magekit_shared::types::Theme as AppTheme;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -82,12 +82,10 @@ impl SettingsPage {
         let cookies = config.advanced.cookies.clone();
 
         // 创建 Cookie 输入框状态
-        let cookie_platform_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("例如: bilibili, youtube")
-        });
-        let cookie_content_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("粘贴完整的 Cookie 字符串")
-        });
+        let cookie_platform_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("例如: bilibili, youtube"));
+        let cookie_content_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("粘贴完整的 Cookie 字符串"));
 
         Self {
             app_state,
@@ -161,7 +159,11 @@ impl SettingsPage {
     /// 添加新的 Cookie
     fn add_cookie(&mut self, cookie: PlatformCookie, window: &mut Window, cx: &mut Context<Self>) {
         // 检查是否已存在相同平台的 Cookie
-        if let Some(existing) = self.cookies.iter_mut().find(|c| c.platform == cookie.platform) {
+        if let Some(existing) = self
+            .cookies
+            .iter_mut()
+            .find(|c| c.platform == cookie.platform)
+        {
             // 更新现有的 Cookie
             existing.cookie = cookie.cookie;
             existing.enabled = cookie.enabled;

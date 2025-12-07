@@ -133,7 +133,12 @@ impl ThemeColors {
         let l = (max + min) / 2.0;
 
         if max == min {
-            return Some(Hsla { h: 0.0, s: 0.0, l, a: 1.0 });
+            return Some(Hsla {
+                h: 0.0,
+                s: 0.0,
+                l,
+                a: 1.0,
+            });
         }
 
         let d = max - min;
@@ -223,7 +228,11 @@ impl ThemeManager {
         let system_is_dark = Self::detect_system_theme();
         Self {
             current_theme: AppTheme::System,
-            resolved_theme: if system_is_dark { ResolvedTheme::Dark } else { ResolvedTheme::Light },
+            resolved_theme: if system_is_dark {
+                ResolvedTheme::Dark
+            } else {
+                ResolvedTheme::Light
+            },
             custom_themes: HashMap::new(),
             config_path,
         }
@@ -279,12 +288,10 @@ impl ThemeManager {
                     ResolvedTheme::Light
                 }
             }
-            AppTheme::Custom(config) => {
-                match config.mode {
-                    magekit_shared::types::ThemeMode::Dark => ResolvedTheme::Dark,
-                    magekit_shared::types::ThemeMode::Light => ResolvedTheme::Light,
-                }
-            }
+            AppTheme::Custom(config) => match config.mode {
+                magekit_shared::types::ThemeMode::Dark => ResolvedTheme::Dark,
+                magekit_shared::types::ThemeMode::Light => ResolvedTheme::Light,
+            },
         };
     }
 

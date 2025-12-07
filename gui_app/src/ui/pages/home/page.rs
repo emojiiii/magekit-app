@@ -304,7 +304,9 @@ pub struct HomePage {
 impl HomePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 从配置读取默认下载路径
-        let default_path = app_state.config.blocking_read()
+        let default_path = app_state
+            .config
+            .blocking_read()
             .download
             .default_output_path
             .to_string_lossy()
@@ -619,7 +621,7 @@ impl HomePage {
                                 task.total_bytes = Some(metadata.len());
                                 task.downloaded_bytes = metadata.len();
                             }
-                            
+
                             // 保存完成状态到持久化存储
                             app_state_for_final_save.save_task_to_persistence(task);
                         }
@@ -942,7 +944,7 @@ impl HomePage {
                                 task.total_bytes = Some(metadata.len());
                                 task.downloaded_bytes = metadata.len();
                             }
-                            
+
                             // 保存完成状态到持久化存储
                             app_state_for_final_save.save_task_to_persistence(task);
                         }

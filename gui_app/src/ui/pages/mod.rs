@@ -2,16 +2,16 @@
 //!
 //! 包含所有有状态的页面组件
 
+pub mod channel;
 pub mod home;
-pub mod tools;
+pub mod record;
 pub mod settings;
 pub mod tasks;
-pub mod channel;
-pub mod record;
+pub mod tools;
 
+pub use channel::ChannelPage;
 pub use home::HomePage;
-pub use tools::ToolsPage;
+pub use record::RecordingPage;
 pub use settings::SettingsPage;
 pub use tasks::TasksPage;
-pub use channel::ChannelPage;
-pub use record::RecordingPage;
+pub use tools::ToolsPage;

@@ -3,7 +3,7 @@
 //! 负责将任务状态保存到磁盘，以便应用重启后恢复未完成的任务。
 
 use crate::error::{ToolManagerError, ToolManagerResult};
-use magekit_shared::{TaskStatus, TaskState, TaskId, get_app_data_dir};
+use magekit_shared::{TaskId, TaskState, TaskStatus, get_app_data_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -34,20 +34,26 @@ impl PersistedTasks {
     /// 从磁盘加载任务列表
     pub fn load() -> ToolManagerResult<Self> {
         let path = Self::get_tasks_file_path()?;
-        
+
         if !path.exists() {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| ToolManagerError::config(
-                format!("Failed to read tasks file {}: {}", path.display(), e),
-            ))?;
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            ToolManagerError::config(format!(
+                "Failed to read tasks file {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
 
-        let tasks: PersistedTasks = serde_json::from_str(&content)
-            .map_err(|e| ToolManagerError::config(
-                format!("Failed to parse tasks file {}: {}", path.display(), e),
-            ))?;
+        let tasks: PersistedTasks = serde_json::from_str(&content).map_err(|e| {
+            ToolManagerError::config(format!(
+                "Failed to parse tasks file {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         Ok(tasks)
     }
@@ -55,24 +61,28 @@ impl PersistedTasks {
     /// 保存任务列表到磁盘
     pub fn save(&self) -> ToolManagerResult<()> {
         let path = Self::get_tasks_file_path()?;
-        
+
         // 确保目录存在
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ToolManagerError::config(
-                    format!("Failed to create directory {}: {}", parent.display(), e),
-                ))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ToolManagerError::config(format!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
         }
 
         let content = serde_json::to_string_pretty(self)
-            .map_err(|e| ToolManagerError::config(
-                format!("Failed to serialize tasks: {}", e),
-            ))?;
+            .map_err(|e| ToolManagerError::config(format!("Failed to serialize tasks: {}", e)))?;
 
-        std::fs::write(&path, content)
-            .map_err(|e| ToolManagerError::config(
-                format!("Failed to write tasks file {}: {}", path.display(), e),
-            ))?;
+        std::fs::write(&path, content).map_err(|e| {
+            ToolManagerError::config(format!(
+                "Failed to write tasks file {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         tracing::debug!("Tasks saved to: {:?}", path);
         Ok(())
@@ -146,7 +156,7 @@ impl TaskPersistence {
             max_retries,
         };
         self.tasks.upsert_task(task);
-        
+
         if self.auto_save {
             self.tasks.save()?;
         }
@@ -154,7 +164,11 @@ impl TaskPersistence {
     }
 
     /// 更新任务状态（如果不存在则添加）
-    pub fn update_task_status(&mut self, task_id: TaskId, status: TaskStatus) -> ToolManagerResult<()> {
+    pub fn update_task_status(
+        &mut self,
+        task_id: TaskId,
+        status: TaskStatus,
+    ) -> ToolManagerResult<()> {
         if let Some(task) = self.tasks.tasks.get_mut(&task_id) {
             // 任务已存在，更新状态
             task.status = status;
@@ -163,11 +177,11 @@ impl TaskPersistence {
             let persisted_task = PersistedTask {
                 status,
                 retry_count: 0,
-                max_retries: 3,  // 默认最大重试次数
+                max_retries: 3, // 默认最大重试次数
             };
             self.tasks.upsert_task(persisted_task);
         }
-        
+
         if self.auto_save {
             self.tasks.save()?;
         }
@@ -182,11 +196,11 @@ impl TaskPersistence {
         } else {
             None
         };
-        
+
         if retry_count.is_some() && self.auto_save {
             self.tasks.save()?;
         }
-        
+
         Ok(retry_count)
     }
 
@@ -207,7 +221,7 @@ impl TaskPersistence {
     /// 移除任务
     pub fn remove_task(&mut self, task_id: TaskId) -> ToolManagerResult<()> {
         self.tasks.remove_task(task_id);
-        
+
         if self.auto_save {
             self.tasks.save()?;
         }
@@ -227,7 +241,7 @@ impl TaskPersistence {
     /// 清除已完成的任务
     pub fn clear_completed(&mut self) -> ToolManagerResult<()> {
         self.tasks.clear_completed_tasks();
-        
+
         if self.auto_save {
             self.tasks.save()?;
         }

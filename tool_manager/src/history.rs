@@ -54,7 +54,10 @@ impl HistoryEntry {
     pub fn from_task(status: &TaskStatus) -> Self {
         Self {
             task_id: status.id,
-            title: status.title.clone().unwrap_or_else(|| "未知标题".to_string()),
+            title: status
+                .title
+                .clone()
+                .unwrap_or_else(|| "未知标题".to_string()),
             url: status.url.clone(),
             output_path: status.output_path.clone(),
             file_size: status.total_bytes,
@@ -110,10 +113,10 @@ impl HistoryStore {
     pub fn add(&mut self, entry: HistoryEntry) {
         // 移除同一任务的旧记录（如果存在）
         self.entries.retain(|e| e.task_id != entry.task_id);
-        
+
         // 添加到前面
         self.entries.push_front(entry);
-        
+
         // 限制数量
         while self.entries.len() > self.max_entries {
             self.entries.pop_back();
@@ -256,7 +259,7 @@ impl HistoryManager {
         if let Some(parent) = self.path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        
+
         let content = serde_json::to_string_pretty(&self.store)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         tokio::fs::write(&self.path, content).await?;

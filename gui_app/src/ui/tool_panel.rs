@@ -2,10 +2,10 @@
 //!
 //! 提供工具（yt-dlp, ffmpeg）的状态显示、版本检查和更新功能
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::*;
 use std::sync::Arc;
 
 /// 工具信息
@@ -60,7 +60,10 @@ impl ToolState {
     }
 
     fn is_busy(&self) -> bool {
-        matches!(self, ToolState::Checking | ToolState::Updating | ToolState::Installing)
+        matches!(
+            self,
+            ToolState::Checking | ToolState::Updating | ToolState::Installing
+        )
     }
 }
 
@@ -144,11 +147,16 @@ impl ToolPanel {
     }
 
     /// 设置工具版本
-    pub fn set_tool_version(&mut self, name: &str, current: Option<String>, latest: Option<String>) {
+    pub fn set_tool_version(
+        &mut self,
+        name: &str,
+        current: Option<String>,
+        latest: Option<String>,
+    ) {
         if let Some(tool) = self.tools.iter_mut().find(|t| t.name == name) {
             tool.current_version = current;
             tool.latest_version = latest;
-            
+
             // 自动更新状态
             if tool.current_version.is_none() {
                 tool.status = ToolState::NotInstalled;
@@ -180,9 +188,9 @@ impl Render for ToolPanel {
         let danger = theme.danger;
         let primary = theme.primary;
         let accent = theme.accent;
-        
+
         let tools_cloned = self.tools.clone();
-        
+
         div()
             .flex()
             .flex_col()
@@ -203,15 +211,15 @@ impl Render for ToolPanel {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(foreground)
-                            .child("🔧 工具管理")
+                            .child("🔧 工具管理"),
                     )
                     .child(
                         Button::new("refresh-all")
                             .ghost()
                             .small()
                             .icon(IconName::LoaderCircle)
-                            .label("刷新")
-                    )
+                            .label("刷新"),
+                    ),
             )
             // 工具列表
             .child(
@@ -221,15 +229,20 @@ impl Render for ToolPanel {
                     .flex()
                     .flex_col()
                     .gap(px(16.0))
-                    .children(
-                        tools_cloned.into_iter().map(move |tool| {
-                            render_tool_card_static(
-                                tool, 
-                                border, secondary, foreground, muted_foreground,
-                                success, warning, danger, primary, accent
-                            )
-                        })
-                    )
+                    .children(tools_cloned.into_iter().map(move |tool| {
+                        render_tool_card_static(
+                            tool,
+                            border,
+                            secondary,
+                            foreground,
+                            muted_foreground,
+                            success,
+                            warning,
+                            danger,
+                            primary,
+                            accent,
+                        )
+                    })),
             )
             // 底部说明
             .child(
@@ -242,8 +255,8 @@ impl Render for ToolPanel {
                         div()
                             .text_xs()
                             .text_color(muted_foreground)
-                            .child("💡 MageKit 会自动管理这些工具，确保它们保持最新版本")
-                    )
+                            .child("💡 MageKit 会自动管理这些工具，确保它们保持最新版本"),
+                    ),
             )
     }
 }
@@ -273,7 +286,7 @@ fn render_tool_card_static(
     let current_version = tool.current_version.clone();
     let latest_version = tool.latest_version.clone();
     let install_path = tool.install_path.clone();
-    
+
     div()
         .p(px(16.0))
         .border_1()
@@ -294,11 +307,7 @@ fn render_tool_card_static(
                         .flex()
                         .items_center()
                         .gap(px(12.0))
-                        .child(
-                            div()
-                                .text_2xl()
-                                .child(icon)
-                        )
+                        .child(div().text_2xl().child(icon))
                         .child(
                             div()
                                 .flex()
@@ -308,19 +317,19 @@ fn render_tool_card_static(
                                         .text_base()
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(foreground)
-                                        .child(tool_name.clone())
+                                        .child(tool_name.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_sm()
                                         .text_color(muted_foreground)
-                                        .child(description)
-                                )
-                        )
+                                        .child(description),
+                                ),
+                        ),
                 )
-                .child(
-                    render_status_badge_static(status, success, warning, danger, primary)
-                )
+                .child(render_status_badge_static(
+                    status, success, warning, danger, primary,
+                )),
         )
         // 版本信息
         .child(
@@ -337,37 +346,44 @@ fn render_tool_card_static(
                             div()
                                 .text_sm()
                                 .text_color(muted_foreground)
-                                .child("当前版本:")
+                                .child("当前版本:"),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(foreground)
-                                .child(current_version.clone().unwrap_or_else(|| "未安装".to_string()))
-                        )
+                                .child(
+                                    current_version
+                                        .clone()
+                                        .unwrap_or_else(|| "未安装".to_string()),
+                                ),
+                        ),
                 )
-                .when(latest_version.is_some() && latest_version != current_version, |this| {
-                    this.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(muted_foreground)
-                                    .child("最新版本:")
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(success)
-                                    .child(latest_version.clone().unwrap_or_default())
-                            )
-                    )
-                })
+                .when(
+                    latest_version.is_some() && latest_version != current_version,
+                    |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(muted_foreground)
+                                        .child("最新版本:"),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(success)
+                                        .child(latest_version.clone().unwrap_or_default()),
+                                ),
+                        )
+                    },
+                ),
         )
         // 安装路径
         .when_some(install_path.clone(), |this, path| {
@@ -380,15 +396,15 @@ fn render_tool_card_static(
                         div()
                             .text_sm()
                             .text_color(muted_foreground)
-                            .child("安装位置:")
+                            .child("安装位置:"),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(foreground)
                             .overflow_hidden()
-                            .child(path)
-                    )
+                            .child(path),
+                    ),
             )
         })
         // 操作按钮
@@ -397,9 +413,7 @@ fn render_tool_card_static(
                 .flex()
                 .items_center()
                 .gap(px(8.0))
-                .child(
-                    render_action_buttons_static(&tool_name, status)
-                )
+                .child(render_action_buttons_static(&tool_name, status)),
         )
 }
 
@@ -420,7 +434,7 @@ fn render_status_badge_static(
         ToolState::Installing => (primary.opacity(0.1), primary, "安装中..."),
         ToolState::Error => (danger.opacity(0.1), danger, "错误"),
     };
-    
+
     div()
         .px(px(10.0))
         .py(px(4.0))
@@ -433,7 +447,7 @@ fn render_status_badge_static(
             this.child(
                 Icon::new(IconName::LoaderCircle)
                     .size(px(14.0))
-                    .text_color(text_color)
+                    .text_color(text_color),
             )
         })
         .child(
@@ -441,7 +455,7 @@ fn render_status_badge_static(
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(text_color)
-                .child(label)
+                .child(label),
         )
 }
 
@@ -451,52 +465,49 @@ fn render_action_buttons_static(tool_name: &str, status: ToolState) -> impl Into
         .flex()
         .items_center()
         .gap(px(8.0))
-        .child(
-            match status {
-                ToolState::NotInstalled => {
-                    Button::new(SharedString::from(format!("install-{}", tool_name)))
-                        .primary()
-                        .small()
-                        .label("安装")
-                        .into_any_element()
-                }
-                ToolState::Installed => {
-                    Button::new(SharedString::from(format!("check-{}", tool_name)))
-                        .ghost()
-                        .small()
-                        .label("检查更新")
-                        .into_any_element()
-                }
-                ToolState::UpdateAvailable => {
-                    Button::new(SharedString::from(format!("update-{}", tool_name)))
-                        .primary()
-                        .small()
-                        .label("更新")
-                        .into_any_element()
-                }
-                ToolState::Checking | ToolState::Updating | ToolState::Installing => {
-                    Button::new(SharedString::from(format!("wait-{}", tool_name)))
-                        .ghost()
-                        .small()
-                        .label("请稍候...")
-                        .disabled(true)
-                        .into_any_element()
-                }
-                ToolState::Error => {
-                    Button::new(SharedString::from(format!("retry-{}", tool_name)))
-                        .ghost()
-                        .small()
-                        .label("重试")
-                        .into_any_element()
-                }
+        .child(match status {
+            ToolState::NotInstalled => {
+                Button::new(SharedString::from(format!("install-{}", tool_name)))
+                    .primary()
+                    .small()
+                    .label("安装")
+                    .into_any_element()
             }
-        )
-        .when(status == ToolState::Installed || status == ToolState::UpdateAvailable, |this| {
-            this.child(
-                Button::new(SharedString::from(format!("folder-{}", tool_name)))
+            ToolState::Installed => Button::new(SharedString::from(format!("check-{}", tool_name)))
+                .ghost()
+                .small()
+                .label("检查更新")
+                .into_any_element(),
+            ToolState::UpdateAvailable => {
+                Button::new(SharedString::from(format!("update-{}", tool_name)))
+                    .primary()
+                    .small()
+                    .label("更新")
+                    .into_any_element()
+            }
+            ToolState::Checking | ToolState::Updating | ToolState::Installing => {
+                Button::new(SharedString::from(format!("wait-{}", tool_name)))
                     .ghost()
                     .small()
-                    .icon(IconName::Folder)
-            )
+                    .label("请稍候...")
+                    .disabled(true)
+                    .into_any_element()
+            }
+            ToolState::Error => Button::new(SharedString::from(format!("retry-{}", tool_name)))
+                .ghost()
+                .small()
+                .label("重试")
+                .into_any_element(),
         })
+        .when(
+            status == ToolState::Installed || status == ToolState::UpdateAvailable,
+            |this| {
+                this.child(
+                    Button::new(SharedString::from(format!("folder-{}", tool_name)))
+                        .ghost()
+                        .small()
+                        .icon(IconName::Folder),
+                )
+            },
+        )
 }

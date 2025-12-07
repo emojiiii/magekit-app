@@ -47,6 +47,8 @@ pub mod config;
 pub mod downloader;
 /// 错误处理模块
 pub mod error;
+/// 下载历史记录模块
+pub mod history;
 /// 工具存储模块
 pub mod storage;
 /// 任务管理器模块
@@ -57,16 +59,14 @@ pub mod task_persistence;
 pub mod task_queue;
 /// 工具更新模块
 pub mod updater;
-/// 下载历史记录模块
-pub mod history;
 
 // 重新导出主要类型
 pub use config::{ConfigManager, ToolManagerConfig};
 pub use downloader::{DownloadProgress, VideoDownloader};
 pub use error::{DownloadError, DownloadResult, ToolManagerError, ToolManagerResult};
+pub use history::{HistoryEntry, HistoryManager, HistoryStats, HistoryStore};
 pub use storage::ToolStorage;
 pub use task_manager::{ToolManager, ToolManagerEvent};
-pub use task_persistence::{TaskPersistence, PersistedTask};
-pub use task_queue::{TaskQueue, QueuedTask, TaskPriority, QueueStats};
-pub use updater::{UpdateInfo, ToolUpdate};
-pub use history::{HistoryManager, HistoryStore, HistoryEntry, HistoryStats};
+pub use task_persistence::{PersistedTask, TaskPersistence};
+pub use task_queue::{QueueStats, QueuedTask, TaskPriority, TaskQueue};
+pub use updater::{ToolUpdate, UpdateInfo};

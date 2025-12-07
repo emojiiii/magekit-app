@@ -44,7 +44,10 @@ impl CookieSettingsCard {
         }
     }
 
-    pub fn on_add(mut self, handler: impl Fn(PlatformCookie, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_add(
+        mut self,
+        handler: impl Fn(PlatformCookie, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_add = Some(Box::new(handler));
         self
     }
@@ -54,7 +57,10 @@ impl CookieSettingsCard {
         self
     }
 
-    pub fn on_toggle(mut self, handler: impl Fn(usize, bool, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_toggle(
+        mut self,
+        handler: impl Fn(usize, bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle = Some(Rc::new(handler));
         self
     }
@@ -71,22 +77,17 @@ impl IntoElement for CookieSettingsCard {
         let on_delete = self.on_delete;
         let on_toggle = self.on_toggle;
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                // 使用闭包渲染内部内容
-                CookieSettingsInner {
-                    cookies,
-                    platform_input,
-                    cookie_input,
-                    on_add,
-                    on_delete,
-                    on_toggle,
-                }
-            )
+        div().w_full().flex().flex_col().gap_4().child(
+            // 使用闭包渲染内部内容
+            CookieSettingsInner {
+                cookies,
+                platform_input,
+                cookie_input,
+                on_add,
+                on_delete,
+                on_toggle,
+            },
+        )
     }
 }
 
@@ -197,12 +198,10 @@ impl RenderOnce for CookieSettingsInner {
                                                 .primary()
                                                 .icon(IconName::Plus)
                                                 .label("添加");
-                                            
                                             if let Some(handler) = on_add {
                                                 btn = btn.on_click(move |_ev, window, cx| {
                                                     let platform = platform_input_clone.read(cx).value().to_string();
                                                     let cookie = cookie_input_clone.read(cx).value().to_string();
-                                                    
                                                     if !platform.trim().is_empty() && !cookie.trim().is_empty() {
                                                         let new_cookie = PlatformCookie::new(
                                                             platform.trim().to_string(),
@@ -335,7 +334,7 @@ fn render_cookie_item(
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(title_color)
-                                .child(platform)
+                                .child(platform),
                         )
                         .when(!is_enabled, |el| {
                             el.child(
@@ -346,17 +345,17 @@ fn render_cookie_item(
                                     .rounded(px(4.0))
                                     .bg(gpui::hsla(0.0, 0.0, 0.5, 0.2))
                                     .text_color(muted_color)
-                                    .child("已禁用")
+                                    .child("已禁用"),
                             )
-                        })
+                        }),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(muted_color)
                         .truncate()
-                        .child(cookie_preview)
-                )
+                        .child(cookie_preview),
+                ),
         )
         .child(
             // 操作按钮
@@ -366,10 +365,15 @@ fn render_cookie_item(
                 .gap(px(8.0))
                 // 启用/禁用按钮
                 .child({
-                    let mut btn = Button::new(SharedString::from(format!("toggle-cookie-{}", index)))
-                        .small()
-                        .ghost()
-                        .icon(if is_enabled { IconName::Check } else { IconName::Close });
+                    let mut btn =
+                        Button::new(SharedString::from(format!("toggle-cookie-{}", index)))
+                            .small()
+                            .ghost()
+                            .icon(if is_enabled {
+                                IconName::Check
+                            } else {
+                                IconName::Close
+                            });
 
                     if let Some(handler) = on_toggle {
                         let handler = Rc::clone(handler);
@@ -381,11 +385,12 @@ fn render_cookie_item(
                 })
                 // 删除按钮
                 .child({
-                    let mut btn = Button::new(SharedString::from(format!("delete-cookie-{}", index)))
-                        .small()
-                        .danger()
-                        .ghost()
-                        .icon(IconName::Delete);
+                    let mut btn =
+                        Button::new(SharedString::from(format!("delete-cookie-{}", index)))
+                            .small()
+                            .danger()
+                            .ghost()
+                            .icon(IconName::Delete);
 
                     if let Some(handler) = on_delete {
                         let handler = Rc::clone(handler);
@@ -394,6 +399,6 @@ fn render_cookie_item(
                         });
                     }
                     btn
-                })
+                }),
         )
 }

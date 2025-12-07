@@ -3,10 +3,10 @@
 //! 提供视频链接输入和解析功能
 
 use gpui::*;
+use gpui_component::ActiveTheme;
+use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
-use gpui_component::Disableable;
-use gpui_component::ActiveTheme;
 
 /// URL 输入卡片组件
 #[derive(IntoElement)]
@@ -37,7 +37,10 @@ impl UrlInputCard {
         self
     }
 
-    pub fn on_parse(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_parse(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_parse = Some(Box::new(handler));
         self
     }
@@ -45,13 +48,29 @@ impl UrlInputCard {
 
 impl RenderOnce for UrlInputCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let button_label = if self.is_loading { "获取中..." } else { "解析" };
-        
+        let button_label = if self.is_loading {
+            "获取中..."
+        } else {
+            "解析"
+        };
+
         // 使用主题颜色
         let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark { rgb(0x18181b) } else { rgb(0xffffff) };
-        let border_color = if is_dark { rgb(0x27272a) } else { rgb(0xf0f0f0) };
-        let label_color = if is_dark { rgb(0xa1a1aa) } else { rgb(0x6b7280) };
+        let bg_color = if is_dark {
+            rgb(0x18181b)
+        } else {
+            rgb(0xffffff)
+        };
+        let border_color = if is_dark {
+            rgb(0x27272a)
+        } else {
+            rgb(0xf0f0f0)
+        };
+        let label_color = if is_dark {
+            rgb(0xa1a1aa)
+        } else {
+            rgb(0x6b7280)
+        };
 
         div()
             .flex()
@@ -68,7 +87,7 @@ impl RenderOnce for UrlInputCard {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(label_color)
-                    .child("🔗 视频链接")
+                    .child("🔗 视频链接"),
             )
             .child(
                 div()
@@ -77,10 +96,7 @@ impl RenderOnce for UrlInputCard {
                     .child(
                         div()
                             .flex_1()
-                            .child(
-                                Input::new(&self.input_state)
-                                    .cleanable(true)
-                            )
+                            .child(Input::new(&self.input_state).cleanable(true)),
                     )
                     .child({
                         // 蓝色解析按钮
@@ -92,7 +108,7 @@ impl RenderOnce for UrlInputCard {
                             btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
                         }
                         btn
-                    })
+                    }),
             )
     }
 }

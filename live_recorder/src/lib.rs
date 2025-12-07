@@ -1,8 +1,8 @@
 pub mod core;
+pub mod error;
 pub mod platforms;
 pub mod recorder;
 pub mod stream;
-pub mod error;
 pub mod types;
 
 pub use core::LiveRecorder;

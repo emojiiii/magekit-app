@@ -4,15 +4,15 @@
 
 use anyhow::Result;
 use gpui::Global;
-use magekit_shared::{AppConfig, TaskStatus, TaskId};
+use magekit_shared::{AppConfig, TaskId, TaskStatus};
 use magekit_shared::{load_app_config_or_default, save_app_config};
 use magekit_tool_manager::ToolManager;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use tokio::sync::{mpsc, RwLock};
 use tokio::runtime::Runtime;
-use parking_lot::Mutex;
+use tokio::sync::{RwLock, mpsc};
 
 use super::types::AppEvent;
 
@@ -45,8 +45,8 @@ impl AppState {
     /// 创建新的应用状态 (同步版本)
     pub fn new_sync() -> Result<Self> {
         // 创建 Tokio 运行时
-        let runtime = Runtime::new()
-            .map_err(|e| anyhow::anyhow!("创建 Tokio 运行时失败: {}", e))?;
+        let runtime =
+            Runtime::new().map_err(|e| anyhow::anyhow!("创建 Tokio 运行时失败: {}", e))?;
         let runtime = Arc::new(runtime);
 
         // 创建事件通道
@@ -54,7 +54,10 @@ impl AppState {
 
         // 从文件加载配置
         let config = load_app_config_or_default();
-        tracing::info!("Loaded config: download_path={:?}", config.download.default_output_path);
+        tracing::info!(
+            "Loaded config: download_path={:?}",
+            config.download.default_output_path
+        );
         let config = Arc::new(RwLock::new(config));
 
         // 创建工具管理器
@@ -62,7 +65,7 @@ impl AppState {
 
         // 初始化任务列表
         let tasks = Arc::new(RwLock::new(HashMap::new()));
-        
+
         // 加载持久化的任务
         let tool_manager_clone = tool_manager.clone();
         let tasks_clone = tasks.clone();
@@ -72,7 +75,11 @@ impl AppState {
                 tracing::info!("📦 恢复 {} 个持久化任务", restored_tasks.len());
                 let mut tasks_map = tasks_clone.write().await;
                 for task_status in restored_tasks {
-                    tracing::debug!("  - {} ({:?})", task_status.title.as_deref().unwrap_or("Unknown"), task_status.state);
+                    tracing::debug!(
+                        "  - {} ({:?})",
+                        task_status.title.as_deref().unwrap_or("Unknown"),
+                        task_status.state
+                    );
                     tasks_map.insert(task_status.id, task_status);
                 }
             }
@@ -104,21 +111,26 @@ impl AppState {
     pub async fn update_config(&self, new_config: AppConfig) -> Result<()> {
         let mut config = self.config.write().await;
         *config = new_config.clone();
-        
+
         if let Err(e) = save_app_config(&new_config) {
             tracing::error!("Failed to save config to file: {}", e);
         } else {
             tracing::info!("Config saved successfully");
         }
-        
-        let _ = self.event_tx.send(AppEvent::ConfigChanged(new_config)).await;
-        
+
+        let _ = self
+            .event_tx
+            .send(AppEvent::ConfigChanged(new_config))
+            .await;
+
         Ok(())
     }
 
     /// 发送事件
     pub async fn send_event(&self, event: AppEvent) -> Result<()> {
-        self.event_tx.send(event).await
+        self.event_tx
+            .send(event)
+            .await
             .map_err(|e| anyhow::anyhow!("发送事件失败: {}", e))?;
         Ok(())
     }
@@ -127,27 +139,29 @@ impl AppState {
     pub async fn recv_event(&mut self) -> Option<AppEvent> {
         self.event_rx.recv().await
     }
-    
+
     /// 保存任务状态到持久化存储
     pub fn save_task_to_persistence(&self, task_status: &TaskStatus) {
         let tool_manager = self.tool_manager.clone();
         let task_status = task_status.clone();
-        
+
         self.runtime.spawn(async move {
             if let Err(e) = tool_manager.save_task_status(&task_status).await {
                 tracing::error!("🚨 保存任务状态失败: {}", e);
             } else {
-                tracing::info!("💾 任务状态已保存: {} ({:?})", 
-                    task_status.title.as_deref().unwrap_or("Unknown"), 
-                    task_status.state);
+                tracing::info!(
+                    "💾 任务状态已保存: {} ({:?})",
+                    task_status.title.as_deref().unwrap_or("Unknown"),
+                    task_status.state
+                );
             }
         });
     }
-    
+
     /// 从持久化存储删除任务
     pub fn delete_task_from_persistence(&self, task_id: TaskId) {
         let tool_manager = self.tool_manager.clone();
-        
+
         self.runtime.spawn(async move {
             if let Err(e) = tool_manager.delete_task_status(task_id).await {
                 tracing::error!("🚨 删除任务失败: {}", e);

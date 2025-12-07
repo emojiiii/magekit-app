@@ -3,14 +3,18 @@
 //! 包含下载任务的创建、暂停、恢复、取消等功能
 
 use anyhow::Result;
-use magekit_shared::{TaskStatus, TaskUpdate, DownloadOptions, TaskId};
+use magekit_shared::{DownloadOptions, TaskId, TaskStatus, TaskUpdate};
 
 use super::state::AppState;
 use super::types::{AppEvent, NotificationMessage, NotificationType};
 
 impl AppState {
     /// 开始下载任务
-    pub async fn start_download(&self, url: String, options: Option<DownloadOptions>) -> Result<TaskId> {
+    pub async fn start_download(
+        &self,
+        url: String,
+        options: Option<DownloadOptions>,
+    ) -> Result<TaskId> {
         let download_options = options.unwrap_or_default();
 
         let output_path = std::env::current_dir()
@@ -33,11 +37,14 @@ impl AppState {
             tasks.insert(task_id, task_status);
         }
 
-        let _ = self.event_tx.send(AppEvent::ShowNotification(NotificationMessage {
-            title: "下载开始".to_string(),
-            message: format!("开始下载: {}", url),
-            notification_type: NotificationType::Info,
-        })).await;
+        let _ = self
+            .event_tx
+            .send(AppEvent::ShowNotification(NotificationMessage {
+                title: "下载开始".to_string(),
+                message: format!("开始下载: {}", url),
+                notification_type: NotificationType::Info,
+            }))
+            .await;
 
         Ok(task_id)
     }
@@ -45,22 +52,28 @@ impl AppState {
     /// 暂停下载任务
     pub async fn pause_download(&self, task_id: TaskId) -> Result<()> {
         self.tool_manager.pause_download(task_id).await?;
-        let _ = self.event_tx.send(AppEvent::ShowNotification(NotificationMessage {
-            title: "下载已暂停".to_string(),
-            message: format!("任务 {} 已暂停", task_id),
-            notification_type: NotificationType::Warning,
-        })).await;
+        let _ = self
+            .event_tx
+            .send(AppEvent::ShowNotification(NotificationMessage {
+                title: "下载已暂停".to_string(),
+                message: format!("任务 {} 已暂停", task_id),
+                notification_type: NotificationType::Warning,
+            }))
+            .await;
         Ok(())
     }
 
     /// 恢复下载任务
     pub async fn resume_download(&self, task_id: TaskId) -> Result<()> {
         self.tool_manager.resume_download(task_id).await?;
-        let _ = self.event_tx.send(AppEvent::ShowNotification(NotificationMessage {
-            title: "下载已恢复".to_string(),
-            message: format!("任务 {} 已恢复", task_id),
-            notification_type: NotificationType::Info,
-        })).await;
+        let _ = self
+            .event_tx
+            .send(AppEvent::ShowNotification(NotificationMessage {
+                title: "下载已恢复".to_string(),
+                message: format!("任务 {} 已恢复", task_id),
+                notification_type: NotificationType::Info,
+            }))
+            .await;
         Ok(())
     }
 
@@ -71,11 +84,14 @@ impl AppState {
         let mut tasks = self.tasks.write().await;
         tasks.remove(&task_id);
 
-        let _ = self.event_tx.send(AppEvent::ShowNotification(NotificationMessage {
-            title: "下载已取消".to_string(),
-            message: format!("任务 {} 已取消", task_id),
-            notification_type: NotificationType::Warning,
-        })).await;
+        let _ = self
+            .event_tx
+            .send(AppEvent::ShowNotification(NotificationMessage {
+                title: "下载已取消".to_string(),
+                message: format!("任务 {} 已取消", task_id),
+                notification_type: NotificationType::Warning,
+            }))
+            .await;
         Ok(())
     }
 

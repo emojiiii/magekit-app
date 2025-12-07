@@ -1,7 +1,7 @@
 //! 视频列表组件
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::{Disableable, IconName};
@@ -28,17 +28,23 @@ impl VideoList {
             on_download: None,
         }
     }
-    
-    pub fn on_toggle(mut self, callback: impl Fn(usize, bool, &mut Window, &mut App) + 'static) -> Self {
+
+    pub fn on_toggle(
+        mut self,
+        callback: impl Fn(usize, bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle = Some(Box::new(callback));
         self
     }
-    
-    pub fn on_select_all(mut self, callback: impl Fn(bool, &mut Window, &mut App) + 'static) -> Self {
+
+    pub fn on_select_all(
+        mut self,
+        callback: impl Fn(bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_select_all = Some(Box::new(callback));
         self
     }
-    
+
     pub fn on_download(mut self, callback: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_download = Some(Box::new(callback));
         self
@@ -47,18 +53,18 @@ impl VideoList {
 
 impl IntoElement for VideoList {
     type Element = Stateful<Div>;
-    
+
     fn into_element(self) -> Self::Element {
         let entries = self.entries;
         let channel_title = self.channel_title;
         let _on_toggle = self.on_toggle;
         let on_select_all = self.on_select_all;
         let on_download = self.on_download;
-        
+
         let selected_count = entries.iter().filter(|e| e.selected).count();
         let total_count = entries.len();
         let all_selected = selected_count == total_count && total_count > 0;
-        
+
         div()
             .id("video-list")
             .w_full()
@@ -80,14 +86,17 @@ impl IntoElement for VideoList {
                                 div()
                                     .text_lg()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(channel_title)
+                                    .child(channel_title),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.6))
-                                    .child(format!("共 {} 个视频，已选择 {}", total_count, selected_count))
-                            )
+                                    .child(format!(
+                                        "共 {} 个视频，已选择 {}",
+                                        total_count, selected_count
+                                    )),
+                            ),
                     )
                     .child(
                         div()
@@ -98,7 +107,11 @@ impl IntoElement for VideoList {
                             .child(
                                 Checkbox::new("select-all")
                                     .checked(all_selected)
-                                    .label(if all_selected { "取消全选" } else { "全选" })
+                                    .label(if all_selected {
+                                        "取消全选"
+                                    } else {
+                                        "全选"
+                                    })
                                     .on_click({
                                         let on_select_all = on_select_all;
                                         move |checked, window, cx| {
@@ -106,7 +119,7 @@ impl IntoElement for VideoList {
                                                 callback(*checked, window, cx);
                                             }
                                         }
-                                    })
+                                    }),
                             )
                             // 下载按钮
                             .child(
@@ -119,9 +132,9 @@ impl IntoElement for VideoList {
                                         btn.on_click(move |_, window, cx| {
                                             callback(window, cx);
                                         })
-                                    })
-                            )
-                    )
+                                    }),
+                            ),
+                    ),
             )
             // 视频列表
             .child(
@@ -133,10 +146,11 @@ impl IntoElement for VideoList {
                     .overflow_y_scroll()
                     .max_h(px(500.0))
                     .children(
-                        entries.into_iter().enumerate().map(|(index, entry)| {
-                            VideoItem::new(entry, index)
-                        })
-                    )
+                        entries
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, entry)| VideoItem::new(entry, index)),
+                    ),
             )
     }
 }

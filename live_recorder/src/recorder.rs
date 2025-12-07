@@ -65,7 +65,7 @@ impl LiveRecorder {
             .clone()
             .or_else(|| selected_stream.url.flv_url.clone())
             .ok_or_else(|| RecorderError::StreamNotAvailable("没有可用的流URL".to_string()))?;
-        
+
         // 检测是否是 HLS 流
         let is_hls = stream_url.contains(".m3u8");
 
@@ -243,24 +243,27 @@ impl RecordingSession {
             return Err(RecorderError::FFmpegNotFound);
         }
 
-        info!("🎬 使用 FFmpeg 录制: {} -> {:?}", self.stream_url, self.output_path);
+        info!(
+            "🎬 使用 FFmpeg 录制: {} -> {:?}",
+            self.stream_url, self.output_path
+        );
 
         let mut cmd = create_tokio_command("ffmpeg");
-        
+
         // 添加输入选项
         cmd.arg("-y"); // 覆盖输出文件
-        
+
         // 重连选项 - 对于直播流很重要
         cmd.arg("-reconnect").arg("1");
         cmd.arg("-reconnect_streamed").arg("1");
         cmd.arg("-reconnect_delay_max").arg("5");
-        
+
         // 添加请求头（必须在 -i 之前）
         // 注意：每个 header 后面都需要 \r\n，包括最后一个
         let mut headers = vec![
             "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
         ];
-        
+
         // 根据流 URL 添加特定的 Referer
         if self.stream_url.contains("huya") {
             headers.push("Referer: https://www.huya.com/".to_string());
@@ -272,14 +275,15 @@ impl RecordingSession {
             headers.push("Referer: https://www.douyu.com/".to_string());
             headers.push("Origin: https://www.douyu.com".to_string());
         }
-        
+
         for (key, value) in &self.config.headers {
             headers.push(format!("{}: {}", key, value));
         }
-        
+
         if !headers.is_empty() {
             // FFmpeg 要求每个 header 以 \r\n 结尾
-            let headers_str = headers.iter()
+            let headers_str = headers
+                .iter()
                 .map(|h| format!("{}\r\n", h))
                 .collect::<String>();
             cmd.arg("-headers");
@@ -292,16 +296,15 @@ impl RecordingSession {
             cmd.arg(proxy);
         }
 
-        cmd.arg("-i")
-            .arg(&self.stream_url)
-            .arg("-c")
-            .arg("copy");
-        
+        cmd.arg("-i").arg(&self.stream_url).arg("-c").arg("copy");
+
         // 根据输出文件扩展名选择格式
-        let output_ext = self.output_path.extension()
+        let output_ext = self
+            .output_path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("ts");
-        
+
         match output_ext {
             "mp4" => {
                 cmd.arg("-f").arg("mp4");
@@ -316,34 +319,34 @@ impl RecordingSession {
                 cmd.arg("-f").arg("mpegts");
             }
         }
-        
+
         cmd.arg(&self.output_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);  // 当任务被 drop 时自动杀死进程
+            .kill_on_drop(true); // 当任务被 drop 时自动杀死进程
 
         info!("🎬 FFmpeg 命令已构建，开始录制...");
 
         let mut child = cmd.spawn()?;
-        
+
         info!("🎬 FFmpeg 进程已启动, PID: {:?}", child.id());
 
         // 启动进度监控任务
         let progress_tx = self.progress_tx.clone();
         let start_time = self.start_time;
         let output_path = self.output_path.clone();
-        
+
         let progress_task = tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(1));
             loop {
                 ticker.tick().await;
-                
+
                 // 获取文件大小
                 let size = tokio::fs::metadata(&output_path)
                     .await
                     .map(|m| m.len())
                     .unwrap_or(0);
-                
+
                 let progress = RecordProgress {
                     status: RecordStatus::Recording,
                     start_time: Some(chrono::Utc::now()),
@@ -379,7 +382,7 @@ impl RecordingSession {
                             Ok(())
                         } else {
                             tracing::error!("❌ FFmpeg 退出码: {:?}", status.code());
-                            
+
                             Err(RecorderError::RecordingError(
                                 format!("FFmpeg录制失败，退出码: {:?}", status.code())
                             ))
@@ -399,8 +402,8 @@ impl RecordingSession {
     /// 直接录制流（不使用FFmpeg）
     async fn record_direct(&mut self) -> RecorderResult<()> {
         // 创建带请求头的 HTTP 客户端
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(self.config.timeout));
+        let mut client_builder =
+            reqwest::Client::builder().timeout(Duration::from_secs(self.config.timeout));
 
         // 添加代理设置
         if let Some(proxy_url) = &self.config.proxy {
@@ -409,18 +412,19 @@ impl RecordingSession {
             }
         }
 
-        let client = client_builder.build()
+        let client = client_builder
+            .build()
             .map_err(|e| RecorderError::RecordingError(format!("创建HTTP客户端失败: {}", e)))?;
 
         // 构建带请求头的请求
         let mut request = client.get(&self.stream_url);
-        
+
         // 添加默认请求头
         request = request.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         request = request.header("Accept", "*/*");
         request = request.header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
         request = request.header("Connection", "keep-alive");
-        
+
         // 添加配置中的自定义请求头
         for (key, value) in &self.config.headers {
             request = request.header(key.as_str(), value.as_str());
@@ -440,13 +444,14 @@ impl RecordingSession {
         }
 
         info!("开始直接录制流: {}", self.stream_url);
-        
+
         let mut response = request.send().await?;
 
         if !response.status().is_success() {
-            return Err(RecorderError::RecordingError(
-                format!("HTTP请求失败: {} - 流URL可能已过期或无效", response.status())
-            ));
+            return Err(RecorderError::RecordingError(format!(
+                "HTTP请求失败: {} - 流URL可能已过期或无效",
+                response.status()
+            )));
         }
 
         let file = OpenOptions::new()
@@ -474,7 +479,7 @@ impl RecordingSession {
                 let current_size = downloaded_for_task.load(std::sync::atomic::Ordering::Relaxed);
                 let speed = current_size.saturating_sub(prev_size);
                 prev_size = current_size;
-                
+
                 let progress = RecordProgress {
                     status: RecordStatus::Recording,
                     start_time: Some(chrono::Utc::now()),
@@ -490,7 +495,7 @@ impl RecordingSession {
         });
 
         info!("开始接收流数据...");
-        
+
         while let Some(chunk) = response.chunk().await? {
             // 检查停止信号
             if self.stop_rx.try_recv().is_ok() {
@@ -501,7 +506,7 @@ impl RecordingSession {
             let chunk_len = chunk.len() as u64;
             writer.write_all(&chunk).await?;
             downloaded += chunk_len;
-            
+
             // 更新共享的下载进度
             downloaded_shared.store(downloaded, std::sync::atomic::Ordering::Relaxed);
         }
@@ -510,7 +515,11 @@ impl RecordingSession {
         progress_task.abort();
 
         writer.flush().await?;
-        info!("✅ 录制完成，总大小: {} 字节 ({:.2} MB)", downloaded, downloaded as f64 / 1024.0 / 1024.0);
+        info!(
+            "✅ 录制完成，总大小: {} 字节 ({:.2} MB)",
+            downloaded,
+            downloaded as f64 / 1024.0 / 1024.0
+        );
         Ok(())
     }
 }
@@ -546,7 +555,7 @@ impl RecordingHandle {
             Err(e) => {
                 if e.is_panic() {
                     Err(RecorderError::RecordingError(
-                        "录制任务发生panic".to_string()
+                        "录制任务发生panic".to_string(),
                     ))
                 } else {
                     Err(RecorderError::TaskCancelled)

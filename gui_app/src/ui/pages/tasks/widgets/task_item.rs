@@ -1,10 +1,10 @@
 //! 任务项组件
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use magekit_shared::{TaskStatus, TaskState};
+use gpui_component::*;
+use magekit_shared::{TaskState, TaskStatus};
 use std::sync::Arc;
 
 /// 任务项组件
@@ -30,27 +30,42 @@ impl TaskItem {
         }
     }
 
-    pub fn on_pause(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_pause(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_pause = Some(Arc::new(handler));
         self
     }
 
-    pub fn on_resume(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_resume(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_resume = Some(Arc::new(handler));
         self
     }
 
-    pub fn on_cancel(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_cancel(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_cancel = Some(Arc::new(handler));
         self
     }
 
-    pub fn on_delete(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_delete(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_delete = Some(Arc::new(handler));
         self
     }
 
-    pub fn on_open_folder(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_open_folder(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_open_folder = Some(Arc::new(handler));
         self
     }
@@ -60,7 +75,7 @@ impl RenderOnce for TaskItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let task = &self.task;
         let task_id = task.id;
-        
+
         // 使用主题颜色
         let bg_color = cx.theme().background;
         let border_color = cx.theme().border;
@@ -68,7 +83,7 @@ impl RenderOnce for TaskItem {
         let muted_color = cx.theme().muted_foreground;
         let progress_bg = cx.theme().muted;
         let error_color = rgb(0xef4444);
-        
+
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
             TaskState::Queued => ("⏳", rgb(0xfbbf24), "等待中".to_string()),
@@ -78,7 +93,7 @@ impl RenderOnce for TaskItem {
             TaskState::Failed(_) => ("❌", rgb(0xef4444), "失败".to_string()),
             TaskState::Cancelled => ("🚫", rgb(0x6b7280), "已取消".to_string()),
         };
-        
+
         // 获取失败原因
         let error_message = match &task.state {
             TaskState::Failed(msg) => Some(msg.clone()),
@@ -95,7 +110,11 @@ impl RenderOnce for TaskItem {
 
         // 格式化大小
         let size_str = if let Some(total) = task.total_bytes {
-            format!("{} / {}", format_bytes(task.downloaded_bytes), format_bytes(total))
+            format!(
+                "{} / {}",
+                format_bytes(task.downloaded_bytes),
+                format_bytes(total)
+            )
         } else if task.downloaded_bytes > 0 {
             format_bytes(task.downloaded_bytes)
         } else {
@@ -103,9 +122,10 @@ impl RenderOnce for TaskItem {
         };
 
         // 标题（使用 URL 的最后部分作为备用）
-        let title = task.title.clone().unwrap_or_else(|| {
-            task.url.split('/').last().unwrap_or("未知").to_string()
-        });
+        let title = task
+            .title
+            .clone()
+            .unwrap_or_else(|| task.url.split('/').last().unwrap_or("未知").to_string());
 
         let on_pause = self.on_pause;
         let on_resume = self.on_resume;
@@ -115,7 +135,10 @@ impl RenderOnce for TaskItem {
         let is_downloading = matches!(task.state, TaskState::Downloading);
         let is_paused = matches!(task.state, TaskState::Paused);
         let is_completed = matches!(task.state, TaskState::Completed);
-        let is_active = matches!(task.state, TaskState::Downloading | TaskState::Paused | TaskState::Queued);
+        let is_active = matches!(
+            task.state,
+            TaskState::Downloading | TaskState::Paused | TaskState::Queued
+        );
 
         div()
             .flex()
@@ -139,26 +162,18 @@ impl RenderOnce for TaskItem {
                             .gap(px(8.0))
                             .child(div().text_lg().child(status_icon))
                             .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(title_color)
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .child(title)
-                                    )
-                            )
+                                div().flex_1().overflow_hidden().child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(title_color)
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .child(title),
+                                ),
+                            ),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(status_color)
-                            .child(status_text)
-                    )
+                    .child(div().text_xs().text_color(status_color).child(status_text)),
             )
             // 失败原因显示
             .when_some(error_message, |this, msg| {
@@ -169,7 +184,7 @@ impl RenderOnce for TaskItem {
                         .p(px(8.0))
                         .bg(rgba(0xef444420))
                         .rounded(px(4.0))
-                        .child(format!("原因: {}", msg))
+                        .child(format!("原因: {}", msg)),
                 )
             })
             // 进度条
@@ -185,8 +200,8 @@ impl RenderOnce for TaskItem {
                                 .h_full()
                                 .rounded(px(2.0))
                                 .bg(rgb(0x3b82f6))
-                                .w(relative(progress_percent))
-                        )
+                                .w(relative(progress_percent)),
+                        ),
                 )
             })
             // 信息行
@@ -199,12 +214,10 @@ impl RenderOnce for TaskItem {
                         .text_xs()
                         .text_color(muted_color)
                         .child(size_str.clone())
-                        .when(is_downloading, |this| {
-                            this.child(speed_str.clone())
-                        })
+                        .when(is_downloading, |this| this.child(speed_str.clone()))
                         .when(is_active, |this| {
                             this.child(format!("{:.1}%", progress_percent * 100.0))
-                        })
+                        }),
                 )
             })
             // 操作按钮
@@ -226,7 +239,7 @@ impl RenderOnce for TaskItem {
                                 .label("暂停")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
-                                })
+                                }),
                         )
                     })
                     // 继续按钮（暂停状态显示）
@@ -240,7 +253,7 @@ impl RenderOnce for TaskItem {
                                 .label("继续")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
-                                })
+                                }),
                         )
                     })
                     // 取消按钮（活动状态显示）
@@ -254,7 +267,7 @@ impl RenderOnce for TaskItem {
                                 .label("取消")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
-                                })
+                                }),
                         )
                     })
                     // 打开文件夹按钮
@@ -268,7 +281,7 @@ impl RenderOnce for TaskItem {
                                 .label("打开文件夹")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
-                                })
+                                }),
                         )
                     })
                     // 删除按钮（非活动任务）
@@ -282,9 +295,9 @@ impl RenderOnce for TaskItem {
                                 .label("删除")
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
-                                })
+                                }),
                         )
-                    })
+                    }),
             )
     }
 }
@@ -310,7 +323,7 @@ fn format_bytes(bytes: u64) -> String {
 fn format_speed(bytes_per_sec: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
-    
+
     if bytes_per_sec >= MB {
         format!("{:.2} MB/s", bytes_per_sec as f64 / MB as f64)
     } else if bytes_per_sec >= KB {

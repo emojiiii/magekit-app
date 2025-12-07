@@ -69,13 +69,14 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// 创建新的配置管理器 (同步版本)
     pub fn new_sync() -> ToolManagerResult<Self> {
-        let config_dir = get_app_config_dir()
-            .map_err(|e| ToolManagerError::internal(e.to_string()))?;
-        
+        let config_dir =
+            get_app_config_dir().map_err(|e| ToolManagerError::internal(e.to_string()))?;
+
         // 确保目录存在
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| ToolManagerError::file_operation_failed("create config dir", e.to_string()))?;
-        
+        std::fs::create_dir_all(&config_dir).map_err(|e| {
+            ToolManagerError::file_operation_failed("create config dir", e.to_string())
+        })?;
+
         let config_path = config_dir.join("tool_manager.toml");
 
         let config = if config_path.exists() {
@@ -102,11 +103,9 @@ impl ConfigManager {
         let toml_string = toml::to_string_pretty(config)
             .map_err(|e| ToolManagerError::config(format!("Failed to serialize config: {}", e)))?;
 
-        std::fs::write(path, toml_string)
-            .map_err(|e| ToolManagerError::file_operation_failed(
-                "write config file",
-                e.to_string(),
-            ))?;
+        std::fs::write(path, toml_string).map_err(|e| {
+            ToolManagerError::file_operation_failed("write config file", e.to_string())
+        })?;
 
         tracing::info!("Configuration saved to: {:?}", path);
         Ok(())
@@ -114,11 +113,9 @@ impl ConfigManager {
 
     /// 从文件加载配置 (同步版本)
     fn load_config_sync(path: &PathBuf) -> ToolManagerResult<ToolManagerConfig> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ToolManagerError::file_operation_failed(
-                "read config file",
-                e.to_string(),
-            ))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            ToolManagerError::file_operation_failed("read config file", e.to_string())
+        })?;
 
         let config: ToolManagerConfig = toml::from_str(&content)
             .map_err(|e| ToolManagerError::config(format!("Failed to parse config: {}", e)))?;
@@ -158,8 +155,10 @@ impl ConfigManager {
     /// 从应用配置合并
     pub async fn merge_from_app_config(&mut self, app_config: &AppConfig) -> ToolManagerResult<()> {
         self.config.tools = app_config.tools.clone();
-        self.config.download_defaults.max_concurrent_downloads = app_config.download.max_concurrent_downloads;
-        self.config.advanced.log_level = format!("{:?}", app_config.advanced.log_level).to_lowercase();
+        self.config.download_defaults.max_concurrent_downloads =
+            app_config.download.max_concurrent_downloads;
+        self.config.advanced.log_level =
+            format!("{:?}", app_config.advanced.log_level).to_lowercase();
 
         Self::save_config(&self.config_path, &self.config).await?;
         Ok(())
@@ -170,12 +169,9 @@ impl ConfigManager {
         let toml_string = toml::to_string_pretty(config)
             .map_err(|e| ToolManagerError::config(format!("Failed to serialize config: {}", e)))?;
 
-        fs::write(path, toml_string)
-            .await
-            .map_err(|e| ToolManagerError::file_operation_failed(
-                "write config file",
-                e.to_string(),
-            ))?;
+        fs::write(path, toml_string).await.map_err(|e| {
+            ToolManagerError::file_operation_failed("write config file", e.to_string())
+        })?;
 
         tracing::info!("Configuration saved to: {:?}", path);
         Ok(())
@@ -183,12 +179,9 @@ impl ConfigManager {
 
     /// 从文件加载配置
     async fn load_config(path: &PathBuf) -> ToolManagerResult<ToolManagerConfig> {
-        let content = fs::read_to_string(path)
-            .await
-            .map_err(|e| ToolManagerError::file_operation_failed(
-                "read config file",
-                e.to_string(),
-            ))?;
+        let content = fs::read_to_string(path).await.map_err(|e| {
+            ToolManagerError::file_operation_failed("read config file", e.to_string())
+        })?;
 
         let config: ToolManagerConfig = toml::from_str(&content)
             .map_err(|e| ToolManagerError::config(format!("Failed to parse config: {}", e)))?;
@@ -224,7 +217,10 @@ impl ConfigManager {
                 self.config.tools.custom_ffmpeg_path = Some(path);
             }
             _ => {
-                return Err(ToolManagerError::config(format!("Unknown tool: {}", tool_name)));
+                return Err(ToolManagerError::config(format!(
+                    "Unknown tool: {}",
+                    tool_name
+                )));
             }
         }
         Self::save_config(&self.config_path, &self.config).await?;
@@ -253,7 +249,9 @@ impl ConfigManager {
     /// 设置最大并发下载数
     pub async fn set_max_concurrent_downloads(&mut self, max: usize) -> ToolManagerResult<()> {
         if max == 0 {
-            return Err(ToolManagerError::config("Max concurrent downloads must be > 0".to_string()));
+            return Err(ToolManagerError::config(
+                "Max concurrent downloads must be > 0".to_string(),
+            ));
         }
         self.config.download_defaults.max_concurrent_downloads = max;
         Self::save_config(&self.config_path, &self.config).await?;
@@ -315,7 +313,9 @@ mod tests {
         };
 
         // 保存配置
-        ConfigManager::save_config(&config_path, &original_config).await.unwrap();
+        ConfigManager::save_config(&config_path, &original_config)
+            .await
+            .unwrap();
 
         // 加载配置
         let loaded_config = ConfigManager::load_config(&config_path).await.unwrap();

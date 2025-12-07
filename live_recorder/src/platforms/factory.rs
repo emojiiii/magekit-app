@@ -1,4 +1,7 @@
-use crate::{error::{RecorderError, RecorderResult}, platforms::PlatformHandler};
+use crate::{
+    error::{RecorderError, RecorderResult},
+    platforms::PlatformHandler,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,7 +30,8 @@ impl PlatformFactory {
 
     /// 注册平台处理器
     pub fn register_platform(&mut self, handler: Arc<dyn PlatformHandler>) {
-        self.handlers.insert(handler.platform_name().to_string(), handler);
+        self.handlers
+            .insert(handler.platform_name().to_string(), handler);
     }
 
     /// 根据URL获取对应的平台处理器
@@ -42,7 +46,10 @@ impl PlatformFactory {
     }
 
     /// 根据平台名称获取处理器
-    pub fn get_handler_by_name(&self, platform_name: &str) -> RecorderResult<Arc<dyn PlatformHandler>> {
+    pub fn get_handler_by_name(
+        &self,
+        platform_name: &str,
+    ) -> RecorderResult<Arc<dyn PlatformHandler>> {
         self.handlers
             .get(platform_name)
             .cloned()

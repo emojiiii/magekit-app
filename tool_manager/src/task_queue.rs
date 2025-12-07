@@ -2,11 +2,11 @@
 //!
 //! 实现任务队列和并发控制，支持任务优先级管理。
 
-use magekit_shared::{TaskId, DownloadOptions};
-use std::collections::{BinaryHeap, HashMap};
+use magekit_shared::{DownloadOptions, TaskId};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, Semaphore};
+use tokio::sync::{RwLock, Semaphore, mpsc};
 
 /// 任务优先级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,7 +88,7 @@ impl TaskQueue {
     /// 创建新的任务队列
     pub fn new(max_concurrent: usize) -> (Self, mpsc::Receiver<QueueEvent>) {
         let (event_tx, event_rx) = mpsc::channel(1000);
-        
+
         let queue = Self {
             pending: Arc::new(RwLock::new(BinaryHeap::new())),
             running: Arc::new(RwLock::new(HashMap::new())),
@@ -97,21 +97,21 @@ impl TaskQueue {
             event_tx,
             paused: Arc::new(RwLock::new(false)),
         };
-        
+
         (queue, event_rx)
     }
 
     /// 添加任务到队列
     pub async fn enqueue(&self, task: QueuedTask) -> TaskId {
         let task_id = task.task_id;
-        
+
         {
             let mut pending = self.pending.write().await;
             pending.push(task);
         }
-        
+
         let _ = self.event_tx.send(QueueEvent::TaskAdded(task_id)).await;
-        
+
         tracing::debug!("Task {} added to queue", task_id);
         task_id
     }
@@ -122,27 +122,30 @@ impl TaskQueue {
         if *self.paused.read().await {
             return None;
         }
-        
+
         // 尝试获取信号量
         let permit = self.semaphore.clone().try_acquire_owned().ok()?;
-        
+
         let task = {
             let mut pending = self.pending.write().await;
             pending.pop()
         };
-        
+
         if let Some(task) = task {
             // 添加到运行中列表
             {
                 let mut running = self.running.write().await;
                 running.insert(task.task_id, task.clone());
             }
-            
-            let _ = self.event_tx.send(QueueEvent::TaskStarted(task.task_id)).await;
-            
+
+            let _ = self
+                .event_tx
+                .send(QueueEvent::TaskStarted(task.task_id))
+                .await;
+
             // 保持permit，任务完成时释放
             std::mem::forget(permit);
-            
+
             Some(task)
         } else {
             // 没有任务，释放permit
@@ -157,12 +160,12 @@ impl TaskQueue {
             let mut running = self.running.write().await;
             running.remove(&task_id);
         }
-        
+
         // 释放一个permit
         self.semaphore.add_permits(1);
-        
+
         let _ = self.event_tx.send(QueueEvent::TaskCompleted(task_id)).await;
-        
+
         // 检查队列是否为空
         if self.is_empty().await {
             let _ = self.event_tx.send(QueueEvent::QueueEmpty).await;
@@ -175,11 +178,14 @@ impl TaskQueue {
             let mut running = self.running.write().await;
             running.remove(&task_id);
         }
-        
+
         // 释放一个permit
         self.semaphore.add_permits(1);
-        
-        let _ = self.event_tx.send(QueueEvent::TaskFailed(task_id, error)).await;
+
+        let _ = self
+            .event_tx
+            .send(QueueEvent::TaskFailed(task_id, error))
+            .await;
     }
 
     /// 取消任务
@@ -189,7 +195,7 @@ impl TaskQueue {
             let mut pending = self.pending.write().await;
             let tasks: Vec<_> = std::mem::take(&mut *pending).into_vec();
             let mut found = false;
-            
+
             for task in tasks {
                 if task.task_id == task_id {
                     found = true;
@@ -197,13 +203,13 @@ impl TaskQueue {
                     pending.push(task);
                 }
             }
-            
+
             if found {
                 let _ = self.event_tx.send(QueueEvent::TaskCancelled(task_id)).await;
                 return true;
             }
         }
-        
+
         // 检查是否在运行中
         {
             let running = self.running.read().await;
@@ -212,7 +218,7 @@ impl TaskQueue {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -256,12 +262,12 @@ impl TaskQueue {
     /// 调整最大并发数
     pub fn set_max_concurrent(&mut self, max_concurrent: usize) {
         let diff = max_concurrent as isize - self.max_concurrent as isize;
-        
+
         if diff > 0 {
             self.semaphore.add_permits(diff as usize);
         }
         // 注意：减少并发数时，已获取的permits会在任务完成后自然释放
-        
+
         self.max_concurrent = max_concurrent;
     }
 
@@ -269,7 +275,10 @@ impl TaskQueue {
     pub async fn clear(&self) {
         let mut pending = self.pending.write().await;
         while let Some(task) = pending.pop() {
-            let _ = self.event_tx.send(QueueEvent::TaskCancelled(task.task_id)).await;
+            let _ = self
+                .event_tx
+                .send(QueueEvent::TaskCancelled(task.task_id))
+                .await;
         }
     }
 
@@ -288,7 +297,7 @@ impl TaskQueue {
         let mut pending = self.pending.write().await;
         let tasks: Vec<_> = std::mem::take(&mut *pending).into_vec();
         let mut found = false;
-        
+
         for mut task in tasks {
             if task.task_id == task_id {
                 task.priority = priority;
@@ -296,7 +305,7 @@ impl TaskQueue {
             }
             pending.push(task);
         }
-        
+
         found
     }
 }
@@ -328,15 +337,15 @@ mod tests {
     #[tokio::test]
     async fn test_queue_priority() {
         let (queue, _rx) = TaskQueue::new(1);
-        
+
         let low = create_test_task(TaskPriority::Low);
         let high = create_test_task(TaskPriority::High);
         let normal = create_test_task(TaskPriority::Normal);
-        
+
         queue.enqueue(low.clone()).await;
         queue.enqueue(high.clone()).await;
         queue.enqueue(normal.clone()).await;
-        
+
         // 高优先级应该先出队
         let first = queue.dequeue().await.unwrap();
         assert_eq!(first.task_id, high.task_id);

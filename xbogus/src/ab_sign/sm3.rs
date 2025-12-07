@@ -41,11 +41,11 @@ impl SM3 {
             self.chunk.extend_from_slice(data);
         } else {
             self.chunk.extend_from_slice(&data[..f]);
-            
+
             while self.chunk.len() >= 64 {
                 let chunk_to_process = self.chunk[..64].to_vec();
                 self.compress(&chunk_to_process);
-                
+
                 if f < data.len() {
                     let end = (f + 64).min(data.len());
                     self.chunk = data[f..end].to_vec();
@@ -59,33 +59,34 @@ impl SM3 {
 
     fn fill(&mut self) {
         let bit_length = (self.size * 8) as u64;
-        
+
         // 添加填充位
         let mut padding_pos = self.chunk.len();
         self.chunk.push(0x80);
         padding_pos = (padding_pos + 1) % 64;
-        
+
         // 如果剩余空间不足8字节，则填充到下一个块
         let mut padding_pos_signed = padding_pos as i32;
         if 64 - padding_pos < 8 {
             padding_pos_signed -= 64;
         }
-        
+
         // 填充0直到剩余8字节用于存储长度
         while padding_pos_signed < 56 {
             self.chunk.push(0);
             padding_pos_signed += 1;
         }
-        
+
         // 添加消息长度（高32位）
         let high_bits = (bit_length >> 32) as u32;
         for i in 0..4 {
             self.chunk.push(((high_bits >> (8 * (3 - i))) & 0xFF) as u8);
         }
-        
+
         // 添加消息长度（低32位）
         for i in 0..4 {
-            self.chunk.push(((bit_length >> (8 * (3 - i))) & 0xFF) as u8);
+            self.chunk
+                .push(((bit_length >> (8 * (3 - i))) & 0xFF) as u8);
         }
     }
 
@@ -130,10 +131,11 @@ impl SM3 {
         let mut h = self.reg[7];
 
         for j in 0..64 {
-            let ss1 = (a.rotate_left(12)
+            let ss1 = (a
+                .rotate_left(12)
                 .wrapping_add(e)
                 .wrapping_add(get_t_j(j).rotate_left(j as u32)))
-                .rotate_left(7);
+            .rotate_left(7);
             let ss2 = ss1 ^ a.rotate_left(12);
             let tt1 = ff_j(j, a, b, c)
                 .wrapping_add(d)
@@ -229,13 +231,12 @@ mod tests {
         let mut sm3 = SM3::new();
         let data = b"abc";
         let result = sm3.sum(Some(data));
-        
+
         // SM3("abc") 的标准结果
         let expected: [u8; 32] = [
-            0x66, 0xc7, 0xf0, 0xf4, 0x62, 0xee, 0xed, 0xd9,
-            0xd1, 0xf2, 0xd4, 0x6b, 0xdc, 0x10, 0xe4, 0xe2,
-            0x41, 0x67, 0xc4, 0x87, 0x5c, 0xf2, 0xf7, 0xa2,
-            0x29, 0x7d, 0xa0, 0x2b, 0x8f, 0x4b, 0xa8, 0xe0,
+            0x66, 0xc7, 0xf0, 0xf4, 0x62, 0xee, 0xed, 0xd9, 0xd1, 0xf2, 0xd4, 0x6b, 0xdc, 0x10,
+            0xe4, 0xe2, 0x41, 0x67, 0xc4, 0x87, 0x5c, 0xf2, 0xf7, 0xa2, 0x29, 0x7d, 0xa0, 0x2b,
+            0x8f, 0x4b, 0xa8, 0xe0,
         ];
         assert_eq!(result, expected);
     }

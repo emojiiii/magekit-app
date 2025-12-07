@@ -114,9 +114,7 @@ pub enum DownloadError {
 impl ToolManagerError {
     /// 创建工具未找到错误
     pub fn tool_not_found<S: Into<String>>(tool: S) -> Self {
-        Self::ToolNotFound {
-            tool: tool.into(),
-        }
+        Self::ToolNotFound { tool: tool.into() }
     }
 
     /// 创建安装失败错误
@@ -157,7 +155,10 @@ impl ToolManagerError {
     }
 
     /// 创建文件操作失败错误
-    pub fn file_operation_failed<S: Into<String>, R: Into<String>>(operation: S, reason: R) -> Self {
+    pub fn file_operation_failed<S: Into<String>, R: Into<String>>(
+        operation: S,
+        reason: R,
+    ) -> Self {
         Self::FileOperationFailed {
             operation: operation.into(),
             reason: reason.into(),
@@ -173,7 +174,10 @@ impl ToolManagerError {
 
     /// 创建磁盘空间不足错误
     pub fn insufficient_disk_space(required: u64, available: u64) -> Self {
-        Self::InsufficientDiskSpace { required, available }
+        Self::InsufficientDiskSpace {
+            required,
+            available,
+        }
     }
 
     /// 创建不支持平台错误
@@ -241,7 +245,10 @@ impl DownloadError {
     }
 
     /// 创建文件操作失败错误
-    pub fn file_operation_failed<S: Into<String>, R: Into<String>>(operation: S, reason: R) -> Self {
+    pub fn file_operation_failed<S: Into<String>, R: Into<String>>(
+        operation: S,
+        reason: R,
+    ) -> Self {
         Self::FileOperationFailed {
             operation: operation.into(),
             reason: reason.into(),
@@ -250,7 +257,10 @@ impl DownloadError {
 
     /// 创建磁盘空间不足错误
     pub fn insufficient_disk_space(required: u64, available: u64) -> Self {
-        Self::InsufficientDiskSpace { required, available }
+        Self::InsufficientDiskSpace {
+            required,
+            available,
+        }
     }
 
     /// 创建任务未找到错误

@@ -1,7 +1,7 @@
 //! 视频列表项组件
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::checkbox::Checkbox;
 use magekit_shared::ChannelVideoEntry;
 
@@ -12,7 +12,7 @@ fn format_duration(seconds: Option<u64>) -> String {
             let hours = secs / 3600;
             let minutes = (secs % 3600) / 60;
             let seconds = secs % 60;
-            
+
             if hours > 0 {
                 format!("{}:{:02}:{:02}", hours, minutes, seconds)
             } else {
@@ -38,8 +38,11 @@ impl VideoItem {
             on_toggle: None,
         }
     }
-    
-    pub fn on_toggle(mut self, callback: impl Fn(usize, bool, &mut Window, &mut App) + 'static) -> Self {
+
+    pub fn on_toggle(
+        mut self,
+        callback: impl Fn(usize, bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle = Some(Box::new(callback));
         self
     }
@@ -47,12 +50,12 @@ impl VideoItem {
 
 impl IntoElement for VideoItem {
     type Element = Stateful<Div>;
-    
+
     fn into_element(self) -> Self::Element {
         let entry = self.entry;
         let index = self.index;
         let is_selected = entry.selected;
-        
+
         div()
             .id(SharedString::from(format!("video-item-{}", index)))
             .w_full()
@@ -77,7 +80,7 @@ impl IntoElement for VideoItem {
                     // 复选框
                     .child(
                         Checkbox::new(SharedString::from(format!("cb-{}", index)))
-                            .checked(is_selected)
+                            .checked(is_selected),
                     )
                     // 序号
                     .child(
@@ -85,7 +88,7 @@ impl IntoElement for VideoItem {
                             .w(px(32.0))
                             .text_sm()
                             .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.5))
-                            .child(format!("#{}", index + 1))
+                            .child(format!("#{}", index + 1)),
                     )
                     // 缩略图占位
                     .child(
@@ -99,7 +102,7 @@ impl IntoElement for VideoItem {
                             .justify_center()
                             .text_xs()
                             .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.4))
-                            .child("缩略图")
+                            .child("缩略图"),
                     )
                     // 视频信息
                     .child(
@@ -115,16 +118,16 @@ impl IntoElement for VideoItem {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .truncate()
-                                    .child(entry.title.clone())
+                                    .child(entry.title.clone()),
                             )
                             // 时长
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.6))
-                                    .child(format_duration(entry.duration))
-                            )
-                    )
+                                    .child(format_duration(entry.duration)),
+                            ),
+                    ),
             )
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! 提供视频质量选择功能
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::ActiveTheme;
 use std::sync::Arc;
 
@@ -27,9 +27,15 @@ impl QualityOption {
             Self::AudioOnly => "仅音频",
         }
     }
-    
+
     pub fn all() -> Vec<Self> {
-        vec![Self::Best, Self::P1080, Self::P720, Self::P480, Self::AudioOnly]
+        vec![
+            Self::Best,
+            Self::P1080,
+            Self::P720,
+            Self::P480,
+            Self::AudioOnly,
+        ]
     }
 }
 
@@ -48,7 +54,10 @@ impl QualitySelector {
         }
     }
 
-    pub fn on_select(mut self, handler: impl Fn(&QualityOption, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_select(
+        mut self,
+        handler: impl Fn(&QualityOption, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_select = Some(Arc::new(handler));
         self
     }
@@ -82,42 +91,36 @@ impl RenderOnce for QualitySelector {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(title_color)
-                    .child("🎬 视频质量")
+                    .child("🎬 视频质量"),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .children(
-                        QualityOption::all().into_iter().map({
-                            let on_select = on_select.clone();
-                            move |quality| {
-                                let is_selected = selected == quality;
-                                let bg_color = if is_selected { primary_color } else { muted_bg };
-                                let text_color = if is_selected { primary_fg } else { muted_color };
-                                let btn_id: SharedString = format!("quality-{:?}", quality).into();
-                                let on_select = on_select.clone();
+            .child(div().flex().flex_wrap().gap(px(8.0)).children(
+                QualityOption::all().into_iter().map({
+                    let on_select = on_select.clone();
+                    move |quality| {
+                        let is_selected = selected == quality;
+                        let bg_color = if is_selected { primary_color } else { muted_bg };
+                        let text_color = if is_selected { primary_fg } else { muted_color };
+                        let btn_id: SharedString = format!("quality-{:?}", quality).into();
+                        let on_select = on_select.clone();
 
-                                div()
-                                    .id(btn_id)
-                                    .px(px(12.0))
-                                    .py(px(6.0))
-                                    .bg(bg_color)
-                                    .rounded(px(6.0))
-                                    .cursor_pointer()
-                                    .text_sm()
-                                    .text_color(text_color)
-                                    .hover(|this| this.opacity(0.8))
-                                    .child(quality.label())
-                                    .when_some(on_select, |el, handler| {
-                                        el.on_click(move |_ev, window, cx| {
-                                            handler(&quality, window, cx);
-                                        })
-                                    })
-                            }
-                        })
-                    )
-            )
+                        div()
+                            .id(btn_id)
+                            .px(px(12.0))
+                            .py(px(6.0))
+                            .bg(bg_color)
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(text_color)
+                            .hover(|this| this.opacity(0.8))
+                            .child(quality.label())
+                            .when_some(on_select, |el, handler| {
+                                el.on_click(move |_ev, window, cx| {
+                                    handler(&quality, window, cx);
+                                })
+                            })
+                    }
+                }),
+            ))
     }
 }

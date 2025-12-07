@@ -6,12 +6,18 @@ pub fn parse_size_string(s: &str) -> u64 {
     if s.is_empty() || s == "N/A" || s == "~" || s == "Unknown" {
         return 0;
     }
-    
+
     // 移除可能的单位后缀
     let (num_part, multiplier) = if s.ends_with("GiB") || s.ends_with("GB") {
-        (s.trim_end_matches("GiB").trim_end_matches("GB"), 1024 * 1024 * 1024)
+        (
+            s.trim_end_matches("GiB").trim_end_matches("GB"),
+            1024 * 1024 * 1024,
+        )
     } else if s.ends_with("MiB") || s.ends_with("MB") {
-        (s.trim_end_matches("MiB").trim_end_matches("MB"), 1024 * 1024)
+        (
+            s.trim_end_matches("MiB").trim_end_matches("MB"),
+            1024 * 1024,
+        )
     } else if s.ends_with("KiB") || s.ends_with("KB") {
         (s.trim_end_matches("KiB").trim_end_matches("KB"), 1024)
     } else if s.ends_with("B") {
@@ -22,7 +28,7 @@ pub fn parse_size_string(s: &str) -> u64 {
     } else {
         (s, 1)
     };
-    
+
     num_part.trim().parse::<f64>().unwrap_or(0.0) as u64 * multiplier
 }
 
@@ -72,15 +78,14 @@ pub fn get_unique_file_path(base_path: &std::path::Path) -> std::path::PathBuf {
     if !base_path.exists() {
         return base_path.to_path_buf();
     }
-    
+
     let parent = base_path.parent().unwrap_or(std::path::Path::new("."));
-    let stem = base_path.file_stem()
+    let stem = base_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("file");
-    let extension = base_path.extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    
+    let extension = base_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+
     let mut index = 1;
     loop {
         let new_name = if extension.is_empty() {

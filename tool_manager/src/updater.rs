@@ -1,11 +1,11 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
-use magekit_shared::{get_temp_dir, ToolType, UpdateChannel};
+use futures_util::StreamExt;
+use magekit_shared::{ToolType, UpdateChannel, get_temp_dir};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use futures_util::StreamExt;
 
 /// 下载进度回调类型
 pub type ProgressCallback = Arc<dyn Fn(u64, u64, u64) + Send + Sync>;
@@ -38,7 +38,8 @@ impl ToolUpdater {
         }
 
         tracing::info!("Installing yt-dlp...");
-        self.download_yt_dlp_with_progress(channel, progress_callback).await
+        self.download_yt_dlp_with_progress(channel, progress_callback)
+            .await
     }
 
     /// 检查并下载ffmpeg
@@ -114,10 +115,13 @@ impl ToolUpdater {
         let client = reqwest::Client::builder()
             .user_agent("MageKit/1.0")
             .build()
-            .map_err(|e| ToolManagerError::internal(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                ToolManagerError::internal(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         // 发送请求
-        let response = client.get(&download_url)
+        let response = client
+            .get(&download_url)
             .send()
             .await
             .map_err(ToolManagerError::Network)?;
@@ -125,7 +129,11 @@ impl ToolUpdater {
         if !response.status().is_success() {
             return Err(ToolManagerError::installation_failed(
                 "yt-dlp",
-                format!("HTTP {}: {}", response.status(), response.status().canonical_reason().unwrap_or("Unknown")),
+                format!(
+                    "HTTP {}: {}",
+                    response.status(),
+                    response.status().canonical_reason().unwrap_or("Unknown")
+                ),
             ));
         }
 
@@ -134,9 +142,9 @@ impl ToolUpdater {
         tracing::info!("Total size: {} bytes", total_size);
 
         // 创建临时文件
-        let mut file = tokio::fs::File::create(&temp_file)
-            .await
-            .map_err(|e| ToolManagerError::file_operation_failed("create temp file", e.to_string()))?;
+        let mut file = tokio::fs::File::create(&temp_file).await.map_err(|e| {
+            ToolManagerError::file_operation_failed("create temp file", e.to_string())
+        })?;
 
         // 流式下载并报告进度
         let mut downloaded: u64 = 0;
@@ -146,9 +154,9 @@ impl ToolUpdater {
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(ToolManagerError::Network)?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| ToolManagerError::file_operation_failed("write chunk", e.to_string()))?;
+            file.write_all(&chunk).await.map_err(|e| {
+                ToolManagerError::file_operation_failed("write chunk", e.to_string())
+            })?;
 
             downloaded += chunk.len() as u64;
 
@@ -180,7 +188,8 @@ impl ToolUpdater {
         tracing::info!("Downloaded {} bytes, starting installation...", downloaded);
 
         // 刷新文件
-        file.flush().await
+        file.flush()
+            .await
             .map_err(|e| ToolManagerError::file_operation_failed("flush file", e.to_string()))?;
         drop(file);
 
@@ -190,37 +199,27 @@ impl ToolUpdater {
             use std::os::unix::fs::PermissionsExt;
             let mut perms = fs::metadata(&temp_file)
                 .await
-                .map_err(|e| ToolManagerError::file_operation_failed(
-                    "get file metadata",
-                    e.to_string(),
-                ))?
+                .map_err(|e| {
+                    ToolManagerError::file_operation_failed("get file metadata", e.to_string())
+                })?
                 .permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&temp_file, perms)
-                .await
-                .map_err(|e| ToolManagerError::file_operation_failed(
-                    "set file permissions",
-                    e.to_string(),
-                ))?;
+            fs::set_permissions(&temp_file, perms).await.map_err(|e| {
+                ToolManagerError::file_operation_failed("set file permissions", e.to_string())
+            })?;
         }
 
         // 移动到最终位置
         let final_path = self.storage.get_tool_path(ToolType::YtDlp);
         if let Some(parent) = final_path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ToolManagerError::file_operation_failed(
-                    "create tools directory",
-                    e.to_string(),
-                ))?;
+            fs::create_dir_all(parent).await.map_err(|e| {
+                ToolManagerError::file_operation_failed("create tools directory", e.to_string())
+            })?;
         }
 
-        fs::rename(&temp_file, &final_path)
-            .await
-            .map_err(|e| ToolManagerError::file_operation_failed(
-                "move yt-dlp to final location",
-                e.to_string(),
-            ))?;
+        fs::rename(&temp_file, &final_path).await.map_err(|e| {
+            ToolManagerError::file_operation_failed("move yt-dlp to final location", e.to_string())
+        })?;
 
         tracing::info!("yt-dlp installed successfully at: {:?}", final_path);
         Ok(())
@@ -253,7 +252,9 @@ impl ToolUpdater {
     async fn download_ffmpeg_windows(&self) -> ToolManagerResult<()> {
         // Windows版本的ffmpeg下载实现
         // 这里可以下载预编译的Windows二进制或使用winget/chocolatey
-        tracing::info!("Please install ffmpeg manually on Windows or use winget: winget install Gyan.FFmpeg");
+        tracing::info!(
+            "Please install ffmpeg manually on Windows or use winget: winget install Gyan.FFmpeg"
+        );
         Ok(())
     }
 
@@ -308,7 +309,7 @@ impl ToolUpdater {
         // macOS: yt-dlp_macos (通用二进制，支持 Intel 和 Apple Silicon)
         // Linux: yt-dlp
         // Windows: yt-dlp.exe
-        
+
         #[cfg(target_os = "macos")]
         {
             "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos".to_string()
@@ -343,13 +344,18 @@ impl ToolUpdater {
             }
             UpdateChannel::Custom(_) => {
                 // 自定义版本暂时不支持
-                Err(ToolManagerError::config("Custom update channel not yet supported".to_string()))
+                Err(ToolManagerError::config(
+                    "Custom update channel not yet supported".to_string(),
+                ))
             }
         }
     }
 
     /// 获取yt-dlp最新版本信息
-    async fn get_latest_yt_dlp_version(&self, _channel: UpdateChannel) -> ToolManagerResult<Option<String>> {
+    async fn get_latest_yt_dlp_version(
+        &self,
+        _channel: UpdateChannel,
+    ) -> ToolManagerResult<Option<String>> {
         // 简化实现，返回固定版本
         Ok(Some("2023.07.06".to_string()))
     }
@@ -358,10 +364,7 @@ impl ToolUpdater {
     async fn get_yt_dlp_release_url(&self, api_url: &str) -> ToolManagerResult<String> {
         let response = reqwest::get(api_url)
             .await
-            .map_err(|e| ToolManagerError::process_failed(
-                "GitHub API request",
-                e.to_string(),
-            ))?;
+            .map_err(|e| ToolManagerError::process_failed("GitHub API request", e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(ToolManagerError::internal(format!(
@@ -370,7 +373,8 @@ impl ToolUpdater {
             )));
         }
 
-        let release_info: GitHubRelease = response.json()
+        let release_info: GitHubRelease = response
+            .json()
             .await
             .map_err(|e| ToolManagerError::internal(format!("Failed to parse JSON: {}", e)))?;
 

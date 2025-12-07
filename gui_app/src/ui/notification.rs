@@ -1,10 +1,10 @@
 // gui_app/src/ui/notification.rs
 //! 通知系统组件 - Toast通知、进度指示器、错误处理UI
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -253,7 +253,7 @@ impl Render for NotificationContainer {
         let success = theme.success;
         let warning = theme.warning;
         let danger = theme.danger;
-        
+
         // 清理过期通知
         self.cleanup_expired();
 
@@ -267,19 +267,32 @@ impl Render for NotificationContainer {
             .flex_col()
             .items_center()
             .child(
-                v_flex()
-                    .w(px(400.0))
-                    .gap_2()
-                    .children(self.notifications.iter().rev().take(self.max_visible).map(|notification| {
-                        render_notification_toast_inline(notification, bg, fg, muted, border, primary, success, warning, danger)
-                    }))
+                v_flex().w(px(400.0)).gap_2().children(
+                    self.notifications
+                        .iter()
+                        .rev()
+                        .take(self.max_visible)
+                        .map(|notification| {
+                            render_notification_toast_inline(
+                                notification,
+                                bg,
+                                fg,
+                                muted,
+                                border,
+                                primary,
+                                success,
+                                warning,
+                                danger,
+                            )
+                        }),
+                ),
             )
     }
 }
 
 /// 渲染单个通知 Toast（内联版本，不需要 cx）
 fn render_notification_toast_inline(
-    notification: &Notification, 
+    notification: &Notification,
     bg: Hsla,
     fg: Hsla,
     muted: Hsla,
@@ -318,11 +331,7 @@ fn render_notification_toast_inline(
                 .gap_2()
                 .items_start()
                 // 图标
-                .child(
-                    div()
-                        .text_base()
-                        .child(icon)
-                )
+                .child(div().text_base().child(icon))
                 // 内容
                 .child(
                     v_flex()
@@ -333,16 +342,11 @@ fn render_notification_toast_inline(
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(fg)
-                                .child(title)
+                                .child(title),
                         )
                         .when(message.is_some(), |this| {
-                            this.child(
-                                div()
-                                    .text_sm()
-                                    .text_color(muted)
-                                    .child(message.unwrap())
-                            )
-                        })
+                            this.child(div().text_sm().text_color(muted).child(message.unwrap()))
+                        }),
                 )
                 // 关闭按钮
                 .when(dismissible, |this| {
@@ -350,22 +354,28 @@ fn render_notification_toast_inline(
                         Button::new(SharedString::from(format!("dismiss-{}", id)))
                             .ghost()
                             .xsmall()
-                            .icon(IconName::Close)
+                            .icon(IconName::Close),
                     )
-                })
+                }),
         )
         // 进度条（如果是进度类型）
-        .when(matches!(notification.notification_type, NotificationType::Progress(_)), |this| {
-            if let NotificationType::Progress(progress) = notification.notification_type {
-                this.child(
-                    div()
-                        .mt_2()
-                        .child(render_progress_bar(progress, type_color, border))
-                )
-            } else {
-                this
-            }
-        })
+        .when(
+            matches!(
+                notification.notification_type,
+                NotificationType::Progress(_)
+            ),
+            |this| {
+                if let NotificationType::Progress(progress) = notification.notification_type {
+                    this.child(
+                        div()
+                            .mt_2()
+                            .child(render_progress_bar(progress, type_color, border)),
+                    )
+                } else {
+                    this
+                }
+            },
+        )
         // 操作按钮
         .when(!actions.is_empty(), |this| {
             this.child(
@@ -374,12 +384,15 @@ fn render_notification_toast_inline(
                     .gap_2()
                     .justify_end()
                     .children(actions.iter().map(|action| {
-                        Button::new(SharedString::from(format!("action-{}-{}", id, action.action_id)))
-                            .ghost()
-                            .small()
-                            .label(SharedString::from(action.label.clone()))
-                            .into_any_element()
-                    }))
+                        Button::new(SharedString::from(format!(
+                            "action-{}-{}",
+                            id, action.action_id
+                        )))
+                        .ghost()
+                        .small()
+                        .label(SharedString::from(action.label.clone()))
+                        .into_any_element()
+                    })),
             )
         })
 }
@@ -394,18 +407,13 @@ fn render_progress_bar(progress: f32, color: Hsla, border: Hsla) -> impl IntoEle
         .items_center()
         // 进度条
         .child(
-            div()
-                .flex_1()
-                .h(px(4.0))
-                .rounded_full()
-                .bg(border)
-                .child(
-                    div()
-                        .h_full()
-                        .rounded_full()
-                        .bg(color)
-                        .w(relative(progress_clamped))
-                )
+            div().flex_1().h(px(4.0)).rounded_full().bg(border).child(
+                div()
+                    .h_full()
+                    .rounded_full()
+                    .bg(color)
+                    .w(relative(progress_clamped)),
+            ),
         )
         // 百分比
         .child(
@@ -413,7 +421,7 @@ fn render_progress_bar(progress: f32, color: Hsla, border: Hsla) -> impl IntoEle
                 .text_xs()
                 .w(px(36.0))
                 .text_right()
-                .child(format!("{}%", percentage))
+                .child(format!("{}%", percentage)),
         )
 }
 
@@ -504,11 +512,7 @@ impl Render for ProgressOverlay {
                     .gap_4()
                     .items_center()
                     // 加载动画
-                    .child(
-                        div()
-                            .text_2xl()
-                            .child("⏳")
-                    )
+                    .child(div().text_2xl().child("⏳"))
                     // 标题
                     .child(
                         div()
@@ -516,7 +520,7 @@ impl Render for ProgressOverlay {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg)
                             .text_center()
-                            .child(title)
+                            .child(title),
                     )
                     // 消息
                     .when(message.is_some(), |this| {
@@ -525,25 +529,21 @@ impl Render for ProgressOverlay {
                                 .text_sm()
                                 .text_color(muted)
                                 .text_center()
-                                .child(message.unwrap())
+                                .child(message.unwrap()),
                         )
                     })
                     // 进度条
                     .when(progress.is_some(), |this| {
-                        this.child(
-                            div()
-                                .w_full()
-                                .child(render_progress_bar(progress.unwrap(), primary, border))
-                        )
+                        this.child(div().w_full().child(render_progress_bar(
+                            progress.unwrap(),
+                            primary,
+                            border,
+                        )))
                     })
                     // 取消按钮
                     .when(cancellable, |this| {
-                        this.child(
-                            Button::new("cancel-progress")
-                                .ghost()
-                                .label("取消")
-                        )
-                    })
+                        this.child(Button::new("cancel-progress").ghost().label("取消"))
+                    }),
             )
             .into_any_element()
     }
@@ -655,12 +655,11 @@ impl Render for ConfirmDialog {
                     .shadow_xl()
                     .gap_4()
                     // 图标
-                    .child(
-                        div()
-                            .text_2xl()
-                            .text_center()
-                            .child(if is_danger { "⚠️" } else { "❓" })
-                    )
+                    .child(div().text_2xl().text_center().child(if is_danger {
+                        "⚠️"
+                    } else {
+                        "❓"
+                    }))
                     // 标题
                     .child(
                         div()
@@ -668,7 +667,7 @@ impl Render for ConfirmDialog {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg)
                             .text_center()
-                            .child(title)
+                            .child(title),
                     )
                     // 消息
                     .child(
@@ -676,7 +675,7 @@ impl Render for ConfirmDialog {
                             .text_sm()
                             .text_color(muted)
                             .text_center()
-                            .child(message)
+                            .child(message),
                     )
                     // 按钮
                     .child(
@@ -687,15 +686,15 @@ impl Render for ConfirmDialog {
                             .child(
                                 Button::new("dialog-cancel")
                                     .outline()
-                                    .label(SharedString::from(cancel_label))
+                                    .label(SharedString::from(cancel_label)),
                             )
                             .child(
                                 Button::new("dialog-confirm")
                                     .when(is_danger, |btn| btn.danger())
                                     .when(!is_danger, |btn| btn.primary())
-                                    .label(SharedString::from(confirm_label))
-                            )
-                    )
+                                    .label(SharedString::from(confirm_label)),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -778,23 +777,18 @@ impl Render for ErrorPanel {
                     .child(
                         Icon::new(IconName::TriangleAlert)
                             .size(px(20.0))
-                            .text_color(danger)
+                            .text_color(danger),
                     )
                     .child(
                         div()
                             .text_base()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(danger)
-                            .child(title)
-                    )
+                            .child(title),
+                    ),
             )
             // 消息
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(fg)
-                    .child(message)
-            )
+            .child(div().text_sm().text_color(fg).child(message))
             // 详细信息
             .when(details.is_some(), |this| {
                 this.child(
@@ -811,8 +805,8 @@ impl Render for ErrorPanel {
                                 .text_xs()
                                 .font_family("monospace")
                                 .text_color(muted)
-                                .child(details.unwrap())
-                        )
+                                .child(details.unwrap()),
+                        ),
                 )
             })
             // 操作按钮
@@ -821,19 +815,9 @@ impl Render for ErrorPanel {
                     .gap_2()
                     .justify_end()
                     .when(has_retry, |this| {
-                        this.child(
-                            Button::new("error-retry")
-                                .outline()
-                                .small()
-                                .label("重试")
-                        )
+                        this.child(Button::new("error-retry").outline().small().label("重试"))
                     })
-                    .child(
-                        Button::new("error-close")
-                            .ghost()
-                            .small()
-                            .label("关闭")
-                    )
+                    .child(Button::new("error-close").ghost().small().label("关闭")),
             )
             .into_any_element()
     }

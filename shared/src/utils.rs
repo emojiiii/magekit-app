@@ -12,7 +12,7 @@ use crate::constants::*;
 pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
+
     let mut cmd = Command::new(program);
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
@@ -28,7 +28,7 @@ pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
 #[cfg(windows)]
 pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
+
     let mut cmd = tokio::process::Command::new(program);
     // tokio::process::Command 在 Windows 上继承了 std::process::Command 的 creation_flags 方法
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -92,9 +92,9 @@ pub fn validate_url(url_str: &str) -> Result<Url> {
 
     // 检查域名
     if let Some(host) = url.host_str() {
-        let is_supported = SUPPORTED_DOMAINS.iter().any(|domain| {
-            host == *domain || host.ends_with(&format!(".{}", domain))
-        });
+        let is_supported = SUPPORTED_DOMAINS
+            .iter()
+            .any(|domain| host == *domain || host.ends_with(&format!(".{}", domain)));
 
         if !is_supported {
             // 不直接拒绝，只是给出警告
@@ -111,8 +111,7 @@ pub fn get_app_config_dir() -> Result<PathBuf> {
         .context("Failed to get config directory")?
         .join(APP_NAME);
 
-    std::fs::create_dir_all(&config_dir)
-        .context("Failed to create config directory")?;
+    std::fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
     Ok(config_dir)
 }
@@ -123,8 +122,7 @@ pub fn get_app_data_dir() -> Result<PathBuf> {
         .context("Failed to get data directory")?
         .join(APP_NAME);
 
-    std::fs::create_dir_all(&data_dir)
-        .context("Failed to create data directory")?;
+    std::fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
 
     Ok(data_dir)
 }
@@ -134,8 +132,7 @@ pub fn get_tools_dir() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     let tools_dir = data_dir.join(paths::TOOLS_DIR_NAME);
 
-    std::fs::create_dir_all(&tools_dir)
-        .context("Failed to create tools directory")?;
+    std::fs::create_dir_all(&tools_dir).context("Failed to create tools directory")?;
 
     Ok(tools_dir)
 }
@@ -144,8 +141,7 @@ pub fn get_tools_dir() -> Result<PathBuf> {
 pub fn get_temp_dir() -> Result<PathBuf> {
     let temp_dir = std::env::temp_dir().join(APP_NAME);
 
-    std::fs::create_dir_all(&temp_dir)
-        .context("Failed to create temp directory")?;
+    std::fs::create_dir_all(&temp_dir).context("Failed to create temp directory")?;
 
     Ok(temp_dir)
 }
@@ -155,8 +151,7 @@ pub fn get_log_dir() -> Result<PathBuf> {
     let data_dir = get_app_data_dir()?;
     let log_dir = data_dir.join(paths::LOG_DIR_NAME);
 
-    std::fs::create_dir_all(&log_dir)
-        .context("Failed to create log directory")?;
+    std::fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
 
     Ok(log_dir)
 }
@@ -197,18 +192,18 @@ pub fn current_timestamp() -> u64 {
 }
 
 /// 生成唯一的输出文件路径
-pub fn generate_output_path(
-    base_dir: &Path,
-    title: &str,
-    extension: &str,
-) -> Result<PathBuf> {
+pub fn generate_output_path(base_dir: &Path, title: &str, extension: &str) -> Result<PathBuf> {
     let safe_title = sanitize_filename(title);
     let mut path = base_dir.join(format!("{}.{}", safe_title, extension));
 
     // 如果文件已存在，添加数字后缀
     let mut counter = 1;
     while path.exists() {
-        let stem = path.file_stem().unwrap_or_default().to_str().unwrap_or("untitled");
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or("untitled");
         path = base_dir.join(format!("{}_{}.{}", stem, counter, extension));
         counter += 1;
     }
@@ -220,10 +215,14 @@ pub fn generate_output_path(
 pub fn parse_file_size(size_str: &str) -> Result<u64> {
     let size_str = size_str.trim().to_uppercase();
     let (num_str, unit) = size_str.split_at(
-        size_str.find(|c: char| !c.is_ascii_digit() && c != ' ').unwrap_or(size_str.len())
+        size_str
+            .find(|c: char| !c.is_ascii_digit() && c != ' ')
+            .unwrap_or(size_str.len()),
     );
 
-    let num: f64 = num_str.trim().parse()
+    let num: f64 = num_str
+        .trim()
+        .parse()
         .context("Invalid number in file size")?;
 
     let multiplier = match unit.trim() {
@@ -242,7 +241,9 @@ pub fn parse_file_size(size_str: &str) -> Result<u64> {
 pub fn is_path_writable(path: &Path) -> bool {
     if path.exists() {
         // 如果路径存在，检查是否可写
-        path.metadata().map(|m| !m.permissions().readonly()).unwrap_or(false)
+        path.metadata()
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(false)
     } else {
         // 如果路径不存在，检查父目录是否可写
         path.parent().map(is_path_writable).unwrap_or(false)
@@ -253,8 +254,7 @@ pub fn is_path_writable(path: &Path) -> bool {
 pub fn get_available_space(path: &Path) -> Result<u64> {
     // 简化实现，返回一个合理的默认值
     // 在实际项目中，可以使用更复杂的平台特定实现
-    std::fs::metadata(path)
-        .context("Failed to get path metadata")?;
+    std::fs::metadata(path).context("Failed to get path metadata")?;
 
     // 返回1GB的默认可用空间作为占位符
     Ok(1024 * 1024 * 1024)
@@ -269,13 +269,12 @@ pub fn get_config_file_path() -> Result<PathBuf> {
 /// 保存应用配置到文件
 pub fn save_app_config(config: &crate::types::AppConfig) -> Result<()> {
     let config_path = get_config_file_path()?;
-    
-    let toml_string = toml::to_string_pretty(config)
-        .context("Failed to serialize config to TOML")?;
-    
-    std::fs::write(&config_path, toml_string)
-        .context("Failed to write config file")?;
-    
+
+    let toml_string =
+        toml::to_string_pretty(config).context("Failed to serialize config to TOML")?;
+
+    std::fs::write(&config_path, toml_string).context("Failed to write config file")?;
+
     tracing::info!("Configuration saved to: {:?}", config_path);
     Ok(())
 }
@@ -283,18 +282,17 @@ pub fn save_app_config(config: &crate::types::AppConfig) -> Result<()> {
 /// 从文件加载应用配置
 pub fn load_app_config() -> Result<crate::types::AppConfig> {
     let config_path = get_config_file_path()?;
-    
+
     if !config_path.exists() {
         tracing::info!("Config file not found, using defaults: {:?}", config_path);
         return Ok(crate::types::AppConfig::default());
     }
-    
-    let content = std::fs::read_to_string(&config_path)
-        .context("Failed to read config file")?;
-    
-    let config: crate::types::AppConfig = toml::from_str(&content)
-        .context("Failed to parse config file")?;
-    
+
+    let content = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
+
+    let config: crate::types::AppConfig =
+        toml::from_str(&content).context("Failed to parse config file")?;
+
     tracing::info!("Configuration loaded from: {:?}", config_path);
     Ok(config)
 }
@@ -308,7 +306,7 @@ pub fn load_app_config_or_default() -> crate::types::AppConfig {
             return crate::types::AppConfig::default();
         }
     };
-    
+
     if config_path.exists() {
         // 配置文件存在，尝试加载
         match load_app_config() {
@@ -359,7 +357,10 @@ mod tests {
     fn test_parse_file_size() {
         assert_eq!(parse_file_size("1024").unwrap(), 1024);
         assert_eq!(parse_file_size("1KB").unwrap(), 1024);
-        assert_eq!(parse_file_size("1.5MB").unwrap(), 1.5 * 1024.0 * 1024.0 as u64);
+        assert_eq!(
+            parse_file_size("1.5MB").unwrap(),
+            1.5 * 1024.0 * 1024.0 as u64
+        );
         assert!(parse_file_size("invalid").is_err());
     }
 }

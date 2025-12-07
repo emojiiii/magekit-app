@@ -1,10 +1,10 @@
 //! 工具卡片组件
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::ActiveTheme;
-use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::Disableable;
+use gpui_component::button::{Button, ButtonVariants};
 use magekit_shared::ToolType;
 
 /// 下载进度信息
@@ -67,7 +67,10 @@ pub enum ToolInstallState {
     Unknown,
     NotInstalled,
     /// 已安装 (version: 版本号, is_system: 是否是系统安装)
-    Installed { version: Option<String>, is_system: bool },
+    Installed {
+        version: Option<String>,
+        is_system: bool,
+    },
     /// 下载中 (带进度信息)
     Downloading(DownloadProgress),
     /// 安装中 (下载完成，正在安装)
@@ -136,7 +139,7 @@ where
             on_action: None,
         }
     }
-    
+
     pub fn on_action(mut self, handler: F) -> Self {
         self.on_action = Some(handler);
         self
@@ -150,7 +153,10 @@ where
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tool = self.tool;
         let tool_type = tool.tool_type;
-        let is_installing = matches!(tool.state, ToolInstallState::Installing | ToolInstallState::Downloading(_));
+        let is_installing = matches!(
+            tool.state,
+            ToolInstallState::Installing | ToolInstallState::Downloading(_)
+        );
         let tool_name: SharedString = tool.name.into();
         let tool_desc: SharedString = tool.description.into();
         let tool_icon = tool.icon;
@@ -225,7 +231,7 @@ where
                                     .bg(icon_bg)
                                     .rounded(px(12.0))
                                     .text_2xl()
-                                    .child(tool_icon)
+                                    .child(tool_icon),
                             )
                             .child(
                                 // 名称和描述
@@ -243,7 +249,7 @@ where
                                                     .text_base()
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(title_color)
-                                                    .child(tool_name)
+                                                    .child(tool_name),
                                             )
                                             .child(
                                                 // 状态标签
@@ -254,16 +260,13 @@ where
                                                     .rounded(px(4.0))
                                                     .text_xs()
                                                     .text_color(status_color)
-                                                    .child(status_text)
-                                            )
+                                                    .child(status_text),
+                                            ),
                                     )
                                     .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(muted_color)
-                                            .child(tool_desc)
-                                    )
-                            )
+                                        div().text_sm().text_color(muted_color).child(tool_desc),
+                                    ),
+                            ),
                     )
                     .child(
                         // 右侧：操作按钮
@@ -275,8 +278,8 @@ where
                                 btn.on_click(move |_ev, window, cx| {
                                     handler(&tool_type, window, cx);
                                 })
-                            })
-                    )
+                            }),
+                    ),
             )
     }
 }
@@ -290,29 +293,25 @@ impl RenderOnce for ToolHintCard {
         let hint_bg = cx.theme().muted;
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;
-        
-        div()
-            .p(px(16.0))
-            .rounded(px(12.0))
-            .bg(hint_bg)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(title_color)
-                            .child("💡 关于工具")
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted_color)
-                            .child("这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。")
-                    )
-            )
+
+        div().p(px(16.0)).rounded(px(12.0)).bg(hint_bg).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(title_color)
+                        .child("💡 关于工具"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(muted_color)
+                        .child("这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。"),
+                ),
+        )
     }
 }

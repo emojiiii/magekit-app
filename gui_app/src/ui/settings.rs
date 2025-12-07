@@ -2,15 +2,17 @@
 //!
 //! 提供应用程序设置的用户界面，包括下载设置、工具设置、主题设置等
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use magekit_shared::types::{AppConfig, DownloadConfig, ToolsConfig, UiConfig, AdvancedConfig, UpdateChannel, LogLevel};
+use gpui_component::*;
 use magekit_shared::types::Theme as AppTheme;
+use magekit_shared::types::{
+    AdvancedConfig, AppConfig, DownloadConfig, LogLevel, ToolsConfig, UiConfig, UpdateChannel,
+};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::path::PathBuf;
 
 /// 设置面板选项卡
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,14 +120,14 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let active_tab = self.active_tab;
-        
+
         // 获取配置快照
         let config_snapshot = if let Ok(config) = self.config.try_read() {
             Some(config.clone())
         } else {
             None
         };
-        
+
         div()
             .flex()
             .flex_col()
@@ -146,13 +148,9 @@ impl Render for SettingsView {
                             .text_xl()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.foreground)
-                            .child("设置")
+                            .child("设置"),
                     )
-                    .child(
-                        Button::new("close-settings")
-                            .ghost()
-                            .icon(IconName::Close)
-                    )
+                    .child(Button::new("close-settings").ghost().icon(IconName::Close)),
             )
             // 主内容区域
             .child(
@@ -173,27 +171,31 @@ impl Render for SettingsView {
                             .child(render_tab_item(SettingsTab::Download, active_tab, &theme))
                             .child(render_tab_item(SettingsTab::Tools, active_tab, &theme))
                             .child(render_tab_item(SettingsTab::Appearance, active_tab, &theme))
-                            .child(render_tab_item(SettingsTab::Advanced, active_tab, &theme))
+                            .child(render_tab_item(SettingsTab::Advanced, active_tab, &theme)),
                     )
                     // 内容区域
-                    .child(
-                        div()
-                            .flex_1()
-                            .p(px(24.0))
-                            .overflow_hidden()
-                            .child(
-                                if let Some(config) = config_snapshot {
-                                    match active_tab {
-                                        SettingsTab::Download => render_download_settings(&config.download, theme).into_any_element(),
-                                        SettingsTab::Tools => render_tools_settings(&config.tools, theme).into_any_element(),
-                                        SettingsTab::Appearance => render_appearance_settings(&config.ui, theme).into_any_element(),
-                                        SettingsTab::Advanced => render_advanced_settings(&config.advanced, theme).into_any_element(),
-                                    }
-                                } else {
-                                    render_loading_state(theme).into_any_element()
+                    .child(div().flex_1().p(px(24.0)).overflow_hidden().child(
+                        if let Some(config) = config_snapshot {
+                            match active_tab {
+                                SettingsTab::Download => {
+                                    render_download_settings(&config.download, theme)
+                                        .into_any_element()
                                 }
-                            )
-                    )
+                                SettingsTab::Tools => {
+                                    render_tools_settings(&config.tools, theme).into_any_element()
+                                }
+                                SettingsTab::Appearance => {
+                                    render_appearance_settings(&config.ui, theme).into_any_element()
+                                }
+                                SettingsTab::Advanced => {
+                                    render_advanced_settings(&config.advanced, theme)
+                                        .into_any_element()
+                                }
+                            }
+                        } else {
+                            render_loading_state(theme).into_any_element()
+                        },
+                    )),
             )
             // 底部按钮栏
             .child(
@@ -206,54 +208,55 @@ impl Render for SettingsView {
                     .gap(px(12.0))
                     .border_t_1()
                     .border_color(theme.border)
-                    .child(
-                        Button::new("reset-settings")
-                            .ghost()
-                            .label("重置默认")
-                    )
-                    .child(
-                        Button::new("save-settings")
-                            .primary()
-                            .label("保存")
-                    )
+                    .child(Button::new("reset-settings").ghost().label("重置默认"))
+                    .child(Button::new("save-settings").primary().label("保存")),
             )
     }
 }
 
 /// 渲染选项卡项
-fn render_tab_item(tab: SettingsTab, active: SettingsTab, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_tab_item(
+    tab: SettingsTab,
+    active: SettingsTab,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     let is_active = tab == active;
     let accent_color = theme.accent;
     let foreground = theme.foreground;
     let muted_foreground = theme.muted_foreground;
-    
+
     div()
         .px(px(12.0))
         .py(px(8.0))
         .rounded(px(6.0))
         .cursor_pointer()
-        .when(is_active, |this| {
-            this.bg(accent_color)
-        })
+        .when(is_active, |this| this.bg(accent_color))
         .flex()
         .items_center()
         .gap(px(8.0))
+        .child(div().text_sm().child(tab.icon().to_string()))
         .child(
             div()
                 .text_sm()
-                .child(tab.icon().to_string())
-        )
-        .child(
-            div()
-                .text_sm()
-                .font_weight(if is_active { FontWeight::MEDIUM } else { FontWeight::NORMAL })
-                .text_color(if is_active { foreground } else { muted_foreground })
-                .child(tab.label().to_string())
+                .font_weight(if is_active {
+                    FontWeight::MEDIUM
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(if is_active {
+                    foreground
+                } else {
+                    muted_foreground
+                })
+                .child(tab.label().to_string()),
         )
 }
 
 /// 渲染下载设置
-fn render_download_settings(config: &DownloadConfig, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_download_settings(
+    config: &DownloadConfig,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -277,13 +280,9 @@ fn render_download_settings(config: &DownloadConfig, theme: &gpui_component::The
                         .text_color(theme.foreground)
                         .text_sm()
                         .overflow_hidden()
-                        .child(config.default_output_path.to_string_lossy().to_string())
+                        .child(config.default_output_path.to_string_lossy().to_string()),
                 )
-                .child(
-                    Button::new("browse-path")
-                        .small()
-                        .icon(IconName::Folder)
-                ),
+                .child(Button::new("browse-path").small().icon(IconName::Folder)),
             theme,
         ))
         // 并发下载数
@@ -298,7 +297,7 @@ fn render_download_settings(config: &DownloadConfig, theme: &gpui_component::The
                     Button::new("dec-concurrent")
                         .ghost()
                         .small()
-                        .icon(IconName::Minus)
+                        .icon(IconName::Minus),
                 )
                 .child(
                     div()
@@ -307,13 +306,13 @@ fn render_download_settings(config: &DownloadConfig, theme: &gpui_component::The
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.foreground)
-                        .child(format!("{}", config.max_concurrent_downloads))
+                        .child(format!("{}", config.max_concurrent_downloads)),
                 )
                 .child(
                     Button::new("inc-concurrent")
                         .ghost()
                         .small()
-                        .icon(IconName::Plus)
+                        .icon(IconName::Plus),
                 ),
             theme,
         ))
@@ -341,8 +340,16 @@ fn render_download_settings(config: &DownloadConfig, theme: &gpui_component::The
                 .flex()
                 .flex_col()
                 .gap(px(8.0))
-                .child(render_checkbox_item("嵌入元数据", config.embed_metadata, theme))
-                .child(render_checkbox_item("嵌入缩略图", config.embed_thumbnail, theme)),
+                .child(render_checkbox_item(
+                    "嵌入元数据",
+                    config.embed_metadata,
+                    theme,
+                ))
+                .child(render_checkbox_item(
+                    "嵌入缩略图",
+                    config.embed_thumbnail,
+                    theme,
+                )),
             theme,
         ))
 }
@@ -367,8 +374,16 @@ fn render_tools_settings(config: &ToolsConfig, theme: &gpui_component::Theme) ->
             div()
                 .flex()
                 .gap(px(8.0))
-                .child(render_radio_item("稳定版", matches!(config.update_channel, UpdateChannel::Stable), theme))
-                .child(render_radio_item("开发版", matches!(config.update_channel, UpdateChannel::Nightly), theme)),
+                .child(render_radio_item(
+                    "稳定版",
+                    matches!(config.update_channel, UpdateChannel::Stable),
+                    theme,
+                ))
+                .child(render_radio_item(
+                    "开发版",
+                    matches!(config.update_channel, UpdateChannel::Nightly),
+                    theme,
+                )),
             theme,
         ))
         // yt-dlp 版本
@@ -380,16 +395,18 @@ fn render_tools_settings(config: &ToolsConfig, theme: &gpui_component::Theme) ->
                 .items_center()
                 .justify_between()
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(config.yt_dlp_version.clone().unwrap_or_else(|| "未安装".to_string()))
+                    div().text_sm().text_color(theme.foreground).child(
+                        config
+                            .yt_dlp_version
+                            .clone()
+                            .unwrap_or_else(|| "未安装".to_string()),
+                    ),
                 )
                 .child(
                     Button::new("update-ytdlp")
                         .ghost()
                         .small()
-                        .label("检查更新")
+                        .label("检查更新"),
                 ),
             theme,
         ))
@@ -402,23 +419,28 @@ fn render_tools_settings(config: &ToolsConfig, theme: &gpui_component::Theme) ->
                 .items_center()
                 .justify_between()
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(config.ffmpeg_version.clone().unwrap_or_else(|| "未安装".to_string()))
+                    div().text_sm().text_color(theme.foreground).child(
+                        config
+                            .ffmpeg_version
+                            .clone()
+                            .unwrap_or_else(|| "未安装".to_string()),
+                    ),
                 )
                 .child(
                     Button::new("update-ffmpeg")
                         .ghost()
                         .small()
-                        .label("检查更新")
+                        .label("检查更新"),
                 ),
             theme,
         ))
 }
 
 /// 渲染外观设置
-fn render_appearance_settings(config: &UiConfig, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_appearance_settings(
+    config: &UiConfig,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -430,9 +452,24 @@ fn render_appearance_settings(config: &UiConfig, theme: &gpui_component::Theme) 
             div()
                 .flex()
                 .gap(px(8.0))
-                .child(render_theme_card("浅色", "☀️", matches!(config.theme, AppTheme::Light), theme))
-                .child(render_theme_card("深色", "🌙", matches!(config.theme, AppTheme::Dark), theme))
-                .child(render_theme_card("跟随系统", "💻", matches!(config.theme, AppTheme::System), theme)),
+                .child(render_theme_card(
+                    "浅色",
+                    "☀️",
+                    matches!(config.theme, AppTheme::Light),
+                    theme,
+                ))
+                .child(render_theme_card(
+                    "深色",
+                    "🌙",
+                    matches!(config.theme, AppTheme::Dark),
+                    theme,
+                ))
+                .child(render_theme_card(
+                    "跟随系统",
+                    "💻",
+                    matches!(config.theme, AppTheme::System),
+                    theme,
+                )),
             theme,
         ))
         // 语言
@@ -459,14 +496,25 @@ fn render_appearance_settings(config: &UiConfig, theme: &gpui_component::Theme) 
                 .flex()
                 .flex_col()
                 .gap(px(8.0))
-                .child(render_checkbox_item("显示下载完成通知", config.show_notifications, theme))
-                .child(render_checkbox_item("最小化到系统托盘", config.minimize_to_tray, theme)),
+                .child(render_checkbox_item(
+                    "显示下载完成通知",
+                    config.show_notifications,
+                    theme,
+                ))
+                .child(render_checkbox_item(
+                    "最小化到系统托盘",
+                    config.minimize_to_tray,
+                    theme,
+                )),
             theme,
         ))
 }
 
 /// 渲染高级设置
-fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_advanced_settings(
+    config: &AdvancedConfig,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -478,10 +526,26 @@ fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::The
             div()
                 .flex()
                 .gap(px(8.0))
-                .child(render_radio_item("错误", matches!(config.log_level, LogLevel::Error), theme))
-                .child(render_radio_item("警告", matches!(config.log_level, LogLevel::Warn), theme))
-                .child(render_radio_item("信息", matches!(config.log_level, LogLevel::Info), theme))
-                .child(render_radio_item("调试", matches!(config.log_level, LogLevel::Debug), theme)),
+                .child(render_radio_item(
+                    "错误",
+                    matches!(config.log_level, LogLevel::Error),
+                    theme,
+                ))
+                .child(render_radio_item(
+                    "警告",
+                    matches!(config.log_level, LogLevel::Warn),
+                    theme,
+                ))
+                .child(render_radio_item(
+                    "信息",
+                    matches!(config.log_level, LogLevel::Info),
+                    theme,
+                ))
+                .child(render_radio_item(
+                    "调试",
+                    matches!(config.log_level, LogLevel::Debug),
+                    theme,
+                )),
             theme,
         ))
         // 速度限制
@@ -504,16 +568,17 @@ fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::The
                         .text_color(theme.foreground)
                         .text_sm()
                         .child(
-                            config.speed_limit
+                            config
+                                .speed_limit
                                 .map(|s| format_speed(s))
-                                .unwrap_or_else(|| "不限制".to_string())
-                        )
+                                .unwrap_or_else(|| "不限制".to_string()),
+                        ),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("MB/s")
+                        .child("MB/s"),
                 ),
             theme,
         ))
@@ -529,7 +594,7 @@ fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::The
                     Button::new("dec-retry")
                         .ghost()
                         .small()
-                        .icon(IconName::Minus)
+                        .icon(IconName::Minus),
                 )
                 .child(
                     div()
@@ -538,13 +603,13 @@ fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::The
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.foreground)
-                        .child(format!("{}", config.retry_times))
+                        .child(format!("{}", config.retry_times)),
                 )
                 .child(
                     Button::new("inc-retry")
                         .ghost()
                         .small()
-                        .icon(IconName::Plus)
+                        .icon(IconName::Plus),
                 ),
             theme,
         ))
@@ -567,13 +632,13 @@ fn render_advanced_settings(config: &AdvancedConfig, theme: &gpui_component::The
                         .bg(theme.background)
                         .text_color(theme.foreground)
                         .text_sm()
-                        .child(format!("{}", config.timeout.as_secs()))
+                        .child(format!("{}", config.timeout.as_secs())),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("秒")
+                        .child("秒"),
                 ),
             theme,
         ))
@@ -600,20 +665,24 @@ fn render_setting_section(
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.foreground)
-                        .child(title.to_string())
+                        .child(title.to_string()),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child(description.to_string())
-                )
+                        .child(description.to_string()),
+                ),
         )
         .child(content)
 }
 
 /// 渲染复选框项
-fn render_checkbox_item(label: &str, checked: bool, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_checkbox_item(
+    label: &str,
+    checked: bool,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -626,7 +695,11 @@ fn render_checkbox_item(label: &str, checked: bool, theme: &gpui_component::Them
                 .border_1()
                 .border_color(if checked { theme.primary } else { theme.border })
                 .rounded(px(4.0))
-                .bg(if checked { theme.primary } else { theme.background })
+                .bg(if checked {
+                    theme.primary
+                } else {
+                    theme.background
+                })
                 .flex()
                 .items_center()
                 .justify_center()
@@ -635,43 +708,68 @@ fn render_checkbox_item(label: &str, checked: bool, theme: &gpui_component::Them
                         div()
                             .text_color(theme.primary_foreground)
                             .text_xs()
-                            .child("✓")
+                            .child("✓"),
                     )
-                })
+                }),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(theme.foreground)
-                .child(label.to_string())
+                .child(label.to_string()),
         )
 }
 
 /// 渲染单选项
-fn render_radio_item(label: &str, selected: bool, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_radio_item(
+    label: &str,
+    selected: bool,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .px(px(12.0))
         .py(px(6.0))
         .border_1()
-        .border_color(if selected { theme.primary } else { theme.border })
+        .border_color(if selected {
+            theme.primary
+        } else {
+            theme.border
+        })
         .rounded(px(6.0))
-        .bg(if selected { theme.accent } else { theme.background })
+        .bg(if selected {
+            theme.accent
+        } else {
+            theme.background
+        })
         .cursor_pointer()
         .child(
             div()
                 .text_sm()
-                .text_color(if selected { theme.foreground } else { theme.muted_foreground })
-                .child(label.to_string())
+                .text_color(if selected {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .child(label.to_string()),
         )
 }
 
 /// 渲染主题卡片
-fn render_theme_card(label: &str, icon: &str, selected: bool, theme: &gpui_component::Theme) -> impl IntoElement {
+fn render_theme_card(
+    label: &str,
+    icon: &str,
+    selected: bool,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     div()
         .w(px(100.0))
         .p(px(12.0))
         .border_2()
-        .border_color(if selected { theme.primary } else { theme.border })
+        .border_color(if selected {
+            theme.primary
+        } else {
+            theme.border
+        })
         .rounded(px(8.0))
         .bg(theme.background)
         .cursor_pointer()
@@ -679,16 +777,16 @@ fn render_theme_card(label: &str, icon: &str, selected: bool, theme: &gpui_compo
         .flex_col()
         .items_center()
         .gap(px(8.0))
-        .child(
-            div()
-                .text_2xl()
-                .child(icon.to_string())
-        )
+        .child(div().text_2xl().child(icon.to_string()))
         .child(
             div()
                 .text_sm()
-                .text_color(if selected { theme.foreground } else { theme.muted_foreground })
-                .child(label.to_string())
+                .text_color(if selected {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .child(label.to_string()),
         )
 }
 
@@ -703,7 +801,7 @@ fn render_loading_state(theme: &gpui_component::Theme) -> impl IntoElement {
             div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("加载中...")
+                .child("加载中..."),
         )
 }
 

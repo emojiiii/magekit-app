@@ -1,6 +1,7 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_shared::{
-    create_tokio_command, ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, DownloadOptions, PlatformCookie, TaskId, VideoFormat, VideoInfo,
+    ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, DownloadOptions, PlatformCookie,
+    TaskId, VideoFormat, VideoInfo, create_tokio_command,
 };
 use serde::Deserialize;
 use std::io::Write;
@@ -554,7 +555,7 @@ impl VideoDownloader {
         // 从 channel_data 的 entries 中获取视频信息
         if let Some(ref data_entries) = channel_data.entries {
             tracing::info!("📋 解析 {} 个顶层条目", data_entries.len());
-            
+
             // 收集单个 Tab 内的所有视频条目
             fn collect_tab_entries(
                 entry: &serde_json::Value,
@@ -574,35 +575,48 @@ impl VideoDownloader {
                     }
                 }
             }
-            
+
             for (i, entry) in data_entries.iter().enumerate() {
                 // 打印前 3 个条目的原始 JSON 用于调试
                 if i < 3 {
                     let preview = serde_json::to_string(entry)
-                        .map(|s| if s.len() > 200 { format!("{}...", &s[..200]) } else { s })
+                        .map(|s| {
+                            if s.len() > 200 {
+                                format!("{}...", &s[..200])
+                            } else {
+                                s
+                            }
+                        })
                         .unwrap_or_else(|_| "无法序列化".to_string());
                     tracing::info!("   原始条目[{}]: {}", i + 1, preview);
                 }
-                
+
                 // 检查这个条目是否是一个 Tab（有 entries 字段表示是分组）
                 if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
                     // 这是一个 Tab（如 Videos, Shorts, Live）
-                    let tab_title = entry.get("title").and_then(|t| t.as_str()).unwrap_or("视频");
+                    let tab_title = entry
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("视频");
                     let tab_type = ChannelTabType::from_title(tab_title);
-                    
-                    tracing::info!("📁 发现标签页: {} ({} 个条目)", tab_title, nested_entries.len());
-                    
+
+                    tracing::info!(
+                        "📁 发现标签页: {} ({} 个条目)",
+                        tab_title,
+                        nested_entries.len()
+                    );
+
                     // 收集这个 Tab 内的所有视频
                     let mut tab_entries: Vec<ChannelVideoEntry> = Vec::new();
                     for nested_entry in nested_entries {
                         collect_tab_entries(nested_entry, &mut tab_entries, 1);
                     }
-                    
+
                     tracing::info!("   ↳ 实际视频数: {}", tab_entries.len());
-                    
+
                     // 将 Tab 内的视频也添加到总列表（用于向后兼容）
                     entries.extend(tab_entries.clone());
-                    
+
                     // 保存 Tab 信息
                     tabs.push(ChannelTab {
                         tab_type,
@@ -1137,7 +1151,8 @@ fn parse_channel_entry(value: &serde_json::Value) -> Option<ChannelVideoEntry> {
     let thumbnail = entry.thumbnail.or_else(|| {
         entry.thumbnails.as_ref().and_then(|thumbs| {
             // 尝试找到最高分辨率的缩略图
-            thumbs.iter()
+            thumbs
+                .iter()
                 .max_by_key(|t| t.height.unwrap_or(0))
                 .map(|t| t.url.clone())
         })

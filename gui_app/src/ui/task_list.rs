@@ -2,10 +2,10 @@
 //!
 //! 显示下载任务的列表视图，支持任务操作（暂停、继续、取消、删除）
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::*;
 use magekit_shared::types::{TaskId, TaskState, TaskStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,12 +91,13 @@ impl TaskListData {
 
     /// 清除已完成的任务
     pub fn clear_completed(&mut self) {
-        let completed_ids: Vec<TaskId> = self.tasks
+        let completed_ids: Vec<TaskId> = self
+            .tasks
             .iter()
             .filter(|(_, status)| status.is_finished())
             .map(|(id, _)| *id)
             .collect();
-        
+
         for id in completed_ids {
             self.remove_task(id);
         }
@@ -185,28 +186,26 @@ impl Render for TaskListView {
         } else {
             TaskStats::default()
         };
-        
+
         let selected = self.selected_task;
-        
+
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(render_toolbar(&stats, cx))
-            .child(
-                if tasks_snapshot.is_empty() {
-                    render_empty_state(cx).into_any_element()
-                } else {
-                    render_task_list_content(&tasks_snapshot, selected, cx).into_any_element()
-                }
-            )
+            .child(if tasks_snapshot.is_empty() {
+                render_empty_state(cx).into_any_element()
+            } else {
+                render_task_list_content(&tasks_snapshot, selected, cx).into_any_element()
+            })
     }
 }
 
 /// 渲染工具栏
 fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
     let theme = cx.theme();
-    
+
     div()
         .h(px(48.0))
         .px(px(16.0))
@@ -225,7 +224,7 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.foreground)
-                        .child(format!("任务列表 ({})", stats.total))
+                        .child(format!("任务列表 ({})", stats.total)),
                 )
                 .when(stats.downloading > 0, |this| {
                     this.child(
@@ -236,9 +235,9 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                             .bg(theme.primary)
                             .text_xs()
                             .text_color(theme.primary_foreground)
-                            .child(format!("{} 进行中", stats.downloading))
+                            .child(format!("{} 进行中", stats.downloading)),
                     )
-                })
+                }),
         )
         .child(
             div()
@@ -248,21 +247,21 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                     Button::new("refresh")
                         .ghost()
                         .small()
-                        .icon(IconName::Replace)
+                        .icon(IconName::Replace),
                 )
                 .child(
                     Button::new("clear-completed")
                         .ghost()
                         .small()
-                        .label("清除已完成")
-                )
+                        .label("清除已完成"),
+                ),
         )
 }
 
 /// 渲染空状态
 fn render_empty_state(cx: &mut App) -> impl IntoElement {
     let theme = cx.theme();
-    
+
     div()
         .flex_1()
         .flex()
@@ -275,45 +274,42 @@ fn render_empty_state(cx: &mut App) -> impl IntoElement {
                 .flex_col()
                 .items_center()
                 .gap(px(8.0))
-                .child(
-                    div()
-                        .text_3xl()
-                        .child("📭")
-                )
+                .child(div().text_3xl().child("📭"))
                 .child(
                     div()
                         .text_lg()
                         .text_color(theme.muted_foreground)
-                        .child("暂无下载任务")
+                        .child("暂无下载任务"),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("在左侧面板添加视频链接开始下载")
-                )
+                        .child("在左侧面板添加视频链接开始下载"),
+                ),
         )
 }
 
 /// 渲染任务列表内容
-fn render_task_list_content(tasks: &[TaskStatus], selected: Option<TaskId>, cx: &mut App) -> impl IntoElement {
+fn render_task_list_content(
+    tasks: &[TaskStatus],
+    selected: Option<TaskId>,
+    cx: &mut App,
+) -> impl IntoElement {
     let task_elements: Vec<AnyElement> = tasks
         .iter()
         .map(|task| render_task_item(task, selected == Some(task.id), cx).into_any_element())
         .collect();
-    
-    div()
-        .flex_1()
-        .overflow_hidden()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .p(px(16.0))
-                .gap(px(8.0))
-                .children(task_elements)
-        )
+
+    div().flex_1().overflow_hidden().child(
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .p(px(16.0))
+            .gap(px(8.0))
+            .children(task_elements),
+    )
 }
 
 /// 渲染单个任务项
@@ -332,21 +328,29 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
     let is_failed = matches!(state, TaskState::Failed(_));
     let is_completed = matches!(state, TaskState::Completed);
     let is_active = task.is_active();
-    
+
     // 预先创建进度条元素（避免借用问题）
     let progress_bar = if is_downloading {
         Some(render_progress_bar_element(progress, eta, theme))
     } else {
         None
     };
-    
+
     // 提取需要的颜色值
-    let border_color = if is_selected { theme.primary } else { theme.border };
-    let bg_color = if is_selected { theme.accent } else { theme.secondary };
+    let border_color = if is_selected {
+        theme.primary
+    } else {
+        theme.border
+    };
+    let bg_color = if is_selected {
+        theme.accent
+    } else {
+        theme.secondary
+    };
     let title_color = theme.foreground;
     let state_color_value = state_color(&state, theme);
     let info_color = theme.muted_foreground;
-    
+
     div()
         .id(ElementId::Name(format!("task-{}", task_id).into()))
         .p(px(12.0))
@@ -377,20 +381,18 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .max_w(px(300.0))
-                                .child(title)
-                        )
+                                .child(title),
+                        ),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(state_color_value)
-                        .child(state_text(&state))
-                )
+                        .child(state_text(&state)),
+                ),
         )
         // 第二行：进度条（如果正在下载）
-        .when_some(progress_bar, |this, bar| {
-            this.child(bar)
-        })
+        .when_some(progress_bar, |this, bar| this.child(bar))
         // 第三行：详情和操作按钮
         .child(
             div()
@@ -404,11 +406,16 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
                         .gap(px(12.0))
                         .text_xs()
                         .text_color(info_color)
-                        .child(render_download_info(downloaded, total, speed))
+                        .child(render_download_info(downloaded, total, speed)),
                 )
-                .child(
-                    render_action_buttons(task_id, is_downloading, is_paused, is_failed, is_completed, is_active)
-                )
+                .child(render_action_buttons(
+                    task_id,
+                    is_downloading,
+                    is_paused,
+                    is_failed,
+                    is_completed,
+                    is_active,
+                )),
         )
 }
 
@@ -422,10 +429,8 @@ fn render_state_icon(state: &TaskState) -> impl IntoElement {
         TaskState::Failed(_) => "❌",
         TaskState::Cancelled => "🚫",
     };
-    
-    div()
-        .text_sm()
-        .child(icon_char.to_string())
+
+    div().text_sm().child(icon_char.to_string())
 }
 
 /// 获取状态颜色
@@ -453,14 +458,18 @@ fn state_text(state: &TaskState) -> String {
 }
 
 /// 渲染进度条元素（接受预先获取的 theme）
-fn render_progress_bar_element(progress: f32, eta: Option<std::time::Duration>, theme: &Theme) -> impl IntoElement {
+fn render_progress_bar_element(
+    progress: f32,
+    eta: Option<std::time::Duration>,
+    theme: &Theme,
+) -> impl IntoElement {
     let progress_clamped = progress.clamp(0.0, 100.0);
     let bg_color = theme.muted;
     let fg_color = theme.primary;
     let text_color = theme.muted_foreground;
-    
+
     let eta_text = eta.map(|eta| format!("剩余 {}", format_duration(eta)));
-    
+
     div()
         .flex()
         .flex_col()
@@ -478,8 +487,8 @@ fn render_progress_bar_element(progress: f32, eta: Option<std::time::Duration>, 
                         .h_full()
                         .rounded(px(2.0))
                         .bg(fg_color)
-                        .w(relative(progress_clamped / 100.0))
-                )
+                        .w(relative(progress_clamped / 100.0)),
+                ),
         )
         .child(
             // 进度文本
@@ -490,16 +499,14 @@ fn render_progress_bar_element(progress: f32, eta: Option<std::time::Duration>, 
                 .text_xs()
                 .text_color(text_color)
                 .child(format!("{:.1}%", progress_clamped))
-                .when_some(eta_text, |this, text| {
-                    this.child(text)
-                })
+                .when_some(eta_text, |this, text| this.child(text)),
         )
 }
 
 /// 渲染下载信息
 fn render_download_info(downloaded: u64, total: Option<u64>, speed: Option<u64>) -> String {
     let mut parts = Vec::new();
-    
+
     // 已下载/总大小
     let downloaded_str = format_bytes(downloaded);
     if let Some(total) = total {
@@ -507,12 +514,12 @@ fn render_download_info(downloaded: u64, total: Option<u64>, speed: Option<u64>)
     } else {
         parts.push(downloaded_str);
     }
-    
+
     // 下载速度
     if let Some(speed) = speed {
         parts.push(format!("{}/s", format_bytes(speed)));
     }
-    
+
     parts.join(" • ")
 }
 
@@ -527,19 +534,14 @@ fn render_action_buttons(
 ) -> impl IntoElement {
     // 使用 task_id 的前 8 位作为唯一 ID
     let id_suffix = &task_id.to_string()[..8];
-    
+
     div()
         .flex()
         .items_center()
         .gap(px(4.0))
         .when(is_downloading, |this| {
             let btn_id: &str = Box::leak(format!("pause-{}", id_suffix).into_boxed_str());
-            this.child(
-                Button::new(btn_id)
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Minus)
-            )
+            this.child(Button::new(btn_id).ghost().xsmall().icon(IconName::Minus))
         })
         .when(is_paused, |this| {
             let btn_id: &str = Box::leak(format!("resume-{}", id_suffix).into_boxed_str());
@@ -547,42 +549,24 @@ fn render_action_buttons(
                 Button::new(btn_id)
                     .ghost()
                     .xsmall()
-                    .icon(IconName::ArrowRight)
+                    .icon(IconName::ArrowRight),
             )
         })
         .when(is_failed, |this| {
             let btn_id: &str = Box::leak(format!("retry-{}", id_suffix).into_boxed_str());
-            this.child(
-                Button::new(btn_id)
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Replace)
-            )
+            this.child(Button::new(btn_id).ghost().xsmall().icon(IconName::Replace))
         })
         .when(is_completed, |this| {
             let btn_id: &str = Box::leak(format!("open-{}", id_suffix).into_boxed_str());
-            this.child(
-                Button::new(btn_id)
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Folder)
-            )
+            this.child(Button::new(btn_id).ghost().xsmall().icon(IconName::Folder))
         })
         .when(is_active, |this| {
             let btn_id: &str = Box::leak(format!("cancel-{}", id_suffix).into_boxed_str());
-            this.child(
-                Button::new(btn_id)
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Close)
-            )
+            this.child(Button::new(btn_id).ghost().xsmall().icon(IconName::Close))
         })
         .child({
             let btn_id: &str = Box::leak(format!("delete-{}", id_suffix).into_boxed_str());
-            Button::new(btn_id)
-                .ghost()
-                .xsmall()
-                .icon(IconName::Delete)
+            Button::new(btn_id).ghost().xsmall().icon(IconName::Delete)
         })
 }
 
@@ -591,12 +575,12 @@ fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {
@@ -610,7 +594,7 @@ fn format_duration(duration: std::time::Duration) -> String {
     let hours = secs / 3600;
     let mins = (secs % 3600) / 60;
     let secs = secs % 60;
-    
+
     if hours > 0 {
         format!("{}:{:02}:{:02}", hours, mins, secs)
     } else {

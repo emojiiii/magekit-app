@@ -21,7 +21,9 @@ impl BilibiliHandler {
     pub fn new() -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0")
+            .user_agent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+            )
             .build()
             .expect("Failed to create HTTP client");
 
@@ -35,7 +37,8 @@ impl BilibiliHandler {
             room_id
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Accept-Language", "zh-CN,zh;q=0.8")
             .send()
@@ -47,7 +50,8 @@ impl BilibiliHandler {
             return Err(RecorderError::RoomNotFound(room_id.to_string()));
         }
 
-        let uid = json["data"]["uid"].as_u64()
+        let uid = json["data"]["uid"]
+            .as_u64()
             .ok_or_else(|| RecorderError::InvalidResponseFormat("Missing uid".to_string()))?;
         let live_status = json["data"]["live_status"].as_i64() == Some(1);
 
@@ -61,7 +65,8 @@ impl BilibiliHandler {
             uid
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Accept-Language", "zh-CN,zh;q=0.8")
             .send()
@@ -84,7 +89,8 @@ impl BilibiliHandler {
             room_id
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Accept-Language", "zh-CN,zh;q=0.8")
             .header("Origin", "https://live.bilibili.com")
@@ -111,7 +117,8 @@ impl BilibiliHandler {
             params
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Accept-Language", "zh-CN,zh;q=0.8")
             .header("Origin", "https://live.bilibili.com")
@@ -157,7 +164,8 @@ impl BilibiliHandler {
             params
         );
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Accept-Language", "zh-CN,zh;q=0.8")
             .header("Origin", "https://live.bilibili.com")
@@ -192,16 +200,21 @@ impl BilibiliHandler {
                                     ];
 
                                     for codec_item in codec_arr {
-                                        let current_qn = codec_item["current_qn"].as_i64().unwrap_or(0);
-                                        let base_url = codec_item["base_url"].as_str().unwrap_or("");
-                                        
+                                        let current_qn =
+                                            codec_item["current_qn"].as_i64().unwrap_or(0);
+                                        let base_url =
+                                            codec_item["base_url"].as_str().unwrap_or("");
+
                                         if let Some(url_info) = codec_item["url_info"].as_array() {
                                             if let Some(first_url) = url_info.first() {
                                                 let host = first_url["host"].as_str().unwrap_or("");
-                                                let extra = first_url["extra"].as_str().unwrap_or("");
-                                                let full_url = format!("{}{}{}", host, base_url, extra);
+                                                let extra =
+                                                    first_url["extra"].as_str().unwrap_or("");
+                                                let full_url =
+                                                    format!("{}{}{}", host, base_url, extra);
 
-                                                let quality = quality_map.iter()
+                                                let quality = quality_map
+                                                    .iter()
                                                     .find(|(qn, _)| *qn == current_qn as i32)
                                                     .map(|(_, q)| q.clone())
                                                     .unwrap_or(VideoQuality::Standard);
@@ -223,7 +236,9 @@ impl BilibiliHandler {
                                                     },
                                                     bitrate: None,
                                                     resolution: None,
-                                                    codec: codec_item["codec_name"].as_str().map(|s| s.to_string()),
+                                                    codec: codec_item["codec_name"]
+                                                        .as_str()
+                                                        .map(|s| s.to_string()),
                                                     cdn: None,
                                                 });
                                             }
@@ -254,10 +269,7 @@ impl PlatformHandler for BilibiliHandler {
     }
 
     fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec![
-            "live.bilibili.com",
-            "b23.tv",
-        ]
+        vec!["live.bilibili.com", "b23.tv"]
     }
 
     async fn extract_room_id(&self, url: &str) -> RecorderResult<String> {
@@ -271,7 +283,7 @@ impl PlatformHandler for BilibiliHandler {
 
         if room_id.is_empty() || !room_id.chars().all(|c| c.is_ascii_digit()) {
             return Err(RecorderError::InvalidUrlFormat(
-                "Invalid Bilibili room ID".to_string()
+                "Invalid Bilibili room ID".to_string(),
             ));
         }
 

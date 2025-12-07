@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::{error::RecorderResult, types::StreamInfo};
+use async_trait::async_trait;
 
 /// 平台 Cookie 配置
 #[derive(Debug, Clone, Default)]
@@ -22,7 +22,11 @@ impl PlatformCookies {
         self
     }
 
-    pub fn with_credentials(mut self, username: impl Into<String>, password: impl Into<String>) -> Self {
+    pub fn with_credentials(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
         self.username = Some(username.into());
         self.password = Some(password.into());
         self
@@ -56,9 +60,9 @@ pub trait PlatformHandler: Send + Sync {
 
     /// 获取直播流信息（带 Cookie 支持）
     async fn get_stream_info_with_cookies(
-        &self, 
-        room_id: &str, 
-        cookies: &PlatformCookies
+        &self,
+        room_id: &str,
+        cookies: &PlatformCookies,
     ) -> RecorderResult<StreamInfo> {
         // 默认实现：忽略 cookies，调用基本方法
         let _ = cookies;
@@ -73,27 +77,27 @@ pub trait PlatformHandler: Send + Sync {
 
     /// 检查房间是否在线（带 Cookie 支持）
     async fn check_room_status_with_cookies(
-        &self, 
-        room_id: &str, 
-        cookies: &PlatformCookies
+        &self,
+        room_id: &str,
+        cookies: &PlatformCookies,
     ) -> RecorderResult<bool> {
         let stream_info = self.get_stream_info_with_cookies(room_id, cookies).await?;
         Ok(stream_info.room.status == crate::types::LiveStatus::Live)
     }
 }
 
-pub mod douyin;
 pub mod bilibili;
-pub mod huya;
+pub mod douyin;
 pub mod douyu;
+pub mod factory;
+pub mod huya;
 pub mod kuaishou;
 pub mod soop;
-pub mod factory;
 
-pub use douyin::DouyinHandler;
 pub use bilibili::BilibiliHandler;
-pub use huya::HuyaHandler;
+pub use douyin::DouyinHandler;
 pub use douyu::DouyuHandler;
+pub use factory::PlatformFactory;
+pub use huya::HuyaHandler;
 pub use kuaishou::KuaishouHandler;
 pub use soop::SoopHandler;
-pub use factory::PlatformFactory;

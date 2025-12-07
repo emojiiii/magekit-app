@@ -1,13 +1,13 @@
 // gui_app/src/ui/playlist_panel.rs
 //! 播放列表下载组件 - 支持播放列表视频选择和批量下载
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
-use std::sync::Arc;
+use gpui_component::*;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// 播放列表项
 #[derive(Debug, Clone)]
@@ -183,7 +183,8 @@ impl PlaylistPanel {
                 playlist.entries.iter().collect()
             } else {
                 let query = self.search_query.to_lowercase();
-                playlist.entries
+                playlist
+                    .entries
                     .iter()
                     .filter(|e| e.title.to_lowercase().contains(&query))
                     .collect()
@@ -196,7 +197,8 @@ impl PlaylistPanel {
     /// 获取选中的视频
     pub fn get_selected_items(&self) -> Vec<PlaylistItem> {
         if let Some(playlist) = &self.playlist {
-            playlist.entries
+            playlist
+                .entries
                 .iter()
                 .filter(|e| self.selected_ids.contains(&e.id))
                 .cloned()
@@ -246,16 +248,12 @@ impl PlaylistPanel {
             .justify_center()
             .py_8()
             .gap_2()
-            .child(
-                Icon::new(IconName::Folder)
-                    .size(px(32.0))
-                    .text_color(muted)
-            )
+            .child(Icon::new(IconName::Folder).size(px(32.0)).text_color(muted))
             .child(
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child("输入播放列表URL开始下载")
+                    .child("输入播放列表URL开始下载"),
             )
     }
 
@@ -272,13 +270,13 @@ impl PlaylistPanel {
             .child(
                 Icon::new(IconName::LoaderCircle)
                     .size(px(32.0))
-                    .text_color(muted)
+                    .text_color(muted),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child("正在加载播放列表信息...")
+                    .child("正在加载播放列表信息..."),
             )
     }
 
@@ -327,7 +325,7 @@ impl PlaylistPanel {
                         .h(px(68.0))
                         .rounded_md()
                         .bg(border)
-                        .overflow_hidden()
+                        .overflow_hidden(),
                 )
             })
             // 信息
@@ -340,22 +338,22 @@ impl PlaylistPanel {
                             .text_base()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg)
-                            .child(playlist.title.clone())
+                            .child(playlist.title.clone()),
                     )
                     .when(playlist.uploader.is_some(), |this| {
                         this.child(
                             div()
                                 .text_sm()
                                 .text_color(muted)
-                                .child(playlist.uploader.clone().unwrap())
+                                .child(playlist.uploader.clone().unwrap()),
                         )
                     })
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("{} 个视频", playlist.video_count))
-                    )
+                            .child(format!("{} 个视频", playlist.video_count)),
+                    ),
             )
     }
 
@@ -381,14 +379,18 @@ impl PlaylistPanel {
                         Button::new("select-all")
                             .ghost()
                             .small()
-                            .label(SharedString::from(if is_all_selected { "取消全选" } else { "全选" }))
+                            .label(SharedString::from(if is_all_selected {
+                                "取消全选"
+                            } else {
+                                "全选"
+                            })),
                     )
                     .child(
                         Button::new("invert-selection")
                             .ghost()
                             .small()
-                            .label("反选")
-                    )
+                            .label("反选"),
+                    ),
             )
             // 中间：搜索框（简化版）
             .child(
@@ -402,24 +404,15 @@ impl PlaylistPanel {
                     .border_color(border)
                     .items_center()
                     .gap_2()
-                    .child(
-                        Icon::new(IconName::Search)
-                            .size(px(16.0))
-                            .text_color(muted)
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child("搜索视频...")
-                    )
+                    .child(Icon::new(IconName::Search).size(px(16.0)).text_color(muted))
+                    .child(div().text_sm().text_color(muted).child("搜索视频...")),
             )
             // 右侧：选中计数
             .child(
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child(format!("已选 {}/{}", selected_count, total_count))
+                    .child(format!("已选 {}/{}", selected_count, total_count)),
             )
     }
 
@@ -431,7 +424,7 @@ impl PlaylistPanel {
         let muted = theme.muted_foreground;
         let primary = theme.primary;
         let accent = theme.accent;
-        
+
         let entries = self.filtered_entries();
         let selected_ids = self.selected_ids.clone();
 
@@ -443,7 +436,16 @@ impl PlaylistPanel {
             .rounded_md()
             .children(entries.into_iter().enumerate().map(|(idx, item)| {
                 let is_selected = selected_ids.contains(&item.id);
-                render_playlist_item_inline(item, is_selected, idx == 0, fg, muted, border, primary, accent)
+                render_playlist_item_inline(
+                    item,
+                    is_selected,
+                    idx == 0,
+                    fg,
+                    muted,
+                    border,
+                    primary,
+                    accent,
+                )
             }))
     }
 
@@ -457,7 +459,8 @@ impl PlaylistPanel {
 
         // 计算预估时长
         let total_duration: u64 = if let Some(playlist) = &self.playlist {
-            playlist.entries
+            playlist
+                .entries
                 .iter()
                 .filter(|e| self.selected_ids.contains(&e.id))
                 .filter_map(|e| e.duration)
@@ -476,28 +479,25 @@ impl PlaylistPanel {
             .child(
                 h_flex()
                     .gap_4()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(format!("总时长: {}", format_duration_seconds(total_duration)))
-                    )
+                    .child(div().text_sm().text_color(muted).child(format!(
+                        "总时长: {}",
+                        format_duration_seconds(total_duration)
+                    ))),
             )
             // 右侧：操作按钮
             .child(
                 h_flex()
                     .gap_2()
-                    .child(
-                        Button::new("cancel-playlist")
-                            .ghost()
-                            .label("取消")
-                    )
+                    .child(Button::new("cancel-playlist").ghost().label("取消"))
                     .child(
                         Button::new("download-playlist")
                             .primary()
-                            .label(SharedString::from(format!("下载 {} 个视频", selected_count)))
-                            .disabled(!has_selection)
-                    )
+                            .label(SharedString::from(format!(
+                                "下载 {} 个视频",
+                                selected_count
+                            )))
+                            .disabled(!has_selection),
+                    ),
             )
     }
 
@@ -515,14 +515,14 @@ impl PlaylistPanel {
             .child(
                 Icon::new(IconName::TriangleAlert)
                     .size(px(32.0))
-                    .text_color(danger)
+                    .text_color(danger),
             )
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(danger)
-                    .child("加载失败")
+                    .child("加载失败"),
             )
             .child(
                 div()
@@ -530,14 +530,9 @@ impl PlaylistPanel {
                     .text_color(muted)
                     .max_w(px(300.0))
                     .text_center()
-                    .child(error)
+                    .child(error),
             )
-            .child(
-                Button::new("retry-playlist")
-                    .ghost()
-                    .small()
-                    .label("重试")
-            )
+            .child(Button::new("retry-playlist").ghost().small().label("重试"))
     }
 }
 
@@ -552,11 +547,18 @@ fn render_playlist_item_inline(
     _primary: Hsla,
     accent: Hsla,
 ) -> impl IntoElement {
-    let bg = if is_selected { accent.opacity(0.1) } else { Hsla::transparent_black() };
+    let bg = if is_selected {
+        accent.opacity(0.1)
+    } else {
+        Hsla::transparent_black()
+    };
 
     let id = item.id.clone();
     let title = item.title.clone();
-    let duration = item.duration.map(format_duration_seconds).unwrap_or_else(|| "未知".to_string());
+    let duration = item
+        .duration
+        .map(format_duration_seconds)
+        .unwrap_or_else(|| "未知".to_string());
     let index = item.index;
     let uploader = item.uploader.clone();
 
@@ -568,13 +570,10 @@ fn render_playlist_item_inline(
         .items_center()
         .bg(bg)
         .cursor_pointer()
-        .when(!is_first, |this| {
-            this.border_t_1().border_color(border)
-        })
+        .when(!is_first, |this| this.border_t_1().border_color(border))
         // 选择框
         .child(
-            Checkbox::new(SharedString::from(format!("playlist-item-{}", id)))
-                .checked(is_selected)
+            Checkbox::new(SharedString::from(format!("playlist-item-{}", id))).checked(is_selected),
         )
         // 索引
         .child(
@@ -583,7 +582,7 @@ fn render_playlist_item_inline(
                 .text_sm()
                 .text_color(muted)
                 .text_center()
-                .child(format!("{}", index + 1))
+                .child(format!("{}", index + 1)),
         )
         // 标题
         .child(
@@ -597,16 +596,11 @@ fn render_playlist_item_inline(
                         .text_color(fg)
                         .overflow_hidden()
                         .text_ellipsis()
-                        .child(title)
+                        .child(title),
                 )
                 .when(uploader.is_some(), |this| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(uploader.unwrap())
-                    )
-                })
+                    this.child(div().text_xs().text_color(muted).child(uploader.unwrap()))
+                }),
         )
         // 时长
         .child(
@@ -615,7 +609,7 @@ fn render_playlist_item_inline(
                 .text_sm()
                 .text_color(muted)
                 .text_right()
-                .child(duration)
+                .child(duration),
         )
 }
 

@@ -1,7 +1,7 @@
 //! X-Bogus 签名生成库
 //!
 //! 使用 QuickJS 运行 JavaScript 代码来生成 X-Bogus 签名
-//! 
+//!
 //! 同时提供 AB-Sign 的 Rust 原生实现
 
 use rquickjs::{CatchResultExt, Context, Function, Runtime};
@@ -13,9 +13,9 @@ pub mod ab_sign;
 pub use ab_sign::ab_sign;
 
 // 导出内部模块用于测试
-pub use ab_sign::sm3;
-pub use ab_sign::rc4;
 pub use ab_sign::base64_custom;
+pub use ab_sign::rc4;
+pub use ab_sign::sm3;
 
 /// JavaScript 源代码
 const JS_SOURCE: &str = include_str!("x-bogus.js");
@@ -56,10 +56,9 @@ pub struct XBogus {
 impl XBogus {
     /// 创建新的 X-Bogus 签名生成器
     pub fn new() -> Result<Self, XBogusError> {
-        let runtime = Runtime::new()
-            .map_err(|e| XBogusError::RuntimeCreation(e.to_string()))?;
-        let context = Context::full(&runtime)
-            .map_err(|e| XBogusError::ContextCreation(e.to_string()))?;
+        let runtime = Runtime::new().map_err(|e| XBogusError::RuntimeCreation(e.to_string()))?;
+        let context =
+            Context::full(&runtime).map_err(|e| XBogusError::ContextCreation(e.to_string()))?;
 
         // 初始化 JavaScript 环境
         context.with(|ctx| {
@@ -86,17 +85,20 @@ impl XBogus {
         println!("🔐 XBogus::sign called");
         println!("  query: {}", query);
         println!("  user_agent: {}", user_agent);
-        
+
         self.context.with(|ctx| {
             // 获取 sign 函数
             let sign_fn_result: Result<Function, _> = ctx.globals().get("sign").catch(&ctx);
-            let sign_fn = sign_fn_result
-                .map_err(|e| XBogusError::SignFunction(format!("Failed to get sign function: {:?}", e)))?;
+            let sign_fn = sign_fn_result.map_err(|e| {
+                XBogusError::SignFunction(format!("Failed to get sign function: {:?}", e))
+            })?;
 
             // 调用 sign 函数
             let result: Result<String, _> = sign_fn.call((query, user_agent)).catch(&ctx);
-            let signature = result.map_err(|e| XBogusError::SignFunction(format!("Failed to call sign function: {:?}", e)))?;
-            
+            let signature = result.map_err(|e| {
+                XBogusError::SignFunction(format!("Failed to call sign function: {:?}", e))
+            })?;
+
             println!("  result: {}", signature);
             Ok(signature)
         })
@@ -129,7 +131,11 @@ mod tests {
     #[test]
     fn test_xbogus_creation() {
         let xbogus = XBogus::new();
-        assert!(xbogus.is_ok(), "Failed to create XBogus: {:?}", xbogus.err());
+        assert!(
+            xbogus.is_ok(),
+            "Failed to create XBogus: {:?}",
+            xbogus.err()
+        );
     }
 
     #[test]
@@ -157,4 +163,3 @@ mod tests {
         assert!(result.is_ok(), "Sign failed: {:?}", result.err());
     }
 }
-

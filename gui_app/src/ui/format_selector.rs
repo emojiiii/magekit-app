@@ -1,11 +1,11 @@
 // gui_app/src/ui/format_selector.rs
 //! 格式选择器组件 - 视频/音频格式选择、画质和音频质量选择、字幕选项
 
-use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::*;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::*;
 use magekit_shared::types::VideoFormat;
 use std::sync::Arc;
 
@@ -30,7 +30,11 @@ impl FormatType {
     }
 
     fn all() -> Vec<Self> {
-        vec![FormatType::VideoAudio, FormatType::VideoOnly, FormatType::AudioOnly]
+        vec![
+            FormatType::VideoAudio,
+            FormatType::VideoOnly,
+            FormatType::AudioOnly,
+        ]
     }
 }
 
@@ -124,7 +128,12 @@ impl AudioQuality {
     }
 
     fn all() -> Vec<Self> {
-        vec![AudioQuality::Best, AudioQuality::High, AudioQuality::Medium, AudioQuality::Low]
+        vec![
+            AudioQuality::Best,
+            AudioQuality::High,
+            AudioQuality::Medium,
+            AudioQuality::Low,
+        ]
     }
 }
 
@@ -296,12 +305,8 @@ impl FormatSelector {
                 let audio = self.audio_quality.format_filter();
                 format!("{}+{}/best", video, audio)
             }
-            FormatType::VideoOnly => {
-                self.resolution.format_filter().to_string()
-            }
-            FormatType::AudioOnly => {
-                self.audio_quality.format_filter().to_string()
-            }
+            FormatType::VideoOnly => self.resolution.format_filter().to_string(),
+            FormatType::AudioOnly => self.audio_quality.format_filter().to_string(),
         }
     }
 
@@ -364,12 +369,7 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("下载类型")
-            )
+            .child(div().text_sm().text_color(muted).child("下载类型"))
             .child(
                 h_flex()
                     .gap_2()
@@ -382,7 +382,7 @@ impl FormatSelector {
                             .when(is_selected, |btn| btn.primary())
                             .when(!is_selected, |btn| btn.ghost())
                             .into_any_element()
-                    }))
+                    })),
             )
     }
 
@@ -395,12 +395,7 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("视频质量")
-            )
+            .child(div().text_sm().text_color(muted).child("视频质量"))
             .child(
                 h_flex()
                     .gap_2()
@@ -414,7 +409,7 @@ impl FormatSelector {
                             .when(is_selected, |btn| btn.primary())
                             .when(!is_selected, |btn| btn.outline())
                             .into_any_element()
-                    }))
+                    })),
             )
     }
 
@@ -426,12 +421,7 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("音频质量")
-            )
+            .child(div().text_sm().text_color(muted).child("音频质量"))
             .child(
                 h_flex()
                     .gap_2()
@@ -444,7 +434,7 @@ impl FormatSelector {
                             .when(is_selected, |btn| btn.primary())
                             .when(!is_selected, |btn| btn.outline())
                             .into_any_element()
-                    }))
+                    })),
             )
     }
 
@@ -456,12 +446,7 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("音频格式")
-            )
+            .child(div().text_sm().text_color(muted).child("音频格式"))
             .child(
                 h_flex()
                     .gap_2()
@@ -475,7 +460,7 @@ impl FormatSelector {
                             .when(is_selected, |btn| btn.primary())
                             .when(!is_selected, |btn| btn.outline())
                             .into_any_element()
-                    }))
+                    })),
             )
     }
 
@@ -495,15 +480,8 @@ impl FormatSelector {
                 h_flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        Checkbox::new("subtitle-enabled")
-                            .checked(enabled)
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .child("下载字幕")
-                    )
+                    .child(Checkbox::new("subtitle-enabled").checked(enabled))
+                    .child(div().text_sm().child("下载字幕")),
             )
             .when(enabled, |this| {
                 this.child(
@@ -513,50 +491,43 @@ impl FormatSelector {
                         .child(
                             h_flex()
                                 .gap_2()
+                                .child(div().text_sm().text_color(muted).child("语言："))
                                 .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(muted)
-                                        .child("语言：")
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .children(vec![("zh", "中文"), ("en", "English"), ("ja", "日本語")].into_iter().map(|(code, label)| {
-                                            let is_selected = self.subtitle_options.languages.contains(&code.to_string());
-                                            Button::new(SharedString::from(format!("sub-lang-{}", code)))
+                                    h_flex().gap_1().children(
+                                        vec![("zh", "中文"), ("en", "English"), ("ja", "日本語")]
+                                            .into_iter()
+                                            .map(|(code, label)| {
+                                                let is_selected = self
+                                                    .subtitle_options
+                                                    .languages
+                                                    .contains(&code.to_string());
+                                                Button::new(SharedString::from(format!(
+                                                    "sub-lang-{}",
+                                                    code
+                                                )))
                                                 .label(SharedString::from(label))
                                                 .xsmall()
                                                 .when(is_selected, |btn| btn.primary())
                                                 .when(!is_selected, |btn| btn.ghost())
                                                 .into_any_element()
-                                        }))
-                                )
+                                            }),
+                                    ),
+                                ),
                         )
                         .child(
                             h_flex()
                                 .items_center()
                                 .gap_2()
-                                .child(
-                                    Checkbox::new("subtitle-embed")
-                                        .checked(embed)
-                                )
-                                .child(
-                                    div().text_sm().child("嵌入字幕到视频")
-                                )
+                                .child(Checkbox::new("subtitle-embed").checked(embed))
+                                .child(div().text_sm().child("嵌入字幕到视频")),
                         )
                         .child(
                             h_flex()
                                 .items_center()
                                 .gap_2()
-                                .child(
-                                    Checkbox::new("subtitle-auto")
-                                        .checked(auto_gen)
-                                )
-                                .child(
-                                    div().text_sm().child("包含自动生成字幕")
-                                )
-                        )
+                                .child(Checkbox::new("subtitle-auto").checked(auto_gen))
+                                .child(div().text_sm().child("包含自动生成字幕")),
+                        ),
                 )
             })
     }
@@ -582,22 +553,19 @@ impl FormatSelector {
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child("可用格式")
-                    )
-                    .child(
-                        Button::new("toggle-formats")
-                            .ghost()
-                            .xsmall()
-                            .label(SharedString::from(if show_all { "收起" } else { "显示全部" }))
-                    )
+                    .child(div().text_sm().text_color(muted).child("可用格式"))
+                    .child(Button::new("toggle-formats").ghost().xsmall().label(
+                        SharedString::from(if show_all { "收起" } else { "显示全部" }),
+                    )),
             )
-            .child(
-                render_format_list_static(&formats, self.selected_format_id.as_ref(), muted, border, primary, bg)
-            )
+            .child(render_format_list_static(
+                &formats,
+                self.selected_format_id.as_ref(),
+                muted,
+                border,
+                primary,
+                bg,
+            ))
     }
 }
 
@@ -621,19 +589,27 @@ fn render_format_list_static(
 
 /// 渲染单个格式项（内联版本，不需要 cx）
 fn render_format_item_inline(
-    format: &VideoFormat, 
+    format: &VideoFormat,
     selected_id: Option<&String>,
     muted: Hsla,
     border: Hsla,
     primary: Hsla,
     bg: Hsla,
 ) -> impl IntoElement {
-    let is_selected = selected_id.map(|id| id == &format.format_id).unwrap_or(false);
+    let is_selected = selected_id
+        .map(|id| id == &format.format_id)
+        .unwrap_or(false);
 
     let format_id = format.format_id.clone();
     let ext = format.ext.clone();
-    let resolution = format.resolution.clone().unwrap_or_else(|| "N/A".to_string());
-    let filesize = format.filesize.map(format_filesize).unwrap_or_else(|| "未知".to_string());
+    let resolution = format
+        .resolution
+        .clone()
+        .unwrap_or_else(|| "N/A".to_string());
+    let filesize = format
+        .filesize
+        .map(format_filesize)
+        .unwrap_or_else(|| "未知".to_string());
     let vcodec = format.vcodec.clone().unwrap_or_default();
     let acodec = format.acodec.clone().unwrap_or_default();
 
@@ -662,7 +638,7 @@ fn render_format_item_inline(
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .w(px(60.0))
-                .child(format_id)
+                .child(format_id),
         )
         // 类型徽章
         .child(
@@ -673,30 +649,19 @@ fn render_format_item_inline(
                 .rounded(px(2.0))
                 .bg(primary.opacity(0.1))
                 .text_color(primary)
-                .child(type_badge)
+                .child(type_badge),
         )
         // 扩展名
-        .child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .w(px(40.0))
-                .child(ext)
-        )
+        .child(div().text_xs().text_color(muted).w(px(40.0)).child(ext))
         // 分辨率
-        .child(
-            div()
-                .text_xs()
-                .w(px(80.0))
-                .child(resolution)
-        )
+        .child(div().text_xs().w(px(80.0)).child(resolution))
         // 文件大小
         .child(
             div()
                 .text_xs()
                 .text_color(muted)
                 .w(px(60.0))
-                .child(filesize)
+                .child(filesize),
         )
         // 编码信息
         .child(
@@ -705,10 +670,19 @@ fn render_format_item_inline(
                 .text_xs()
                 .text_color(muted)
                 .overflow_hidden()
-                .child(format!("{} / {}", 
-                    if vcodec.is_empty() || vcodec == "none" { "-" } else { &vcodec },
-                    if acodec.is_empty() || acodec == "none" { "-" } else { &acodec }
-                ))
+                .child(format!(
+                    "{} / {}",
+                    if vcodec.is_empty() || vcodec == "none" {
+                        "-"
+                    } else {
+                        &vcodec
+                    },
+                    if acodec.is_empty() || acodec == "none" {
+                        "-"
+                    } else {
+                        &acodec
+                    }
+                )),
         )
 }
 
