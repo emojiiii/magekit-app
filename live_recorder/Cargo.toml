@@ -16,6 +16,8 @@ reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "brotli"] }
 url = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# Shared utilities
+magekit-shared = { path = "../shared" }
 
 # Additional dependencies for live recording
 async-trait = "0.1"

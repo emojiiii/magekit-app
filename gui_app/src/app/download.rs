@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write;
-use magekit_shared::{PlatformCookie, TaskId};
+use magekit_shared::{create_command, PlatformCookie, TaskId};
 
 use super::state::AppState;
 use super::types::DownloadVideoOptions;
@@ -253,8 +253,8 @@ impl AppState {
             // 文件名模板
             let output_template = output_dir.join("%(title)s_%(height)sp.%(ext)s");
             
-            // 构建下载命令
-            let mut cmd = std::process::Command::new(&yt_dlp_path);
+            // 构建下载命令（使用无窗口命令）
+            let mut cmd = create_command(&yt_dlp_path);
             cmd.arg(&url)
                .arg("--format").arg(&effective_format_id)
                .arg("--output").arg(&output_template)

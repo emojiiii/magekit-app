@@ -49,9 +49,7 @@ impl AppState {
 
     /// 获取系统工具版本 (同步版本)
     fn get_system_tool_version_sync(tool_type: magekit_shared::ToolType, path: &std::path::Path) -> Option<String> {
-        use std::process::Command;
-        
-        let output = Command::new(path)
+        let output = magekit_shared::create_command(path)
             .arg("--version")
             .output()
             .ok()?;

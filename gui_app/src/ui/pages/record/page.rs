@@ -767,8 +767,8 @@ impl RecordingPage {
                                 };
                                 
                                 if let Some(ffmpeg) = ffmpeg {
-                                    // 使用 ffmpeg 转码
-                                    let transcode_result = std::process::Command::new(&ffmpeg)
+                                    // 使用 ffmpeg 转码（无窗口模式）
+                                    let transcode_result = magekit_shared::create_command(&ffmpeg)
                                         .arg("-i")
                                         .arg(&input_path)
                                         .arg("-c")

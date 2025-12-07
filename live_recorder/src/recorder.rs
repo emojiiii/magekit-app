@@ -3,12 +3,12 @@ use crate::{
     platforms::PlatformFactory,
     types::{RecordConfig, RecordProgress, RecordStatus, StreamData, StreamInfo, VideoQuality},
 };
+use magekit_shared::create_tokio_command;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval;
 use tracing::{info, warn};
@@ -234,8 +234,8 @@ impl RecordingSession {
 
     /// 使用FFmpeg进行录制
     async fn record_with_ffmpeg(&mut self) -> RecorderResult<()> {
-        // 检查FFmpeg是否可用
-        if let Err(_) = TokioCommand::new("ffmpeg")
+        // 检查FFmpeg是否可用（使用无窗口命令）
+        if let Err(_) = create_tokio_command("ffmpeg")
             .arg("-version")
             .output()
             .await
@@ -245,7 +245,7 @@ impl RecordingSession {
 
         info!("🎬 使用 FFmpeg 录制: {} -> {:?}", self.stream_url, self.output_path);
 
-        let mut cmd = TokioCommand::new("ffmpeg");
+        let mut cmd = create_tokio_command("ffmpeg");
         
         // 添加输入选项
         cmd.arg("-y"); // 覆盖输出文件

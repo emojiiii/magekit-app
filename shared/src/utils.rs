@@ -1,9 +1,44 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::constants::*;
+
+/// 创建一个在 Windows 上不显示控制台窗口的 Command (std::process::Command)
+/// 在非 Windows 平台上，这只是普通的 Command::new
+#[cfg(windows)]
+pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(not(windows))]
+pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    Command::new(program)
+}
+
+/// 创建一个在 Windows 上不显示控制台窗口的 tokio Command
+/// 在非 Windows 平台上，这只是普通的 tokio::process::Command::new
+#[cfg(windows)]
+pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    
+    let mut cmd = tokio::process::Command::new(program);
+    // tokio::process::Command 在 Windows 上继承了 std::process::Command 的 creation_flags 方法
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(not(windows))]
+pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    tokio::process::Command::new(program)
+}
 
 /// 格式化文件大小为人类可读的字符串
 pub fn format_file_size(bytes: u64) -> String {

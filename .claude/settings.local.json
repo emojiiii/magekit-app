@@ -23,7 +23,8 @@
       "Bash(cargo check:*)",
       "mcp__svelte__list-sections",
       "WebFetch(domain:longbridge.github.io)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

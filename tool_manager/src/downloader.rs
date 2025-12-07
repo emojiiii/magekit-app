@@ -1,12 +1,12 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_shared::{
-    ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, DownloadOptions, PlatformCookie, TaskId, VideoFormat, VideoInfo,
+    create_tokio_command, ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, DownloadOptions, PlatformCookie, TaskId, VideoFormat, VideoInfo,
 };
 use serde::Deserialize;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
@@ -179,7 +179,7 @@ impl VideoDownloader {
             None
         };
 
-        let mut cmd = Command::new(&self.yt_dlp_path);
+        let mut cmd = create_tokio_command(&self.yt_dlp_path);
         cmd.arg("--dump-json").arg("--no-download");
 
         // 添加 Cookie 参数
@@ -478,7 +478,7 @@ impl VideoDownloader {
             None
         };
 
-        let mut cmd = Command::new(&self.yt_dlp_path);
+        let mut cmd = create_tokio_command(&self.yt_dlp_path);
         // 使用 --flat-playlist 快速获取视频列表，但不获取每个视频的详细信息
         // 对于 Bilibili 和 YouTube，基本的 id/url 就足够用于下载
         // title 会在下载时自动获取
@@ -724,7 +724,7 @@ impl VideoDownloader {
             None
         };
 
-        let mut cmd = Command::new(&self.yt_dlp_path);
+        let mut cmd = create_tokio_command(&self.yt_dlp_path);
 
         // 基本参数
         let output_template = options.output_path.join(

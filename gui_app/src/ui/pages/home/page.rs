@@ -1025,8 +1025,8 @@ impl HomePage {
                 let filename = format!("{}_thumbnail.jpg", safe_title);
                 let output_path = output_dir.join(&filename);
 
-                // 使用 curl 命令下载封面
-                let status = std::process::Command::new("curl")
+                // 使用 curl 命令下载封面（无窗口模式）
+                let status = magekit_shared::create_command("curl")
                     .arg("-L") // 跟随重定向
                     .arg("-o")
                     .arg(&output_path)

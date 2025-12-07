@@ -1,5 +1,5 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
-use magekit_shared::{get_tools_dir, ToolType};
+use magekit_shared::{create_command, get_tools_dir, ToolType};
 use std::path::PathBuf;
 
 /// 工具存储管理器
@@ -63,8 +63,8 @@ impl ToolStorage {
 
         let tool_path = self.get_tool_path(tool_type);
 
-        // 使用 std::process 执行工具获取版本 (同步)
-        let output = std::process::Command::new(&tool_path)
+        // 使用无窗口命令执行工具获取版本 (同步)
+        let output = create_command(&tool_path)
             .arg("--version")
             .output()
             .map_err(|e| ToolManagerError::process_failed(tool_path.display().to_string(), e.to_string()))?;
