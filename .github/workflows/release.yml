@@ -4,47 +4,40 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v0.1.0)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
   APP_NAME: MageKit
 
 jobs:
-  # 创建 Release
-  create-release:
-    name: Create Release
+  # 准备版本信息
+  prepare:
+    name: Prepare Release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: MageKit ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
-          body: |
-            ## 🎉 MageKit ${{ github.ref_name }}
-
-            ### 📥 下载
-            - **macOS (Universal)**: `MageKit-${{ github.ref_name }}-macos-universal.dmg`
-            - **Windows**: `MageKit-${{ github.ref_name }}-windows-x64.exe`
-            - **Linux**: `MageKit-${{ github.ref_name }}-linux-x64.AppImage`
-
-            ### 📋 更新日志
-            请查看 [CHANGELOG.md](CHANGELOG.md)
-
-  # macOS 构建和打包
+  # macOS 构建
   build-macos:
     name: Build macOS
     runs-on: macos-latest
-    needs: create-release
+    needs: prepare
     steps:
       - uses: actions/checkout@v4
 
@@ -53,10 +46,21 @@ jobs:
         with:
           targets: x86_64-apple-darwin, aarch64-apple-darwin
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-release-cargo-
+
       - name: Build for x86_64
         run: cargo build --release --target x86_64-apple-darwin
 
-      - name: Build for aarch64
+      - name: Build for aarch64 (Apple Silicon)
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Create Universal Binary
@@ -66,119 +70,372 @@ jobs:
             target/x86_64-apple-darwin/release/magekit \
             target/aarch64-apple-darwin/release/magekit \
             -output target/universal-apple-darwin/release/magekit
+          chmod +x target/universal-apple-darwin/release/magekit
 
       - name: Create .app bundle
         run: |
-          mkdir -p "MageKit.app/Contents/MacOS"
-          mkdir -p "MageKit.app/Contents/Resources"
-          cp target/universal-apple-darwin/release/magekit "MageKit.app/Contents/MacOS/MageKit"
-          cp assets/Info.plist "MageKit.app/Contents/" 2>/dev/null || echo "No Info.plist"
-          cp assets/icon.icns "MageKit.app/Contents/Resources/" 2>/dev/null || echo "No icon"
-          chmod +x "MageKit.app/Contents/MacOS/MageKit"
+          APP_DIR="MageKit.app"
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+          
+          # 复制二进制文件
+          cp target/universal-apple-darwin/release/magekit "${APP_DIR}/Contents/MacOS/MageKit"
+          chmod +x "${APP_DIR}/Contents/MacOS/MageKit"
+          
+          # 复制主题文件
+          if [ -d "themes" ]; then
+            mkdir -p "${APP_DIR}/Contents/Resources/themes"
+            cp -r themes/* "${APP_DIR}/Contents/Resources/themes/"
+          fi
+          
+          # 复制图标 (如果存在)
+          if [ -f "assets/icon.icns" ]; then
+            cp assets/icon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
+          fi
+          
+          # 创建 Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>MageKit</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.emojiiii.magekit</string>
+              <key>CFBundleName</key>
+              <string>MageKit</string>
+              <key>CFBundleDisplayName</key>
+              <string>MageKit</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>CFBundleVersion</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSSupportsAutomaticGraphicsSwitching</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
 
       - name: Create DMG
         run: |
-          hdiutil create -volname "MageKit" -srcfolder "MageKit.app" -ov -format UDZO "MageKit-${{ github.ref_name }}-macos-universal.dmg"
+          # 创建临时目录用于 DMG 内容
+          mkdir -p dmg_contents
+          cp -r MageKit.app dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+          
+          # 创建 DMG
+          hdiutil create -volname "MageKit" \
+            -srcfolder dmg_contents \
+            -ov -format UDZO \
+            "MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg"
 
       - name: Upload macOS DMG
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: MageKit-${{ github.ref_name }}-macos-universal.dmg
-          asset_name: MageKit-${{ github.ref_name }}-macos-universal.dmg
-          asset_content_type: application/octet-stream
+          name: macos-dmg
+          path: MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg
 
-  # Windows 构建和打包
+      - name: Upload macOS App (zip)
+        run: |
+          zip -r "MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip" MageKit.app
+
+      - name: Upload macOS App zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-zip
+          path: MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip
+
+  # Windows 构建
   build-windows:
     name: Build Windows
     runs-on: windows-latest
-    needs: create-release
+    needs: prepare
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            windows-release-cargo-
 
       - name: Build release
         run: cargo build --release
 
-      - name: Rename executable
+      - name: Prepare release files
+        shell: pwsh
         run: |
-          copy target\release\magekit.exe MageKit-${{ github.ref_name }}-windows-x64.exe
+          $version = "${{ needs.prepare.outputs.version }}"
+          $releaseDir = "release-windows"
+          
+          # 创建发布目录
+          New-Item -ItemType Directory -Force -Path $releaseDir
+          
+          # 复制主程序
+          Copy-Item "target\release\magekit.exe" "$releaseDir\MageKit.exe"
+          
+          # 复制主题文件
+          if (Test-Path "themes") {
+            Copy-Item -Recurse "themes" "$releaseDir\themes"
+          }
+          
+          # 创建 portable 标记文件 (便携版)
+          New-Item -ItemType File -Path "$releaseDir\portable.txt" -Value "MageKit Portable Edition"
+          
+          # 打包为 zip
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "MageKit-$version-windows-x64-portable.zip"
+          
+          # 单独复制 exe 用于直接下载
+          Copy-Item "target\release\magekit.exe" "MageKit-$version-windows-x64.exe"
+
+      - name: Upload Windows portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-zip
+          path: MageKit-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip
 
       - name: Upload Windows exe
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: MageKit-${{ github.ref_name }}-windows-x64.exe
-          asset_name: MageKit-${{ github.ref_name }}-windows-x64.exe
-          asset_content_type: application/octet-stream
+          name: windows-exe
+          path: MageKit-${{ needs.prepare.outputs.version }}-windows-x64.exe
 
-  # Linux 构建和打包
+  # Linux 构建
   build-linux:
     name: Build Linux
-    runs-on: ubuntu-latest
-    needs: create-release
+    runs-on: ubuntu-22.04
+    needs: prepare
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            linux-release-cargo-
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libvulkan-dev \
+            vulkan-tools \
+            libegl1-mesa-dev \
+            libgles2-mesa-dev \
+            libx11-dev \
+            libxi-dev \
+            libxtst-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxcomposite-dev \
+            libxdamage-dev \
+            libxfixes-dev \
+            libxss-dev \
+            libdbus-1-dev \
+            libasound2-dev \
+            libpulse-dev \
+            libatk1.0-dev \
+            libgtk-3-dev \
+            libgdk-pixbuf2.0-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            fuse \
+            libfuse2
 
       - name: Build release
         run: cargo build --release
 
-      - name: Install AppImage tools
+      - name: Download AppImage tools
         run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
+          chmod +x appimagetool
 
       - name: Create AppDir structure
         run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          
+          # 创建 AppDir 结构
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/magekit
+          
+          # 复制二进制文件
           cp target/release/magekit AppDir/usr/bin/magekit
           chmod +x AppDir/usr/bin/magekit
+          
+          # 复制主题文件
+          if [ -d "themes" ]; then
+            cp -r themes AppDir/usr/share/magekit/
+          fi
+          
+          # 创建 desktop 文件
           cat > AppDir/magekit.desktop << EOF
           [Desktop Entry]
           Name=MageKit
+          Comment=Video Downloader
           Exec=magekit
           Icon=magekit
           Type=Application
-          Categories=Utility;AudioVideo;
+          Categories=AudioVideo;Video;Network;
+          Terminal=false
+          StartupWMClass=MageKit
           EOF
+          
           cp AppDir/magekit.desktop AppDir/usr/share/applications/
-          # 创建简单图标（如果没有真实图标）
-          convert -size 256x256 xc:blue AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png 2>/dev/null || echo "No icon created"
+          
+          # 创建简单图标 (如果没有真实图标)
+          if [ -f "assets/icon.png" ]; then
+            cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png
+          else
+            # 使用 ImageMagick 创建一个简单的占位图标
+            convert -size 256x256 xc:'#4A90D9' \
+              -gravity center -pointsize 72 -fill white \
+              -annotate 0 "MK" \
+              AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png 2>/dev/null || \
+            echo "Warning: Could not create placeholder icon"
+          fi
+          
+          # 链接图标和 desktop 文件到 AppDir 根目录
+          ln -sf usr/share/icons/hicolor/256x256/apps/magekit.png AppDir/magekit.png 2>/dev/null || true
           ln -sf usr/share/applications/magekit.desktop AppDir/magekit.desktop
-          cat > AppDir/AppRun << 'EOF'
+          
+          # 创建 AppRun
+          cat > AppDir/AppRun << 'APPRUN'
           #!/bin/bash
           HERE="$(dirname "$(readlink -f "${0}")")"
+          export PATH="${HERE}/usr/bin:${PATH}"
+          export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
           exec "${HERE}/usr/bin/magekit" "$@"
-          EOF
+          APPRUN
           chmod +x AppDir/AppRun
 
       - name: Build AppImage
         run: |
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir MageKit-${{ github.ref_name }}-linux-x64.AppImage || \
-          cp target/release/magekit MageKit-${{ github.ref_name }}-linux-x64
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ARCH=x86_64 ./appimagetool --no-appstream AppDir "MageKit-${VERSION}-linux-x64.AppImage" || {
+            echo "AppImage creation failed, creating tar.gz instead"
+            tar -czvf "MageKit-${VERSION}-linux-x64.tar.gz" -C AppDir/usr/bin magekit
+          }
+
+      - name: Create tar.gz archive
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          mkdir -p release-linux
+          cp target/release/magekit release-linux/
+          if [ -d "themes" ]; then
+            cp -r themes release-linux/
+          fi
+          tar -czvf "MageKit-${VERSION}-linux-x64.tar.gz" -C release-linux .
 
       - name: Upload Linux AppImage
-        uses: actions/upload-release-asset@v1
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: MageKit-${{ needs.prepare.outputs.version }}-linux-x64.AppImage
+          if-no-files-found: ignore
+
+      - name: Upload Linux tar.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tar-gz
+          path: MageKit-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+
+  # 创建 GitHub Release
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build-macos, build-windows, build-linux]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f -name "*"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: MageKit ${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, 'beta') || contains(needs.prepare.outputs.version, 'alpha') || contains(needs.prepare.outputs.version, 'rc') }}
+          generate_release_notes: true
+          files: |
+            artifacts/macos-dmg/*
+            artifacts/macos-app-zip/*
+            artifacts/windows-portable-zip/*
+            artifacts/windows-exe/*
+            artifacts/linux-appimage/*
+            artifacts/linux-tar-gz/*
+          body: |
+            ## 🎉 MageKit ${{ needs.prepare.outputs.version }}
+
+            ### 📥 下载
+
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg` | DMG 安装包 (Intel + Apple Silicon) |
+            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip` | App 压缩包 |
+            | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64.exe` | 单文件可执行程序 |
+            | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip` | 便携版压缩包 |
+            | **Linux** | `MageKit-${{ needs.prepare.outputs.version }}-linux-x64.AppImage` | AppImage 格式 |
+            | **Linux** | `MageKit-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz` | 二进制压缩包 |
+
+            ### 🔧 系统要求
+
+            - **macOS**: macOS 11.0 (Big Sur) 或更高版本
+            - **Windows**: Windows 10 或更高版本
+            - **Linux**: 需要支持 Vulkan 的图形驱动
+
+            ### 📋 更新日志
+
+            请查看下方自动生成的更新日志或 [CHANGELOG.md](https://github.com/emojiiii/magekit-app/blob/main/CHANGELOG.md)
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: MageKit-${{ github.ref_name }}-linux-x64.AppImage
-          asset_name: MageKit-${{ github.ref_name }}-linux-x64.AppImage
-          asset_content_type: application/octet-stream
