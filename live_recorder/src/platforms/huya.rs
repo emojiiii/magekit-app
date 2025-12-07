@@ -114,6 +114,8 @@ impl HuyaHandler {
             .await?;
 
         let json: serde_json::Value = response.json().await?;
+        
+        tracing::debug!("📋 虎牙 API 响应: {:?}", json);
 
         let anchor_name = json["data"]["profileInfo"]["nick"]
             .as_str()
@@ -128,6 +130,25 @@ impl HuyaHandler {
             .as_str()
             .unwrap_or("")
             .to_string();
+        
+        // 获取封面图 - 优先使用直播截图，其次使用头像
+        let cover_url = json["data"]["liveData"]["screenshot"]
+            .as_str()
+            .or_else(|| json["data"]["liveData"]["screenShot"].as_str())
+            .or_else(|| json["data"]["profileInfo"]["avatar"].as_str())
+            .or_else(|| json["data"]["profileInfo"]["avatar180"].as_str())
+            .map(|s| {
+                // 确保使用 https
+                if s.starts_with("//") {
+                    format!("https:{}", s)
+                } else if !s.starts_with("http") {
+                    format!("https://{}", s)
+                } else {
+                    s.to_string()
+                }
+            });
+        
+        tracing::info!("📺 虎牙 主播: {}, 标题: {}, 封面: {:?}", anchor_name, title, cover_url.is_some());
 
         let room_info = LiveRoomInfo {
             room_id: room_id.to_string(),
@@ -136,7 +157,7 @@ impl HuyaHandler {
             status: if live_status == "ON" { LiveStatus::Live } else { LiveStatus::Offline },
             start_time: None,
             viewer_count: None,
-            cover_url: None,
+            cover_url,
             extra: HashMap::new(),
         };
 

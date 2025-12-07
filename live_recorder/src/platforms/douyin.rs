@@ -341,13 +341,36 @@ impl DouyinHandler {
             start_time: None,
             viewer_count: room_info.get("user_count")
                 .and_then(|uc| uc.as_u64()),
+            // 抖音封面图可能是多种格式:
+            // 1. cover 是一个对象，包含 url_list 数组
+            // 2. cover 直接是字符串
+            // 3. cover 是数组（旧版本）
             cover_url: room_info.get("cover")
-                .and_then(|c| c.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|url_list| url_list.as_str())
-                .map(|s| s.to_string()),
+                .and_then(|c| {
+                    // 尝试作为对象获取 url_list
+                    if let Some(obj) = c.as_object() {
+                        obj.get("url_list")
+                            .and_then(|ul| ul.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|url| url.as_str())
+                            .map(|s| s.to_string())
+                    } else if let Some(arr) = c.as_array() {
+                        // 尝试作为数组获取第一个元素
+                        arr.first()
+                            .and_then(|url| url.as_str())
+                            .map(|s| s.to_string())
+                    } else if let Some(s) = c.as_str() {
+                        // 直接是字符串
+                        Some(s.to_string())
+                    } else {
+                        None
+                    }
+                }),
             extra: HashMap::new(),
         };
+
+        tracing::info!("📺 抖音 主播: {}, 标题: {}, 封面: {:?}", 
+            live_room_info.anchor_name, live_room_info.title, live_room_info.cover_url.is_some());
 
         if status != LiveStatus::Live {
             tracing::info!("ℹ️ 直播间状态: {:?}，非直播中", status);

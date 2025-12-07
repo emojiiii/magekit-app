@@ -264,14 +264,14 @@ impl RecordingPage {
                                 this.save_config();
                             }
                             
-                            // 如果开启了监控且变为直播状态，自动开始录制
-                            let is_monitoring = this.monitored_rooms.iter()
+                            // 如果开启了自动录制且变为直播状态，自动开始录制
+                            let auto_record_enabled = this.monitored_rooms.iter()
                                 .find(|r| r.id == room_id)
-                                .map(|r| r.monitoring_enabled)
+                                .map(|r| r.auto_record)
                                 .unwrap_or(false);
                             
-                            if is_live && is_monitoring && !is_recording {
-                                tracing::info!("🎬 监控检测到直播，自动开始录制: {}", room_id);
+                            if is_live && auto_record_enabled && !is_recording {
+                                tracing::info!("🎬 自动录制检测到直播，开始录制: {}", room_id);
                                 this.start_recording_background(room_id, cx);
                             }
                             

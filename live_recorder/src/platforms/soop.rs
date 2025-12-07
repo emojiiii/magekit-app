@@ -97,6 +97,15 @@ impl SoopHandler {
         
         tracing::debug!("📋 SOOP Global channel 响应: {:?}", json);
         
+        // 检查 API 返回的状态码
+        let status_code = json["statusCode"].as_i64().unwrap_or(0);
+        if status_code != 200 {
+            let error_code = json["code"].as_str().unwrap_or("");
+            let error_msg = json["message"].as_str().unwrap_or("Unknown error");
+            tracing::warn!("⚠️ SOOP Global channel API 错误: {} - {}", error_code, error_msg);
+            return Err(RecorderError::StreamNotAvailable(format!("SOOP Global API error: {}", error_msg)));
+        }
+        
         let nickname = json["data"]["streamerChannelInfo"]["nickname"]
             .as_str()
             .unwrap_or("Unknown");
@@ -104,9 +113,10 @@ impl SoopHandler {
             .as_str()
             .unwrap_or(bj_id);
         
-        // 获取头像作为封面图
-        let profile_image = json["data"]["streamerChannelInfo"]["profileImage"]
+        // 获取头像作为封面图 - 修正字段名
+        let profile_image = json["data"]["streamerChannelInfo"]["channelProfileImg"]
             .as_str()
+            .or_else(|| json["data"]["streamerChannelInfo"]["profileImage"].as_str())
             .map(|s| s.to_string());
         
         Ok((format!("{}-{}", nickname, channel_id), profile_image))
@@ -147,9 +157,8 @@ impl SoopHandler {
 
     /// 获取国际版流数据（增强版）
     async fn get_global_stream_data(&self, bj_id: &str, cookies: Option<&str>) -> RecorderResult<StreamInfo> {
-        // 获取频道信息（包含主播名和头像）
-        let (anchor_name, profile_image) = self.get_global_channel_info_full(bj_id, cookies).await
-            .unwrap_or_else(|_| (bj_id.to_string(), None));
+        // 获取频道信息（包含主播名和头像）- 如果失败则返回错误让调用者尝试韩国版
+        let (anchor_name, profile_image) = self.get_global_channel_info_full(bj_id, cookies).await?;
         
         // 获取流信息（包含直播状态、标题、封面图、观看人数）
         let (is_live, title, stream_cover, viewer_count) = self.get_global_stream_info_full(bj_id, cookies).await
