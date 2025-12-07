@@ -216,7 +216,7 @@ pub fn parse_file_size(size_str: &str) -> Result<u64> {
     let size_str = size_str.trim().to_uppercase();
     let (num_str, unit) = size_str.split_at(
         size_str
-            .find(|c: char| !c.is_ascii_digit() && c != ' ')
+            .find(|c: char| !c.is_ascii_digit() && c != '.' && c != ' ')
             .unwrap_or(size_str.len()),
     );
 
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(parse_file_size("1KB").unwrap(), 1024);
         assert_eq!(
             parse_file_size("1.5MB").unwrap(),
-            1.5 * 1024.0 * 1024.0 as u64
+            (1.5 * 1024.0 * 1024.0) as u64
         );
         assert!(parse_file_size("invalid").is_err());
     }
