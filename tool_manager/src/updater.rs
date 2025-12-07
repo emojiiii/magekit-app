@@ -1,7 +1,7 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
 use futures_util::StreamExt;
-use magekit_shared::{create_tokio_command, get_temp_dir, ToolType, UpdateChannel};
+use magekit_shared::{ToolType, UpdateChannel, create_tokio_command, get_temp_dir};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
