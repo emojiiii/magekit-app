@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin, aarch64-apple-darwin
 
@@ -78,7 +78,7 @@ jobs:
           mkdir -p "${APP_DIR}/Contents/MacOS"
           mkdir -p "${APP_DIR}/Contents/Resources"
 
-          # 复制二进制文件
+          # 复制二进制文�?
           cp target/universal-apple-darwin/release/magekit "${APP_DIR}/Contents/MacOS/MageKit"
           chmod +x "${APP_DIR}/Contents/MacOS/MageKit"
 
@@ -163,7 +163,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -188,7 +188,7 @@ jobs:
           # 创建发布目录
           New-Item -ItemType Directory -Force -Path $releaseDir
 
-          # 复制主程序
+          # 复制主程�?
           Copy-Item "target\release\magekit.exe" "$releaseDir\MageKit.exe"
 
           # 复制主题文件
@@ -196,10 +196,10 @@ jobs:
             Copy-Item -Recurse "themes" "$releaseDir\themes"
           }
 
-          # 创建 portable 标记文件 (便携版)
+          # 创建 portable 标记文件 (便携�?
           New-Item -ItemType File -Path "$releaseDir\portable.txt" -Value "MageKit Portable Edition"
 
-          # 打包为 zip
+          # 打包�?zip
           Compress-Archive -Path "$releaseDir\*" -DestinationPath "MageKit-$version-windows-x64-portable.zip"
 
           # 单独复制 exe 用于直接下载
@@ -226,7 +226,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -297,7 +297,7 @@ jobs:
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           mkdir -p AppDir/usr/share/magekit
 
-          # 复制二进制文件
+          # 复制二进制文�?
           cp target/release/magekit AppDir/usr/bin/magekit
           chmod +x AppDir/usr/bin/magekit
 
@@ -321,7 +321,7 @@ jobs:
 
           cp AppDir/magekit.desktop AppDir/usr/share/applications/
 
-          # 创建简单图标 (如果没有真实图标)
+          # 创建简单图�?(如果没有真实图标)
           if [ -f "assets/icon.png" ]; then
             cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png
           else
@@ -333,7 +333,7 @@ jobs:
             echo "Warning: Could not create placeholder icon"
           fi
 
-          # 链接图标和 desktop 文件到 AppDir 根目录
+          # 链接图标�?desktop 文件�?AppDir 根目�?
           ln -sf usr/share/icons/hicolor/256x256/apps/magekit.png AppDir/magekit.png 2>/dev/null || true
           ln -sf usr/share/applications/magekit.desktop AppDir/magekit.desktop
 
@@ -420,8 +420,8 @@ jobs:
 
             | 平台 | 文件 | 说明 |
             |------|------|------|
-            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg` | DMG 安装包 (Intel + Apple Silicon) |
-            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip` | App 压缩包 |
+            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg` | DMG 安装�?(Intel + Apple Silicon) |
+            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip` | App 压缩�?|
             | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64.exe` | 单文件可执行程序 |
             | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip` | 便携版压缩包 |
             | **Linux** | `MageKit-${{ needs.prepare.outputs.version }}-linux-x64.AppImage` | AppImage 格式 |
@@ -429,13 +429,13 @@ jobs:
 
             ### 🔧 系统要求
 
-            - **macOS**: macOS 11.0 (Big Sur) 或更高版本
-            - **Windows**: Windows 10 或更高版本
-            - **Linux**: 需要支持 Vulkan 的图形驱动
+            - **macOS**: macOS 11.0 (Big Sur) 或更高版�?
+            - **Windows**: Windows 10 或更高版�?
+            - **Linux**: 需要支�?Vulkan 的图形驱�?
 
             ### 📋 更新日志
 
-            请查看下方自动生成的更新日志或 [CHANGELOG.md](https://github.com/emojiiii/magekit-app/blob/main/CHANGELOG.md)
+            请查看下方自动生成的更新日志�?[CHANGELOG.md](https://github.com/emojiiii/magekit-app/blob/main/CHANGELOG.md)
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
