@@ -1,7 +1,7 @@
 //! 虎牙直播平台处理器
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use md5::{Digest, Md5};
 use rand::Rng;
 use regex::Regex;
@@ -101,7 +101,16 @@ impl HuyaHandler {
         // 构建新的 anti-code
         let new_anti_code = format!(
             "wsSecret={}&wsTime={}&seqid={}&ctype={}&ver=1&fs={}&uuid={}&u={}&t={}&sv={}&sdk_sid={}&codec=264",
-            ws_secret_md5, ws_time, seq_id, ctype, fs, init_uuid, uid, params_t, sdk_version, sdk_sid
+            ws_secret_md5,
+            ws_time,
+            seq_id,
+            ctype,
+            fs,
+            init_uuid,
+            uid,
+            params_t,
+            sdk_version,
+            sdk_sid
         );
 
         tracing::debug!("🔑 生成新的 anti-code: {}", new_anti_code);

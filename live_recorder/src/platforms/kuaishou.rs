@@ -101,9 +101,9 @@ impl KuaishouHandler {
         let mut streams = Vec::new();
 
         // 尝试 H264 格式
-        if let Some(play_urls) = live_stream["liveStream"]["playUrls"]["h264"]["adaptationSet"]
-            ["representation"]
-            .as_array()
+        if let Some(play_urls) =
+            live_stream["liveStream"]["playUrls"]["h264"]["adaptationSet"]["representation"]
+                .as_array()
         {
             for play_url in play_urls {
                 let url = play_url["url"].as_str().unwrap_or("");

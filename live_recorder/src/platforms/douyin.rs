@@ -268,8 +268,8 @@ impl DouyinHandler {
 
     /// 生成msToken
     fn generate_ms_token(&self) -> String {
-        use base64::{engine::general_purpose, Engine as _};
-        use rand::{thread_rng, Rng};
+        use base64::{Engine as _, engine::general_purpose};
+        use rand::{Rng, thread_rng};
 
         let mut rng = thread_rng();
         // Rust 2024 将 `gen` 视为关键字，这里使用原始标识符调用 rand 的生成方法

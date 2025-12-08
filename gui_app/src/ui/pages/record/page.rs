@@ -514,7 +514,11 @@ impl RecordingPage {
                 }
                 Ok(Err(e)) => {
                     let error_msg = Self::format_error(&e);
-                    tracing::error!("❌ 获取直播间信息失败: url={}, err={}", url_for_log, error_msg);
+                    tracing::error!(
+                        "❌ 获取直播间信息失败: url={}, err={}",
+                        url_for_log,
+                        error_msg
+                    );
 
                     let _ = this.update(cx, |this, cx| {
                         // 更新房间状态为错误，但保留在列表中
@@ -535,7 +539,11 @@ impl RecordingPage {
                 }
                 Err(e) => {
                     let error_msg = format!("任务执行失败: {}", e);
-                    tracing::error!("❌ 获取直播间信息失败: url={}, err={}", url_for_log, error_msg);
+                    tracing::error!(
+                        "❌ 获取直播间信息失败: url={}, err={}",
+                        url_for_log,
+                        error_msg
+                    );
 
                     let _ = this.update(cx, |this, cx| {
                         if let Some(room) =

@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use live_recorder::platforms::{douyin::DouyinHandler, PlatformHandler};
+    use live_recorder::platforms::{PlatformHandler, douyin::DouyinHandler};
     use tokio;
     use tracing_subscriber;
 
