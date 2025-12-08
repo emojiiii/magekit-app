@@ -392,7 +392,6 @@ impl RecordingSession {
             }
         }
     }
-
 }
 
 /// 录制句柄，用于控制录制过程
