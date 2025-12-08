@@ -42,11 +42,13 @@ MageKit 是一个功能强大、界面美观的视频下载工具，支持从各
 ### 🖥️ 系统要求
 
 #### 支持的操作系统
+
 - Windows 10/11 (x64)
 - macOS 10.15+ (Intel/Apple Silicon)
 - Linux (主流发行版)
 
 #### 硬件要求
+
 - CPU: 多核处理器推荐
 - 内存: 至少 4GB RAM
 - 显卡: 支持 OpenGL 3.3+ 或 Metal/DirectX 11+
@@ -59,6 +61,7 @@ MageKit 是一个功能强大、界面美观的视频下载工具，支持从各
 ### 1. 安装依赖
 
 #### Rust 工具链
+
 首先安装 Rust（推荐使用 rustup）：
 
 ```bash
@@ -76,15 +79,18 @@ cargo --version
 #### 系统依赖
 
 **Windows:**
+
 - 安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) 或 Visual Studio（需要 C++ 工作负载）
 
 **macOS:**
+
 ```bash
 # 安装 Xcode Command Line Tools
 xcode-select --install
 ```
 
 **Linux (Ubuntu/Debian):**
+
 ```bash
 sudo apt update
 sudo apt install build-essential pkg-config libssl-dev \
@@ -93,6 +99,7 @@ sudo apt install build-essential pkg-config libssl-dev \
 ```
 
 **Linux (Fedora):**
+
 ```bash
 sudo dnf install gcc gcc-c++ make pkgconfig openssl-devel \
   fontconfig-devel freetype-devel libxcb-devel
@@ -108,16 +115,13 @@ cd magekit-app
 ### 3. 运行项目
 
 #### 开发模式运行
-```bash
-# 方式一：在根目录运行
-cargo run --bin magekit
 
-# 方式二：进入 gui_app 目录运行
-cd gui_app
-cargo run
+```bash
+cargo run --bin magekit
 ```
 
 #### 发布模式运行（性能优化）
+
 ```bash
 cargo run --release --bin magekit
 ```
@@ -201,11 +205,13 @@ cargo clippy
 ### 下载视频
 
 1. **添加下载**：
+
    - 点击 "频道" 页面
    - 在输入框中粘贴视频 URL
    - 点击 "添加下载" 按钮
 
 2. **配置下载选项**：
+
    - 选择视频质量（最佳/高/中/低）
    - 选择是否下载字幕
    - 选择输出格式
@@ -237,32 +243,19 @@ cargo clippy
 
 ```
 magekit-app/
-├── gui_app/                 # GUI 主应用
-│   ├── src/
-│   │   ├── app/            # 应用核心逻辑
-│   │   ├── ui/             # UI 组件
-│   │   │   ├── pages/      # 页面组件
-│   │   │   └── widgets/    # 通用组件
-│   │   ├── theme/          # 主题配置
-│   │   └── main.rs         # 入口文件
-│   └── Cargo.toml
-├── tool_manager/           # 工具管理模块
-│   ├── src/
-│   │   ├── task_manager.rs # 任务调度器
-│   │   ├── downloader.rs   # 下载器实现
-│   │   └── tool_installer.rs # 工具安装器
-│   └── Cargo.toml
-├── shared/                 # 共享类型和工具
-│   ├── src/
-│   │   ├── types.rs        # 共享数据类型
-│   │   ├── config.rs       # 配置管理
-│   │   └── lib.rs
-│   └── Cargo.toml
-├── themes/                 # 主题文件目录
-│   ├── dark.toml
-│   ├── light.toml
-│   └── ...
-├── Cargo.toml             # Workspace 配置
+├── src/                    # GUI 主应用（根 crate）
+│   ├── app/               # 应用核心逻辑与状态
+│   ├── ui/                # UI 组件与页面
+│   ├── theme/             # 主题配置
+│   └── main.rs            # 入口文件
+├── crates/                # 其他库 crates
+│   ├── shared/            # 共享类型与工具
+│   ├── tool_manager/      # 工具管理/下载调度
+│   ├── live_recorder/     # 直播录制/探测库
+│   └── xbogus/            # X-Bogus/AB-Sign 签名
+├── themes/                # 主题文件目录
+├── docs/                  # 文档与说明
+├── Cargo.toml             # Workspace 与根 crate 配置
 ├── Cargo.lock
 ├── README.md
 └── CHANGELOG.md
@@ -270,20 +263,33 @@ magekit-app/
 
 ### 模块说明
 
-#### `gui_app` - GUI 应用
+#### `src/` - GUI 应用（根 crate）
+
 - 基于 GPUI 框架的桌面应用界面
 - 实现路由、状态管理、UI 渲染
 - 包含所有页面和组件
 
-#### `tool_manager` - 工具管理
+#### `crates/tool_manager` - 工具管理
+
 - 下载任务的调度和执行
 - yt-dlp、ffmpeg 的检测、安装和更新
 - 进程管理和输出解析
 
-#### `shared` - 共享库
+#### `crates/shared` - 共享库
+
 - 跨模块的公共类型定义
 - 配置文件读写
 - 工具函数和常量
+
+#### `crates/live_recorder` - 直播录制
+
+- 平台探测、直播流信息抓取与录制
+- 提供平台工厂与流处理管线
+
+#### `crates/xbogus` - 签名组件
+
+- X-Bogus 与 AB-Sign 实现
+- 提供 JS 与 Rust 双版本签名接口
 
 ---
 
@@ -316,6 +322,7 @@ cargo clippy -- -D warnings
 3. 重启应用即可在设置中选择新主题
 
 示例主题配置：
+
 ```toml
 name = "我的主题"
 mode = "dark"
@@ -330,6 +337,7 @@ primary = "#89b4fa"
 ### 调试技巧
 
 启用详细日志输出：
+
 ```bash
 RUST_LOG=debug cargo run
 ```
@@ -349,18 +357,23 @@ RUST_LOG=debug cargo run
 ## 📝 常见问题
 
 ### Q: 构建失败，提示找不到系统库？
+
 A: 请确保已安装所有系统依赖，参考 [安装依赖](#1-安装依赖) 部分。
 
 ### Q: 应用启动后崩溃？
+
 A: 检查显卡驱动是否支持 OpenGL 3.3+，更新到最新版本驱动程序。
 
 ### Q: 下载失败提示工具不可用？
+
 A: 在设置页面检查 yt-dlp 和 ffmpeg 状态，点击安装或更新按钮。
 
 ### Q: 如何下载需要登录的视频？
+
 A: 在设置页面的 "平台 Cookie" 区域配置对应平台的 Cookie。
 
 ### Q: 下载速度慢？
+
 A: 可以在设置中配置代理服务器，或调整并发下载数量。
 
 ---

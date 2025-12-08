@@ -22,7 +22,7 @@
 
 ### 技术特性
 
-- Rust workspace 架构（shared、tool_manager、gui_app）
+- Rust workspace 架构（根 GUI crate + crates/{shared,tool_manager,live_recorder,xbogus}）
 - 异步任务处理（tokio）
 - GPU 加速 UI 渲染（GPUI）
 - 跨平台支持（macOS、Windows、Linux）

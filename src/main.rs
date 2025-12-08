@@ -6,7 +6,7 @@ use anyhow::Result;
 use gpui::*;
 use gpui_component::Root;
 use gpui_router::init as router_init;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 mod app;
 mod theme;
@@ -39,19 +39,16 @@ fn main() -> Result<()> {
         cx.set_http_client(http_client);
 
         // 加载主题文件
-        if let Err(err) = gpui_component::ThemeRegistry::watch_dir(
-            std::path::PathBuf::from("./themes"),
-            cx,
-            |cx| {
-                // 主题加载完成后，尝试应用上次保存的主题
-                tracing::debug!(
-                    "🎨 主题加载完成，共 {} 个主题可用",
-                    gpui_component::ThemeRegistry::global(cx)
-                        .sorted_themes()
-                        .len()
-                );
-            },
-        ) {
+        let themes_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes");
+        if let Err(err) = gpui_component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
+            // 主题加载完成后，尝试应用上次保存的主题
+            tracing::debug!(
+                "🎨 主题加载完成，共 {} 个主题可用",
+                gpui_component::ThemeRegistry::global(cx)
+                    .sorted_themes()
+                    .len()
+            );
+        }) {
             tracing::warn!("⚠️ 无法加载主题目录: {}", err);
         }
 

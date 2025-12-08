@@ -1,4 +1,4 @@
-// gui_app/src/ui/format_selector.rs
+// src/ui/format_selector.rs
 //! 格式选择器组件 - 视频/音频格式选择、画质和音频质量选择、字幕选项
 
 use gpui::prelude::FluentBuilder;

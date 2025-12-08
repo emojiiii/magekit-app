@@ -1,4 +1,4 @@
-// gui_app/src/ui/notification.rs
+// src/ui/notification.rs
 //! 通知系统组件 - Toast通知、进度指示器、错误处理UI
 
 use gpui::prelude::FluentBuilder;

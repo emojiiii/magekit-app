@@ -23,7 +23,7 @@ MageKit 是一个基于 Rust 的跨平台视频下载器应用，使用 GPUI 框
 
 ### 外部工具路径
 
-工具路径由 `shared/src/utils.rs` 中的函数动态获取：
+工具路径由 `crates/shared/src/utils.rs` 中的函数动态获取：
 
 | 平台        | 路径                                             |
 | ----------- | ------------------------------------------------ |
@@ -41,46 +41,19 @@ MageKit 是一个基于 Rust 的跨平台视频下载器应用，使用 GPUI 框
 
 ```
 magekit-app/
-├── Cargo.toml              # Workspace 根配置
-├── gui_app/                # 主 GUI 应用
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs         # 应用入口
-│       ├── app/            # 应用状态管理
-│       │   ├── mod.rs      # 模块导出
-│       │   ├── state.rs    # AppState 核心状态
-│       │   ├── types.rs    # 类型定义
-│       │   ├── download.rs # 下载逻辑
-│       │   ├── tasks.rs    # 任务管理
-│       │   ├── tools.rs    # 工具管理
-│       │   └── utils.rs    # 工具函数
-│       ├── ui/             # UI 组件
-│       │   ├── mod.rs
-│       │   ├── main_window.rs   # 主窗口
-│       │   ├── layout.rs        # 布局组件
-│       │   ├── pages/           # 页面组件
-│       │   │   ├── home/        # 首页（下载页）
-│       │   │   │   ├── page.rs
-│       │   │   │   └── widgets/ # 子组件
-│       │   │   ├── tasks/       # 任务列表页
-│       │   │   ├── tools/       # 工具管理页
-│       │   │   └── settings/    # 设置页
-│       │   └── widgets/         # 公共组件
-│       └── theme/          # 主题相关
-├── shared/                 # 共享库
-│   └── src/
-│       ├── lib.rs
-│       ├── types.rs        # 共享类型（VideoInfo, TaskStatus 等）
-│       ├── constants.rs    # 常量
-│       └── utils.rs        # 工具函数
-├── tool_manager/           # 工具管理器
-│   └── src/
-│       ├── lib.rs
-│       ├── task_manager.rs # ToolManager 主类
-│       ├── downloader.rs   # 视频下载器
-│       ├── storage.rs      # 工具存储
-│       └── updater.rs      # 工具更新
-└── themes/                 # 主题文件目录
+├── Cargo.toml              # Workspace + 根 crate 配置
+├── src/                    # GUI 主应用
+│   ├── main.rs             # 应用入口
+│   ├── app/                # 应用状态管理
+│   ├── ui/                 # 页面与组件
+│   └── theme/              # 主题相关
+├── crates/                 # 其他库 crates
+│   ├── shared/             # 共享类型（VideoInfo, TaskStatus 等）
+│   ├── tool_manager/       # 工具管理/下载器
+│   ├── live_recorder/      # 直播录制/平台适配
+│   └── xbogus/             # X-Bogus/AB-Sign 签名
+├── themes/                 # 主题文件目录
+└── docs/                   # 文档与说明
 ```
 
 ## 运行项目

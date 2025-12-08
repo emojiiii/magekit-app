@@ -1,4 +1,4 @@
-// gui_app/src/ui/batch_panel.rs
+// src/ui/batch_panel.rs
 //! 批量操作面板组件 - 批量URL导入、下载模板、分类管理
 
 use gpui::prelude::FluentBuilder;

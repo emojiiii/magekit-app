@@ -7,8 +7,6 @@ use magekit_shared::create_tokio_command;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use tokio::fs::OpenOptions;
-use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval;
 use tracing::{info, warn};
@@ -84,8 +82,6 @@ impl LiveRecorder {
             config: config.clone(),
             stream_url,
             output_path: output_path.clone(),
-            platform_handler,
-            room_id,
             start_time: Instant::now(),
         };
 
@@ -188,8 +184,6 @@ struct RecordingSession {
     config: RecordConfig,
     stream_url: String,
     output_path: PathBuf,
-    platform_handler: std::sync::Arc<dyn crate::platforms::PlatformHandler>,
-    room_id: String,
     start_time: Instant,
 }
 
@@ -399,129 +393,6 @@ impl RecordingSession {
         }
     }
 
-    /// 直接录制流（不使用FFmpeg）
-    async fn record_direct(&mut self) -> RecorderResult<()> {
-        // 创建带请求头的 HTTP 客户端
-        let mut client_builder =
-            reqwest::Client::builder().timeout(Duration::from_secs(self.config.timeout));
-
-        // 添加代理设置
-        if let Some(proxy_url) = &self.config.proxy {
-            if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
-                client_builder = client_builder.proxy(proxy);
-            }
-        }
-
-        let client = client_builder
-            .build()
-            .map_err(|e| RecorderError::RecordingError(format!("创建HTTP客户端失败: {}", e)))?;
-
-        // 构建带请求头的请求
-        let mut request = client.get(&self.stream_url);
-
-        // 添加默认请求头
-        request = request.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        request = request.header("Accept", "*/*");
-        request = request.header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
-        request = request.header("Connection", "keep-alive");
-
-        // 添加配置中的自定义请求头
-        for (key, value) in &self.config.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
-
-        // 根据流 URL 添加特定的 Referer
-        if self.stream_url.contains("huya") {
-            request = request.header("Referer", "https://www.huya.com/");
-        } else if self.stream_url.contains("douyin") {
-            request = request.header("Referer", "https://live.douyin.com/");
-        } else if self.stream_url.contains("douyu") {
-            request = request.header("Referer", "https://www.douyu.com/");
-        } else if self.stream_url.contains("bilibili") {
-            request = request.header("Referer", "https://live.bilibili.com/");
-        } else if self.stream_url.contains("kuaishou") {
-            request = request.header("Referer", "https://live.kuaishou.com/");
-        }
-
-        info!("开始直接录制流: {}", self.stream_url);
-
-        let mut response = request.send().await?;
-
-        if !response.status().is_success() {
-            return Err(RecorderError::RecordingError(format!(
-                "HTTP请求失败: {} - 流URL可能已过期或无效",
-                response.status()
-            )));
-        }
-
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.output_path)
-            .await?;
-
-        let mut writer = BufWriter::new(file);
-        let mut downloaded = 0u64;
-
-        // 使用 Arc<AtomicU64> 来在任务间共享下载进度
-        let downloaded_shared = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let downloaded_for_task = downloaded_shared.clone();
-
-        // 启动进度监控任务
-        let progress_tx = self.progress_tx.clone();
-        let start_time = self.start_time;
-        let progress_task = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(1));
-            let mut prev_size = 0u64;
-            loop {
-                ticker.tick().await;
-                let current_size = downloaded_for_task.load(std::sync::atomic::Ordering::Relaxed);
-                let speed = current_size.saturating_sub(prev_size);
-                prev_size = current_size;
-
-                let progress = RecordProgress {
-                    status: RecordStatus::Recording,
-                    start_time: Some(chrono::Utc::now()),
-                    duration: start_time.elapsed().as_secs(),
-                    size: current_size,
-                    speed,
-                    error: None,
-                };
-                if progress_tx.send(progress).is_err() {
-                    break;
-                }
-            }
-        });
-
-        info!("开始接收流数据...");
-
-        while let Some(chunk) = response.chunk().await? {
-            // 检查停止信号
-            if self.stop_rx.try_recv().is_ok() {
-                info!("收到停止信号，停止录制");
-                break;
-            }
-
-            let chunk_len = chunk.len() as u64;
-            writer.write_all(&chunk).await?;
-            downloaded += chunk_len;
-
-            // 更新共享的下载进度
-            downloaded_shared.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        // 停止进度监控任务
-        progress_task.abort();
-
-        writer.flush().await?;
-        info!(
-            "✅ 录制完成，总大小: {} 字节 ({:.2} MB)",
-            downloaded,
-            downloaded as f64 / 1024.0 / 1024.0
-        );
-        Ok(())
-    }
 }
 
 /// 录制句柄，用于控制录制过程

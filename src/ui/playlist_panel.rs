@@ -1,4 +1,4 @@
-// gui_app/src/ui/playlist_panel.rs
+// src/ui/playlist_panel.rs
 //! 播放列表下载组件 - 支持播放列表视频选择和批量下载
 
 use gpui::prelude::FluentBuilder;

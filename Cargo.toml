@@ -1,8 +1,12 @@
 [workspace]
-members = ["tool_manager", "gui_app", "shared", "xbogus", "live_recorder"]
+members = [
+    ".",
+    "crates/shared",
+    "crates/tool_manager",
+    "crates/live_recorder",
+    "crates/xbogus",
+]
 resolver = "2"
-default-members = ["gui_app"]
-
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -37,6 +41,75 @@ tracing-subscriber = "0.3"
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
+
+[package]
+name = "magekit-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "magekit"
+path = "src/main.rs"
+
+[dependencies]
+# 内部依赖
+magekit-shared = { path = "crates/shared" }
+magekit-tool-manager = { path = "crates/tool_manager" }
+live_recorder = { path = "crates/live_recorder" }
+
+# GPUI dependencies
+gpui = { workspace = true }
+gpui-component = { workspace = true }
+gpui-component-assets = { workspace = true }
+gpui-router = "0.2.7"
+
+# 异步运行时
+tokio = { workspace = true }
+smol = "2"
+
+# 错误处理
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 配置
+toml = { workspace = true }
+dirs = { workspace = true }
+
+# 日志
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# 时间处理
+chrono = { workspace = true }
+
+# 随机数
+rand = "0.8"
+
+# 同步原语
+parking_lot = "0.12"
+
+# 工具检测
+which = "7"
+
+# 文件对话框
+rfd = "0.15"
+
+# HTTP 客户端（用于加载远程图片）
+reqwest_client = { workspace = true }
+
+# 临时文件（用于 Cookie）
+tempfile = "3"
+open = "5.3.3"
 
 [profile.dev]
 codegen-units = 16
