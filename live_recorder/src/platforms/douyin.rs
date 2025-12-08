@@ -272,7 +272,8 @@ impl DouyinHandler {
         use rand::{thread_rng, Rng};
 
         let mut rng = thread_rng();
-        let bytes: Vec<u8> = (0..128).map(|_| rng.gen()).collect();
+        // Rust 2024 将 `gen` 视为关键字，这里使用原始标识符调用 rand 的生成方法
+        let bytes: Vec<u8> = (0..128).map(|_| rng.r#gen()).collect();
         format!("{}==", general_purpose::STANDARD.encode(&bytes))
     }
 

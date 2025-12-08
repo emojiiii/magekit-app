@@ -523,7 +523,7 @@ impl SoopHandler {
         let lines: Vec<&str> = content.lines().collect();
         let mut current_bandwidth = 0u64;
 
-        for (i, line) in lines.iter().enumerate() {
+        for line in lines.iter() {
             if line.starts_with("#EXT-X-STREAM-INF") {
                 if let Some(caps) = bandwidth_re.captures(line) {
                     current_bandwidth = caps[1].parse().unwrap_or(0);
