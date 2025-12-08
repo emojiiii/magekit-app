@@ -133,7 +133,7 @@ jobs:
             "MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg"
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-dmg
           path: MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg
@@ -143,7 +143,7 @@ jobs:
           zip -r "MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip" MageKit.app
 
       - name: Upload macOS App zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-app-zip
           path: MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip
@@ -194,13 +194,13 @@ jobs:
           Copy-Item "target\release\magekit.exe" "MageKit-$version-windows-x64.exe"
 
       - name: Upload Windows portable zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-portable-zip
           path: MageKit-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip
 
       - name: Upload Windows exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-exe
           path: MageKit-${{ needs.prepare.outputs.version }}-windows-x64.exe
@@ -346,14 +346,14 @@ jobs:
           tar -czvf "MageKit-${VERSION}-linux-x64.tar.gz" -C release-linux .
 
       - name: Upload Linux AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-appimage
           path: MageKit-${{ needs.prepare.outputs.version }}-linux-x64.AppImage
           if-no-files-found: ignore
 
       - name: Upload Linux tar.gz
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-tar-gz
           path: MageKit-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
