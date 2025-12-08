@@ -24,7 +24,7 @@ fn main() -> Result<()> {
         .with_thread_names(false)
         .init();
 
-    tracing::info!("🚀 MageKit 视频下载器启动 - 完整GUI架构实现");
+    tracing::debug!("🚀 MageKit 视频下载器启动");
 
     // 注册图标资源
     let app = Application::new().with_assets(gpui_component_assets::Assets);
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
             cx,
             |cx| {
                 // 主题加载完成后，尝试应用上次保存的主题
-                tracing::info!(
+                tracing::debug!(
                     "🎨 主题加载完成，共 {} 个主题可用",
                     gpui_component::ThemeRegistry::global(cx)
                         .sorted_themes()
@@ -60,10 +60,7 @@ fn main() -> Result<()> {
 
         // 创建应用状态（同步初始化Tool Manager）
         let app_state = match AppState::new_sync() {
-            Ok(state) => {
-                tracing::info!("✅ 应用状态初始化完成");
-                Arc::new(state)
-            }
+            Ok(state) => Arc::new(state),
             Err(e) => {
                 tracing::error!("❌ 应用状态初始化失败: {}", e);
                 return;
@@ -110,13 +107,7 @@ fn main() -> Result<()> {
             return;
         }
 
-        tracing::info!("🎉 主窗口已成功打开！");
-        tracing::info!("📊 项目统计:");
-        tracing::info!("  - 总代码行数: ~2,800行");
-        tracing::info!("  - shared库: ~1,000行 (95% ✅)");
-        tracing::info!("  - tool_manager: ~1,600行 (95% ✅)");
-        tracing::info!("  - gui_app: ~200行 (30% ✅)");
-        tracing::info!("🎯 阶段0.3 GUI基础架构完成，准备端到端验证");
+        tracing::info!("✅ GUI 已启动");
     });
 
     Ok(())

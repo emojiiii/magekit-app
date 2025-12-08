@@ -219,10 +219,14 @@ impl ChannelPage {
         let app_state = self.app_state.clone();
         let url_clone = url.clone();
 
+        tracing::info!("📡 频道解析请求: url={}", url_clone);
+
         // 在后台线程中获取频道信息
         cx.spawn(async move |this, cx| {
             // 使用 smol::unblock 执行阻塞的 tokio 操作
+            let url_for_log = url_clone.clone();
             let result = smol::unblock(move || {
+                let url_for_request = url_clone.clone();
                 // 获取 tokio runtime
                 let runtime = app_state.runtime.clone();
                 let config = app_state.config();
@@ -237,7 +241,7 @@ impl ChannelPage {
                     };
                     app_state
                         .tool_manager
-                        .get_channel_videos(&url_clone, cookies_opt)
+                        .get_channel_videos(&url_for_request, cookies_opt)
                         .await
                 })
             })
@@ -248,7 +252,8 @@ impl ChannelPage {
                 match result {
                     Ok(mut info) => {
                         tracing::info!(
-                            "📺 频道解析成功: {} - {} 个视频, {} 个标签页",
+                            "📺 频道解析成功: url={} title={} videos={} tabs={}",
+                            url_for_log,
                             info.title,
                             info.video_count,
                             info.tabs.len()
@@ -271,7 +276,7 @@ impl ChannelPage {
                         this.update_item_sizes();
                     }
                     Err(e) => {
-                        tracing::error!("❌ 频道解析失败: {}", e);
+                        tracing::error!("❌ 频道解析失败: url={}, err={}", url_for_log, e);
                         this.state = ChannelState::Error(e.to_string());
                     }
                 }

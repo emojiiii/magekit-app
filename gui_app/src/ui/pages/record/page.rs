@@ -160,7 +160,7 @@ impl RecordingPage {
         }
         *check_running.write() = true;
 
-        tracing::info!("🚀 启动监控任务，检测间隔: {} 秒", check_interval);
+        tracing::debug!("🚀 启动监控任务，检测间隔: {} 秒", check_interval);
 
         // 立即执行一次检测
         self.check_all_rooms(cx);
@@ -182,7 +182,7 @@ impl RecordingPage {
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
 
-        tracing::info!("🔍 开始检查 {} 个房间状态...", rooms.len());
+        tracing::debug!("🔍 开始检查 {} 个房间状态...", rooms.len());
 
         cx.spawn(async move |this, cx| {
             for room in rooms {
@@ -214,11 +214,11 @@ impl RecordingPage {
                         let is_live = status == LiveRoomStatus::Live;
 
                         // 调试日志
-                        tracing::info!("📦 房间 {} 状态检查结果:", room_id);
-                        tracing::info!("   - 状态: {:?}", status);
-                        tracing::info!("   - 标题: {:?}", title);
-                        tracing::info!("   - 封面: {:?}", cover_url);
-                        tracing::info!("   - 主播: {}", room_info.anchor_name);
+                        tracing::debug!("📦 房间 {} 状态检查结果:", room_id);
+                        tracing::debug!("   - 状态: {:?}", status);
+                        tracing::debug!("   - 标题: {:?}", title);
+                        tracing::debug!("   - 封面: {:?}", cover_url);
+                        tracing::debug!("   - 主播: {}", room_info.anchor_name);
 
                         let _ = this.update(cx, |this, cx| {
                             let is_recording = this
@@ -249,7 +249,7 @@ impl RecordingPage {
 
                                 // 同步标题到缓存
                                 if title.is_some() && room.cached_title != title {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "📝 更新房间 {} 缓存标题: {:?} -> {:?}",
                                         room_id,
                                         room.cached_title,
@@ -260,7 +260,7 @@ impl RecordingPage {
                                 }
                                 // 同步封面到缓存
                                 if cover_url.is_some() && room.cached_cover_url != cover_url {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "🖼️ 更新房间 {} 缓存封面: {:?}",
                                         room_id,
                                         cover_url
@@ -274,7 +274,7 @@ impl RecordingPage {
                                     need_save = true;
                                 }
 
-                                tracing::info!("📊 房间 {} need_save={}", room_id, need_save);
+                                tracing::debug!("📊 房间 {} need_save={}", room_id, need_save);
                             } else {
                                 tracing::warn!("⚠️ 找不到房间 {} 在 monitored_rooms 中", room_id);
                             }
@@ -323,7 +323,7 @@ impl RecordingPage {
                 }
             }
 
-            tracing::info!("✅ 房间状态检查完成");
+            tracing::debug!("✅ 房间状态检查完成");
         })
         .detach();
     }
@@ -341,7 +341,7 @@ impl RecordingPage {
         if let Err(e) = magekit_shared::utils::save_app_config(&config_clone) {
             tracing::error!("❌ 保存配置失败: {}", e);
         } else {
-            tracing::info!("✅ 配置已保存");
+            tracing::debug!("✅ 配置已保存");
         }
     }
 
@@ -453,19 +453,25 @@ impl RecordingPage {
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
 
+        tracing::info!("📡 获取直播间信息请求: url={}", url);
+
         cx.spawn(async move |this, cx| {
-            let url_clone = url.clone();
+            let url_for_log = url.clone();
+            let url_for_request = url.clone();
 
             let result = runtime
-                .spawn(async move { live_recorder.check_room_status(&url_clone).await })
+                .spawn(async move { live_recorder.check_room_status(&url_for_request).await })
                 .await;
 
             match result {
                 Ok(Ok(room_info)) => {
                     tracing::info!(
-                        "✅ 成功获取直播间信息: {} - {}",
+                        "✅ 获取直播间信息成功: url={} room_id={} anchor={} title={} status={:?}",
+                        url_for_log,
+                        room_info.room_id,
                         room_info.anchor_name,
-                        room_info.title
+                        room_info.title,
+                        room_info.status
                     );
 
                     let status = match room_info.status {
@@ -508,7 +514,7 @@ impl RecordingPage {
                 }
                 Ok(Err(e)) => {
                     let error_msg = Self::format_error(&e);
-                    tracing::error!("❌ 获取直播间信息失败: {}", error_msg);
+                    tracing::error!("❌ 获取直播间信息失败: url={}, err={}", url_for_log, error_msg);
 
                     let _ = this.update(cx, |this, cx| {
                         // 更新房间状态为错误，但保留在列表中
@@ -529,7 +535,7 @@ impl RecordingPage {
                 }
                 Err(e) => {
                     let error_msg = format!("任务执行失败: {}", e);
-                    tracing::error!("❌ {}", error_msg);
+                    tracing::error!("❌ 获取直播间信息失败: url={}, err={}", url_for_log, error_msg);
 
                     let _ = this.update(cx, |this, cx| {
                         if let Some(room) =
@@ -667,7 +673,12 @@ impl RecordingPage {
             cx,
         );
 
-        tracing::info!("🎥 开始录制: {} -> {:?}", anchor_name, output_path);
+        tracing::info!(
+            "🎥 开始录制: anchor={} url={} -> {:?}",
+            anchor_name,
+            url,
+            output_path
+        );
 
         // 创建录制配置
         let config = RecordConfig {

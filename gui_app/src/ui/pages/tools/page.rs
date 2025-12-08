@@ -52,7 +52,7 @@ impl ToolsPage {
         self.is_checking = true;
         self.error_message = None;
 
-        tracing::info!("🔍 刷新工具状态（后台线程）...");
+        tracing::debug!("🔍 刷新工具状态（后台线程）...");
 
         let app_state = self.app_state.clone();
 
@@ -66,8 +66,8 @@ impl ToolsPage {
             })
             .await;
 
-            tracing::info!("🔍 yt-dlp 状态: {:?}", yt_dlp_status);
-            tracing::info!("🔍 ffmpeg 状态: {:?}", ffmpeg_status);
+            tracing::debug!("🔍 yt-dlp 状态: {:?}", yt_dlp_status);
+            tracing::debug!("🔍 ffmpeg 状态: {:?}", ffmpeg_status);
 
             // 更新 UI
             let _ = this.update(cx, |this, cx| {
@@ -89,7 +89,7 @@ impl ToolsPage {
                 }
 
                 this.is_checking = false;
-                tracing::info!("🔍 工具状态刷新完成");
+                tracing::debug!("🔍 工具状态刷新完成");
                 cx.notify();
             });
         })
