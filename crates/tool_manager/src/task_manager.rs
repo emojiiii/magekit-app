@@ -64,21 +64,12 @@ impl ToolManager {
 
         // 获取工具路径
         let yt_dlp_path = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
-        let ffmpeg_path = storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
-
-        // 检查ffmpeg是否可用
-        let ffmpeg_path = if ffmpeg_path.exists() {
-            Some(ffmpeg_path)
-        } else {
-            // 尝试在系统PATH中查找
-            match which::which("ffmpeg") {
-                Ok(path) => Some(path),
-                Err(_) => {
-                    tracing::warn!("ffmpeg not found in PATH, some features may not work");
-                    None
-                }
-            }
-        };
+        // 优先全局解析器，再兜底存储路径
+        let ffmpeg_path = magekit_shared::resolve_ffmpeg_path()
+            .or_else(|| {
+                let p = storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
+                if p.exists() { Some(p) } else { None }
+            });
 
         let downloader = VideoDownloader::new(yt_dlp_path, ffmpeg_path);
         let config_manager = ConfigManager::new_sync()?;

@@ -40,13 +40,13 @@ impl AppState {
             };
         }
 
-        // 再检查系统 PATH
-        let tool_name = match tool_type {
-            magekit_shared::ToolType::YtDlp => "yt-dlp",
-            magekit_shared::ToolType::Ffmpeg => "ffmpeg",
+        // 再检查系统/路径解析
+        let resolved = match tool_type {
+            magekit_shared::ToolType::YtDlp => magekit_shared::resolve_yt_dlp_path(),
+            magekit_shared::ToolType::Ffmpeg => magekit_shared::resolve_ffmpeg_path(),
         };
 
-        if let Ok(path) = which::which(tool_name) {
+        if let Some(path) = resolved {
             // 获取系统工具版本
             let version = Self::get_system_tool_version_sync(tool_type, &path);
             return ToolStatus::Installed {

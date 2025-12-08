@@ -3,7 +3,7 @@
 //! 包含视频信息获取和下载功能
 
 use anyhow::Result;
-use magekit_shared::{PlatformCookie, TaskId, create_command};
+use magekit_shared::{PlatformCookie, TaskId, VideoFormat, create_command};
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,6 +107,33 @@ fn create_cookie_file(
     );
 
     Some(temp_file)
+}
+
+/// 选择带直链的最佳格式（分辨率优先）
+fn pick_best_direct_format(formats: &[VideoFormat]) -> Option<VideoFormat> {
+    let mut candidates: Vec<VideoFormat> = formats
+        .iter()
+        .filter(|f| f.download_url.is_some())
+        .cloned()
+        .collect();
+
+    candidates.sort_by(|a, b| {
+        let height_a = a
+            .resolution
+            .as_ref()
+            .and_then(|r| r.split('x').last())
+            .and_then(|h| h.parse::<u32>().ok())
+            .unwrap_or(0);
+        let height_b = b
+            .resolution
+            .as_ref()
+            .and_then(|r| r.split('x').last())
+            .and_then(|h| h.parse::<u32>().ok())
+            .unwrap_or(0);
+        height_b.cmp(&height_a)
+    });
+
+    candidates.into_iter().next()
 }
 
 impl AppState {
@@ -239,6 +266,8 @@ impl AppState {
         is_resume: bool,
     ) -> std::thread::JoinHandle<Result<std::path::PathBuf>> {
         let storage = self.tool_manager.storage.clone();
+        let tool_manager = self.tool_manager.clone();
+        let runtime = self.runtime.clone();
 
         // 获取 cookies（在主线程获取，避免跨线程访问）
         let config = self.config();
@@ -264,6 +293,11 @@ impl AppState {
         }
 
         std::thread::spawn(move || {
+            let platform = extract_platform_from_url(&url);
+            let is_direct_platform =
+                matches!(platform.as_deref(), Some("douyin") | Some("tiktok"));
+            let mut download_target = url.clone();
+
             // 创建临时 Cookie 文件（如果有匹配的 Cookie）
             let cookie_file = if !cookies.is_empty() {
                 if let Some(platform) = extract_platform_from_url(&url) {
@@ -275,25 +309,69 @@ impl AppState {
                 None
             };
 
-            // 获取 yt-dlp 路径
-            let yt_dlp_path = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
+            // 如果是需要直链的平台，先通过解析器拿到直链
+            if is_direct_platform {
+                let cookies_opt = if cookies.is_empty() {
+                    None
+                } else {
+                    Some(cookies.as_slice())
+                };
+                match runtime.block_on(async {
+                    tool_manager
+                        .get_video_info(&url, cookies_opt)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))
+                }) {
+                    Ok(info) => {
+                        if let Some(best) = pick_best_direct_format(&info.formats) {
+                            if let Some(direct_url) = best.download_url.clone() {
+                                tracing::info!(
+                                    "🔗 使用直链下载 (平台: {:?}): {}",
+                                    platform,
+                                    direct_url
+                                );
+                                download_target = direct_url;
+                            } else {
+                                tracing::warn!("⚠️ 直链格式缺少下载地址，继续使用原始链接");
+                            }
+                        } else {
+                            tracing::warn!("⚠️ 未找到可用的直链格式，继续使用原始链接");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "⚠️ 直链解析失败 (平台: {:?})，使用原始链接: {}",
+                            platform,
+                            err
+                        );
+                    }
+                }
+            }
 
-            // 如果应用内没有安装，尝试使用系统的
-            let yt_dlp_path = if yt_dlp_path.exists() {
-                yt_dlp_path
-            } else {
-                which::which("yt-dlp")
-                    .map_err(|_| anyhow::anyhow!("yt-dlp 未安装，请先在工具页面安装"))?
-            };
+            // 获取 yt-dlp 路径
+            let yt_dlp_path = magekit_shared::resolve_yt_dlp_path()
+                .or_else(|| {
+                    let path = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
+                    if path.exists() {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| anyhow::anyhow!("yt-dlp 未安装，请先在工具页面安装"))?;
 
             // 处理格式 ID
-            let effective_format_id = if format_id.chars().all(|c| c.is_ascii_digit()) {
+            let mut effective_format_id = if format_id.chars().all(|c| c.is_ascii_digit()) {
                 format!("{}+bestaudio/best", format_id)
             } else if format_id.contains('+') || format_id.starts_with("best") {
                 format_id.clone()
             } else {
                 format!("{}+bestaudio/best", format_id)
             };
+            if is_direct_platform {
+                // 直链下载无需指定复杂格式，直接用 best
+                effective_format_id = "best".to_string();
+            }
 
             tracing::info!(
                 "📝 原始格式ID: {}, 实际使用: {}, 续传模式: {}",
@@ -307,7 +385,7 @@ impl AppState {
 
             // 构建下载命令（使用无窗口命令）
             let mut cmd = create_command(&yt_dlp_path);
-            cmd.arg(&url)
+            cmd.arg(&download_target)
                 .arg("--format")
                 .arg(&effective_format_id)
                 .arg("--output")
@@ -349,11 +427,8 @@ impl AppState {
             }
 
             // 获取 ffmpeg 路径
-            let ffmpeg_path = storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
-            if ffmpeg_path.exists() {
-                cmd.arg("--ffmpeg-location").arg(&ffmpeg_path);
-            } else if let Ok(system_ffmpeg) = which::which("ffmpeg") {
-                cmd.arg("--ffmpeg-location").arg(system_ffmpeg);
+            if let Some(ffmpeg_path) = magekit_shared::resolve_ffmpeg_path() {
+                cmd.arg("--ffmpeg-location").arg(ffmpeg_path);
             }
 
             // 启动进程

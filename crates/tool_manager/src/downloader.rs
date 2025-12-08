@@ -1284,6 +1284,7 @@ impl From<VideoInfoData> for VideoInfo {
                     vcodec: f.vcodec,
                     acodec: f.acodec,
                     quality: f.quality,
+                    download_url: None,
                 })
                 .collect(),
             url: data.webpage_url,

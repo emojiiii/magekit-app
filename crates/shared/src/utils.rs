@@ -137,6 +137,30 @@ pub fn get_tools_dir() -> Result<PathBuf> {
     Ok(tools_dir)
 }
 
+/// 解析 yt-dlp 可执行路径：优先应用内工具目录，其次系统 PATH
+pub fn resolve_yt_dlp_path() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
+    if let Ok(dir) = get_tools_dir() {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    which::which("yt-dlp").ok()
+}
+
+/// 解析 ffmpeg 可执行路径：优先应用内工具目录，其次系统 PATH
+pub fn resolve_ffmpeg_path() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    if let Ok(dir) = get_tools_dir() {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    which::which("ffmpeg").ok()
+}
+
 /// 获取临时目录
 pub fn get_temp_dir() -> Result<PathBuf> {
     let temp_dir = std::env::temp_dir().join(APP_NAME);

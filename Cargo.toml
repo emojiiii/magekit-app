@@ -5,6 +5,7 @@ members = [
     "crates/tool_manager",
     "crates/live_recorder",
     "crates/xbogus",
+    "crates/extractor",
 ]
 resolver = "2"
 [workspace.package]

@@ -17,6 +17,9 @@ pub struct VideoFormat {
     pub vcodec: Option<String>,
     pub acodec: Option<String>,
     pub quality: Option<String>,
+    /// 直链下载地址（自定义解析使用），yt-dlp 解析时为空
+    #[serde(default)]
+    pub download_url: Option<String>,
 }
 
 impl VideoFormat {
