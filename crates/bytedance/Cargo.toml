@@ -26,7 +26,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 # 加密相关
-rand = "0.8"
+rand = "0.9"
 base64 = "0.22"
 md5 = "0.7"
 urlencoding = "2.1"

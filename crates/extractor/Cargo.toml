@@ -11,7 +11,7 @@ bytedance = { path = "../bytedance" }
 base64 = "0.21"
 indexmap = "2"
 md5 = "0.7"
-rand = "0.8"
+rand = "0.9"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
