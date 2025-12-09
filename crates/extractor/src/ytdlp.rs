@@ -27,10 +27,7 @@ pub async fn extract_video_info(
     cookies: Option<&[PlatformCookie]>,
     yt_dlp_path: &Path,
 ) -> ExtractResult<VideoInfo> {
-    let cookie_header = build_cookie_header(
-        extract_platform_from_url(url).as_deref(),
-        cookies,
-    );
+    let cookie_header = build_cookie_header(extract_platform_from_url(url).as_deref(), cookies);
 
     let mut cmd = create_tokio_command(yt_dlp_path);
     cmd.arg("--dump-json").arg("--no-download").arg(url);
@@ -61,10 +58,7 @@ pub async fn extract_channel_info(
     cookies: Option<&[PlatformCookie]>,
     yt_dlp_path: &Path,
 ) -> ExtractResult<ChannelInfo> {
-    let cookie_header = build_cookie_header(
-        extract_platform_from_url(url).as_deref(),
-        cookies,
-    );
+    let cookie_header = build_cookie_header(extract_platform_from_url(url).as_deref(), cookies);
 
     let mut cmd = create_tokio_command(yt_dlp_path);
     cmd.arg("--flat-playlist")
@@ -97,10 +91,7 @@ pub async fn extract_channel_info(
     let mut tabs: Vec<ChannelTab> = Vec::new();
 
     if let Some(ref data_entries) = channel_data.entries {
-        fn collect_tab_entries(
-            entry: &serde_json::Value,
-            entries: &mut Vec<ChannelVideoEntry>,
-        ) {
+        fn collect_tab_entries(entry: &serde_json::Value, entries: &mut Vec<ChannelVideoEntry>) {
             if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
                 for nested_entry in nested_entries {
                     collect_tab_entries(nested_entry, entries);
@@ -339,4 +330,3 @@ impl From<VideoInfoData> for VideoInfo {
         }
     }
 }
-

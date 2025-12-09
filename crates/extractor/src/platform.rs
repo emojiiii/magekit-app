@@ -66,4 +66,3 @@ impl PlatformSupport for Platform {
         }
     }
 }
-

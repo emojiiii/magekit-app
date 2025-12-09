@@ -2,11 +2,11 @@
 //!
 //! 提供抖音 Web API 的完整接口调用
 
+use super::endpoints::DouyinEndpoints;
+use super::types::*;
 use crate::client::{BdClient, ClientConfig};
 use crate::error::{BdError, BdResult};
 use crate::sign::ab_sign;
-use super::endpoints::DouyinEndpoints;
-use super::types::*;
 use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::Value;
@@ -104,16 +104,14 @@ impl DouyinApi {
     }
 
     /// 发送 API 请求
-    async fn fetch_json(
-        &self,
-        endpoint: &str,
-        params: IndexMap<&str, String>,
-    ) -> BdResult<Value> {
+    async fn fetch_json(&self, endpoint: &str, params: IndexMap<&str, String>) -> BdResult<Value> {
         let url = self.sign_url(endpoint, &params);
         tracing::debug!("🌐 请求 URL: {}", url);
         tracing::debug!("🍪 Cookie 长度: {} bytes", self.cookie.len());
 
-        let resp = self.client.inner()
+        let resp = self
+            .client
+            .inner()
             .get(&url)
             .header("Referer", "https://www.douyin.com/")
             .header("Accept", "application/json, text/plain, */*")
@@ -124,22 +122,28 @@ impl DouyinApi {
 
         let status = resp.status();
         tracing::debug!("📡 响应状态: {}", status);
-        
+
         if !status.is_success() {
             return Err(BdError::Network(format!("HTTP {}", status)));
         }
 
         let text = resp.text().await?;
         tracing::debug!("📦 响应长度: {} bytes", text.len());
-        
+
         if text.is_empty() {
             tracing::warn!("⚠️ API 返回空响应，可能需要有效的 Cookie");
-            return Err(BdError::Network("服务器返回空响应，请检查 Cookie 是否有效".to_string()));
+            return Err(BdError::Network(
+                "服务器返回空响应，请检查 Cookie 是否有效".to_string(),
+            ));
         }
-        
+
         // 尝试解析 JSON，失败时打印前 500 字符
         serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 500 { &text[..500] } else { &text };
+            let preview = if text.len() > 500 {
+                &text[..500]
+            } else {
+                &text
+            };
             tracing::error!("❌ JSON 解析失败: {}", e);
             tracing::error!("❌ 响应内容预览: {}", preview);
             BdError::Other(format!("JSON 解析失败: {}", e))
@@ -158,8 +162,9 @@ impl DouyinApi {
     /// 获取作品详情（解析后）
     pub async fn get_aweme_info(&self, aweme_id: &str) -> BdResult<AwemeInfo> {
         let json = self.get_post_detail(aweme_id).await?;
-        
-        let detail = json.get("aweme_detail")
+
+        let detail = json
+            .get("aweme_detail")
             .ok_or_else(|| BdError::MissingData("aweme_detail".to_string()))?;
 
         Ok(AwemeInfo {
@@ -169,14 +174,20 @@ impl DouyinApi {
                 uid: a["uid"].as_str().map(|s| s.to_string()),
                 sec_uid: a["sec_uid"].as_str().map(|s| s.to_string()),
                 nickname: a["nickname"].as_str().map(|s| s.to_string()),
-                avatar_url: a["avatar_thumb"]["url_list"][0].as_str().map(|s| s.to_string()),
+                avatar_url: a["avatar_thumb"]["url_list"][0]
+                    .as_str()
+                    .map(|s| s.to_string()),
             }),
             video: detail.get("video").map(|v| VideoData {
                 duration: v["duration"].as_u64(),
                 cover_url: v["cover"]["url_list"][0].as_str().map(|s| s.to_string()),
                 play_urls: v["play_addr"]["url_list"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|u| u.as_str().map(|s| s.to_string())).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|u| u.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 width: v["width"].as_u64().map(|n| n as u32),
                 height: v["height"].as_u64().map(|n| n as u32),
@@ -201,8 +212,9 @@ impl DouyinApi {
     /// 获取用户详情（解析后）
     pub async fn get_user_info(&self, sec_user_id: &str) -> BdResult<UserInfo> {
         let json = self.get_user_profile(sec_user_id).await?;
-        
-        let user = json.get("user")
+
+        let user = json
+            .get("user")
             .ok_or_else(|| BdError::UserNotFound(sec_user_id.to_string()))?;
 
         Ok(UserInfo {
@@ -210,7 +222,9 @@ impl DouyinApi {
             sec_user_id: user["sec_uid"].as_str().unwrap_or(sec_user_id).to_string(),
             nickname: user["nickname"].as_str().unwrap_or("").to_string(),
             signature: user["signature"].as_str().map(|s| s.to_string()),
-            avatar_url: user["avatar_larger"]["url_list"][0].as_str().map(|s| s.to_string()),
+            avatar_url: user["avatar_larger"]["url_list"][0]
+                .as_str()
+                .map(|s| s.to_string()),
             following_count: user["following_count"].as_u64(),
             follower_count: user["follower_count"].as_u64(),
             aweme_count: user["aweme_count"].as_u64(),
@@ -246,7 +260,8 @@ impl DouyinApi {
         params.insert("sec_user_id", sec_user_id.to_string());
         params.insert("max_cursor", max_cursor.to_string());
         params.insert("count", count.to_string());
-        self.fetch_json(DouyinEndpoints::USER_FAVORITE_A, params).await
+        self.fetch_json(DouyinEndpoints::USER_FAVORITE_A, params)
+            .await
     }
 
     /// 获取用户关注列表
@@ -261,7 +276,8 @@ impl DouyinApi {
         params.insert("offset", offset.to_string());
         params.insert("count", count.to_string());
         params.insert("source_type", "1".to_string());
-        self.fetch_json(DouyinEndpoints::USER_FOLLOWING, params).await
+        self.fetch_json(DouyinEndpoints::USER_FOLLOWING, params)
+            .await
     }
 
     /// 获取用户粉丝列表
@@ -276,7 +292,8 @@ impl DouyinApi {
         params.insert("offset", offset.to_string());
         params.insert("count", count.to_string());
         params.insert("source_type", "1".to_string());
-        self.fetch_json(DouyinEndpoints::USER_FOLLOWER, params).await
+        self.fetch_json(DouyinEndpoints::USER_FOLLOWER, params)
+            .await
     }
 
     // ========== 评论接口 ==========
@@ -310,18 +327,14 @@ impl DouyinApi {
         params.insert("cursor", cursor.to_string());
         params.insert("count", count.to_string());
         params.insert("item_type", "0".to_string());
-        self.fetch_json(DouyinEndpoints::POST_COMMENT_REPLY, params).await
+        self.fetch_json(DouyinEndpoints::POST_COMMENT_REPLY, params)
+            .await
     }
 
     // ========== 搜索接口 ==========
 
     /// 综合搜索
-    pub async fn search_general(
-        &self,
-        keyword: &str,
-        offset: i64,
-        count: i64,
-    ) -> BdResult<Value> {
+    pub async fn search_general(&self, keyword: &str, offset: i64, count: i64) -> BdResult<Value> {
         let mut params = Self::base_params();
         params.insert("keyword", keyword.to_string());
         params.insert("offset", offset.to_string());
@@ -331,16 +344,12 @@ impl DouyinApi {
         params.insert("sort_type", "0".to_string());
         params.insert("publish_time", "0".to_string());
         params.insert("filter_duration", "0".to_string());
-        self.fetch_json(DouyinEndpoints::GENERAL_SEARCH, params).await
+        self.fetch_json(DouyinEndpoints::GENERAL_SEARCH, params)
+            .await
     }
 
     /// 搜索视频
-    pub async fn search_video(
-        &self,
-        keyword: &str,
-        offset: i64,
-        count: i64,
-    ) -> BdResult<Value> {
+    pub async fn search_video(&self, keyword: &str, offset: i64, count: i64) -> BdResult<Value> {
         let mut params = Self::base_params();
         params.insert("keyword", keyword.to_string());
         params.insert("offset", offset.to_string());
@@ -353,12 +362,7 @@ impl DouyinApi {
     }
 
     /// 搜索用户
-    pub async fn search_user(
-        &self,
-        keyword: &str,
-        offset: i64,
-        count: i64,
-    ) -> BdResult<Value> {
+    pub async fn search_user(&self, keyword: &str, offset: i64, count: i64) -> BdResult<Value> {
         let mut params = Self::base_params();
         params.insert("keyword", keyword.to_string());
         params.insert("offset", offset.to_string());
@@ -377,12 +381,7 @@ impl DouyinApi {
     // ========== 合辑接口 ==========
 
     /// 获取合辑作品
-    pub async fn get_mix_aweme(
-        &self,
-        mix_id: &str,
-        cursor: i64,
-        count: i64,
-    ) -> BdResult<Value> {
+    pub async fn get_mix_aweme(&self, mix_id: &str, cursor: i64, count: i64) -> BdResult<Value> {
         let mut params = Self::base_params();
         params.insert("mix_id", mix_id.to_string());
         params.insert("cursor", cursor.to_string());
@@ -394,7 +393,9 @@ impl DouyinApi {
 
     /// 解析短链接
     pub async fn resolve_short_url(&self, url: &str) -> BdResult<String> {
-        let resp = self.client.inner()
+        let resp = self
+            .client
+            .inner()
             .get(url)
             .header("Referer", "https://www.douyin.com/")
             .send()
@@ -463,7 +464,9 @@ mod tests {
             Some("7321613070743663893".to_string())
         );
         assert_eq!(
-            DouyinApi::extract_aweme_id("https://www.douyin.com/discover?modal_id=7321613070743663893"),
+            DouyinApi::extract_aweme_id(
+                "https://www.douyin.com/discover?modal_id=7321613070743663893"
+            ),
             Some("7321613070743663893".to_string())
         );
     }

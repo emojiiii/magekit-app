@@ -19,8 +19,8 @@ mod types;
 mod utils;
 
 // 重新导出公共类型
-pub use state::{AppState, GlobalAppState};
 pub use capture::{CaptureEvent, CaptureRequest, M3u8Stream};
+pub use state::{AppState, GlobalAppState};
 pub use types::{DownloadVideoOptions, ToolStatus};
 
 // 内部使用的类型（如果外部需要可以添加到上面）

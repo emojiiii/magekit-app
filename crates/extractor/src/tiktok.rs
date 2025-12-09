@@ -124,10 +124,7 @@ pub async fn extract_video_info(
     tracing::debug!("📡 响应状态: {}", status);
 
     if !status.is_success() {
-        return Err(ExtractError::Network(format!(
-            "status {}",
-            status
-        )));
+        return Err(ExtractError::Network(format!("status {}", status)));
     }
 
     let body = resp
@@ -170,7 +167,10 @@ pub async fn extract_video_info(
 
     Ok(VideoInfo {
         id: item.id.unwrap_or_else(|| item_id.clone()),
-        title: item.desc.clone().unwrap_or_else(|| "TikTok 视频".to_string()),
+        title: item
+            .desc
+            .clone()
+            .unwrap_or_else(|| "TikTok 视频".to_string()),
         description: item.desc,
         duration: item.duration.map(|d| Duration::from_secs(d as u64)),
         uploader: item.author.map(|a| a.nickname.unwrap_or_default()),
@@ -198,11 +198,7 @@ fn extract_item_id(url: &str) -> Option<String> {
     // - https://www.tiktok.com/@username/photo/7339393672959757570
     // - https://vm.tiktok.com/ZMxxxxxxx/（短链接会被重定向）
     // - itemId=7339393672959757570（直接参数）
-    let patterns = [
-        r"/video/(\d+)",
-        r"/photo/(\d+)",
-        r"itemId=(\d+)",
-    ];
+    let patterns = [r"/video/(\d+)", r"/photo/(\d+)", r"itemId=(\d+)"];
     for pat in &patterns {
         let re = Regex::new(pat).ok()?;
         if let Some(caps) = re.captures(url) {
@@ -266,4 +262,3 @@ struct PlayAddr {
     #[serde(default)]
     url_list: Option<Vec<String>>,
 }
-

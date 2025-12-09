@@ -11,4 +11,3 @@ pub fn build_cookie_header(
         .find(|c| c.enabled && c.platform.to_lowercase().contains(&platform_lower));
     matching.map(|c| c.cookie.clone())
 }
-

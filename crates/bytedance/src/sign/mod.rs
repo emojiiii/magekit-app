@@ -9,8 +9,8 @@ pub mod sm3;
 mod xbogus;
 
 // 重新导出签名函数
-pub use abogus::generate_abogus as ab_sign;
 pub use abogus::ab_sign_live;
+pub use abogus::generate_abogus as ab_sign;
 pub use xbogus::generate_xbogus as xbogus_sign;
 
 // 导出内部模块用于高级用法

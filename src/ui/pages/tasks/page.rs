@@ -158,7 +158,7 @@ impl TasksPage {
     fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("🗑️ 删除任务: {}", task_id);
         self.app_state.delete_task_sync(task_id);
-        
+
         // 立即从本地列表中移除
         self.tasks.retain(|t| t.id != task_id);
         cx.notify();
@@ -187,7 +187,7 @@ impl TasksPage {
     /// 清空已完成的任务
     fn clear_completed(&mut self, cx: &mut Context<Self>) {
         self.app_state.clear_completed_tasks_sync();
-        
+
         // 立即从本地列表中移除
         self.tasks
             .retain(|t| !matches!(t.state, TaskState::Completed));

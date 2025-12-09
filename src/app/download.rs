@@ -162,12 +162,12 @@ impl AppState {
         runtime.spawn(async move {
             // 先取消（如果正在运行）
             let _ = tool_manager.cancel_download(task_id).await;
-            
+
             // 从持久化存储删除
             if let Err(e) = tool_manager.delete_task_status(task_id).await {
                 tracing::error!("❌ 删除任务失败: {}", e);
             }
-            
+
             // 从本地缓存删除
             {
                 let mut tasks = tasks.write().await;

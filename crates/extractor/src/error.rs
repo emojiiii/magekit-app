@@ -19,4 +19,3 @@ pub enum ExtractError {
 }
 
 pub type ExtractResult<T> = Result<T, ExtractError>;
-

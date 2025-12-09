@@ -4,9 +4,9 @@
 //! - UI 通过 `CaptureEvent` 订阅进度/日志
 
 use crate::app::AppState;
-use anyhow::{anyhow, Context, Result};
-use magekit_shared::utils::{resolve_browser_path};
-use rand::{distributions::Alphanumeric, Rng};
+use anyhow::{Context, Result, anyhow};
+use magekit_shared::utils::resolve_browser_path;
+use rand::{Rng, distributions::Alphanumeric};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -119,10 +119,7 @@ impl AppState {
                     }
                     Err(err) => {
                         let _ = event_tx
-                            .send(CaptureEvent::Log(format!(
-                                "⚠️ 静态扫描失败: {}",
-                                err
-                            )))
+                            .send(CaptureEvent::Log(format!("⚠️ 静态扫描失败: {}", err)))
                             .await;
                     }
                 }
@@ -158,14 +155,16 @@ impl AppState {
             cancel_tx: Some(cancel_tx),
         })
     }
-
 }
 
 // =========================================================================================
 // 辅助函数
 // =========================================================================================
 
-async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Result<Vec<M3u8Stream>> {
+async fn quick_scan_for_m3u8(
+    client: &reqwest::Client,
+    target_url: &str,
+) -> Result<Vec<M3u8Stream>> {
     let mut results = Vec::new();
     let url = Url::parse(target_url).context("URL 不合法")?;
 
@@ -200,7 +199,9 @@ async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Resu
         .context("读取页面内容失败")?;
 
     let mut seen = HashSet::new();
-    for token in body.split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>') {
+    for token in
+        body.split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>')
+    {
         if token.contains(".m3u8") {
             let candidate = token.trim_matches(['"', '\'', ',', ';']);
             if candidate.len() < 5 {
@@ -263,5 +264,3 @@ fn make_temp_user_data_dir() -> PathBuf {
 
     std::env::temp_dir().join(format!("magekit-profile-{}", random_suffix))
 }
-
-

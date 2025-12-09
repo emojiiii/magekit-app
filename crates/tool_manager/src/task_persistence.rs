@@ -3,7 +3,9 @@
 //! 负责将任务状态保存到磁盘，以便应用重启后恢复未完成的任务。
 
 use crate::error::{ToolManagerError, ToolManagerResult};
-use magekit_shared::{DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, get_app_data_dir};
+use magekit_shared::{
+    DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, get_app_data_dir,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -175,18 +177,18 @@ impl TaskPersistence {
     /// 创建新的持久化管理器
     pub fn new() -> ToolManagerResult<Self> {
         let mut tasks = PersistedTasks::load().unwrap_or_default();
-        
+
         // 启动时清理：去重并移除已完成/取消的任务
         let dedup_count = tasks.deduplicate_by_url();
         if dedup_count > 0 {
             tracing::info!("🧹 清理了 {} 个重复任务", dedup_count);
         }
-        
+
         tasks.clear_completed_tasks();
-        
+
         // 保存清理后的任务列表
         let _ = tasks.save();
-        
+
         Ok(Self {
             tasks,
             auto_save: true,

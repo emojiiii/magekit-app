@@ -46,7 +46,8 @@ impl DouyinEndpoints {
     /// 用户收藏夹列表
     pub const USER_COLLECTS: &str = "https://www.douyin.com/aweme/v1/web/collects/list/";
     /// 用户收藏夹视频
-    pub const USER_COLLECTS_VIDEO: &str = "https://www.douyin.com/aweme/v1/web/collects/video/list/";
+    pub const USER_COLLECTS_VIDEO: &str =
+        "https://www.douyin.com/aweme/v1/web/collects/video/list/";
     /// 用户收藏音乐
     pub const USER_MUSIC_COLLECTION: &str =
         "https://www.douyin.com/aweme/v1/web/music/listcollection/";

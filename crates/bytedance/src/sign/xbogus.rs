@@ -4,8 +4,8 @@
 
 #![allow(dead_code)]
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHARSET: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
@@ -182,25 +182,9 @@ fn encoding_conversion(values: &[u8]) -> String {
         return String::new();
     }
     let y = vec![
-        values[0],
-        values[10],
-        values[1],
-        values[11],
-        values[2],
-        values[12],
-        values[3],
-        values[13],
-        values[4],
-        values[14],
-        values[5],
-        values[15],
-        values[6],
-        values[16],
-        values[7],
-        values[17],
-        values[8],
-        values[18],
-        values[9],
+        values[0], values[10], values[1], values[11], values[2], values[12], values[3], values[13],
+        values[4], values[14], values[5], values[15], values[6], values[16], values[7], values[17],
+        values[8], values[18], values[9],
     ];
     latin1_string(&y)
 }

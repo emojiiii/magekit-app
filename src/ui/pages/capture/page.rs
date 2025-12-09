@@ -1,15 +1,15 @@
 //! M3U8 嗅探页面
 
 use crate::app::{AppState, CaptureEvent, CaptureRequest, M3u8Stream};
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt};
 use gpui_router::NavLink;
-use magekit_shared::utils::sanitize_filename;
 use magekit_shared::DownloadOptions;
+use magekit_shared::utils::sanitize_filename;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -235,14 +235,16 @@ impl Render for CapturePage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 先构造捕获列表，完成对 cx 的可变借用
         let capture_items: Vec<AnyElement> = if self.captured.is_empty() {
-            vec![div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .flex_1()
-                .text_color(cx.theme().muted_foreground)
-                .child("尚未捕获到 m3u8 链接")
-                .into_any_element()]
+            vec![
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .flex_1()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("尚未捕获到 m3u8 链接")
+                    .into_any_element(),
+            ]
         } else {
             let output_dir = self.output_dir.clone();
             self.captured
@@ -250,14 +252,7 @@ impl Render for CapturePage {
                 .enumerate()
                 .map(|(idx, item)| {
                     let status = self.download_status.get(&item.url).cloned();
-                    render_capture_row(
-                        idx,
-                        item,
-                        status,
-                        cx,
-                        output_dir.clone(),
-                    )
-                    .into_any_element()
+                    render_capture_row(idx, item, status, cx, output_dir.clone()).into_any_element()
                 })
                 .collect()
         };
@@ -351,9 +346,7 @@ impl Render for CapturePage {
                                     .text_color(theme.foreground)
                                     .child("目标 URL"),
                             )
-                            .child(
-                                Input::new(&self.url_input),
-                            ),
+                            .child(Input::new(&self.url_input)),
                     )
                     .child(
                         div()
@@ -367,9 +360,7 @@ impl Render for CapturePage {
                                     .text_color(theme.foreground)
                                     .child("自定义浏览器路径 (可选)"),
                             )
-                            .child(
-                                Input::new(&self.browser_input),
-                            ),
+                            .child(Input::new(&self.browser_input)),
                     )
                     .child(
                         div()
@@ -450,14 +441,11 @@ fn render_capture_row(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let url = item.url.clone();
-    let label = item
-        .title
-        .clone()
-        .unwrap_or_else(|| {
-            url.replace('/', "/\u{200b}")
-                .replace('?', "?\u{200b}")
-                .replace('&', "&\u{200b}")
-        });
+    let label = item.title.clone().unwrap_or_else(|| {
+        url.replace('/', "/\u{200b}")
+            .replace('?', "?\u{200b}")
+            .replace('&', "&\u{200b}")
+    });
 
     div()
         .flex()
@@ -468,12 +456,7 @@ fn render_capture_row(
         .border_1()
         .border_color(theme.border)
         .rounded(px(8.0))
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.foreground)
-                .child(label),
-        )
+        .child(div().text_sm().text_color(theme.foreground).child(label))
         .child(
             div()
                 .flex()
@@ -498,13 +481,7 @@ fn render_capture_row(
                         .child(format!("输出目录: {}", output_dir)),
                 )
                 .when_some(status, |row, s| {
-                    row.child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.foreground)
-                            .child(s),
-                    )
+                    row.child(div().text_xs().text_color(theme.foreground).child(s))
                 }),
         )
 }
-

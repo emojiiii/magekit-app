@@ -80,8 +80,13 @@ impl Abogus {
             opts.random_num_3,
             &mut rng,
         );
-        let string_2 =
-            self.generate_string_2(url_params, &opts.method, opts.start_time, opts.end_time, &mut rng);
+        let string_2 = self.generate_string_2(
+            url_params,
+            &opts.method,
+            opts.start_time,
+            opts.end_time,
+            &mut rng,
+        );
 
         result_encrypt(&(string_1 + &string_2), "s4")
     }

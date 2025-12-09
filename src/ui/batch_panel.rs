@@ -6,8 +6,8 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::*;
-use magekit_shared::types::DownloadOptions;
 use magekit_shared::truncate_string;
+use magekit_shared::types::DownloadOptions;
 use std::sync::Arc;
 
 /// 批量URL项

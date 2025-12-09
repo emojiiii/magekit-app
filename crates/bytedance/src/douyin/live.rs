@@ -2,11 +2,11 @@
 //!
 //! 从 live_recorder 复刻的直播流获取逻辑
 
+use super::endpoints::DouyinEndpoints;
+use super::types::*;
 use crate::client::{BdClient, ClientConfig, MOBILE_UA};
 use crate::error::{BdError, BdResult};
 use crate::sign::abogus::ab_sign_live;
-use super::endpoints::DouyinEndpoints;
-use super::types::*;
 use std::collections::HashMap;
 use url::Url;
 
@@ -72,7 +72,9 @@ impl DouyinLiveApi {
 
     /// 获取房间ID和用户sec_user_id
     async fn get_sec_user_id(&self, url: &str) -> BdResult<(String, String)> {
-        let response = self.client.inner()
+        let response = self
+            .client
+            .inner()
             .get(url)
             .header("Referer", "https://www.douyin.com/")
             .send()
@@ -112,7 +114,10 @@ impl DouyinLiveApi {
         let ms_token = Self::generate_ms_token();
 
         let mut params = HashMap::new();
-        params.insert("verifyFp", "verify_lk07kv74_QZYCUApD_xhiB_405x_Ax51_GYO9bUIyZQVf");
+        params.insert(
+            "verifyFp",
+            "verify_lk07kv74_QZYCUApD_xhiB_405x_Ax51_GYO9bUIyZQVf",
+        );
         params.insert("type_id", "0");
         params.insert("live_id", "1");
         params.insert("room_id", room_id);
@@ -130,11 +135,19 @@ impl DouyinLiveApi {
             a_bogus
         );
 
-        let response = self.client.inner()
+        let response = self
+            .client
+            .inner()
             .get(&api_url)
             .header("User-Agent", MOBILE_UA)
-            .header("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-            .header("Cookie", "s_v_web_id=verify_lk07kv74_QZYCUApD_xhiB_405x_Ax51_GYO9bUIyZQVf")
+            .header(
+                "Accept-Language",
+                "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            )
+            .header(
+                "Cookie",
+                "s_v_web_id=verify_lk07kv74_QZYCUApD_xhiB_405x_Ax51_GYO9bUIyZQVf",
+            )
             .send()
             .await?;
 
@@ -204,7 +217,9 @@ impl DouyinLiveApi {
         // 使用简化 Cookie
         let cookie = "ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE%7C1761045455%7Cab35197d5cfb21df6cbb2fa7ef1c9262206b062c315b9d04da746d0b37dfbc7d";
 
-        let response = self.client.inner()
+        let response = self
+            .client
+            .inner()
             .get(&api_url)
             .header("Accept", "application/json, text/plain, */*")
             .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
@@ -253,7 +268,8 @@ impl DouyinLiveApi {
 
     /// 解析流URL
     fn parse_stream_urls(json_data: &serde_json::Value) -> BdResult<StreamInfo> {
-        let data = json_data.get("data")
+        let data = json_data
+            .get("data")
             .ok_or_else(|| BdError::MissingData("data".to_string()))?;
 
         // 抖音 web API 返回的结构是 data.data[0]
@@ -288,7 +304,9 @@ impl DouyinLiveApi {
             });
         }
 
-        let room_info = data_array.unwrap().first()
+        let room_info = data_array
+            .unwrap()
+            .first()
             .ok_or_else(|| BdError::MissingData("room data".to_string()))?;
 
         // 主播名字在 data.user.nickname
@@ -347,7 +365,8 @@ impl DouyinLiveApi {
         }
 
         // 解析流URL
-        let stream_url = room_info.get("stream_url")
+        let stream_url = room_info
+            .get("stream_url")
             .ok_or_else(|| BdError::LiveNotAvailable("No stream URL available".to_string()))?;
 
         // 获取原画流
@@ -450,7 +469,8 @@ impl DouyinLiveApi {
                 });
 
             if let Some(stream_data_str) = stream_data_str {
-                if let Ok(stream_data) = serde_json::from_str::<serde_json::Value>(stream_data_str) {
+                if let Ok(stream_data) = serde_json::from_str::<serde_json::Value>(stream_data_str)
+                {
                     if let Some(origin_main) = stream_data
                         .get("data")
                         .and_then(|d| d.get("origin"))
@@ -506,7 +526,7 @@ impl DouyinLiveApi {
 
     /// 生成 msToken
     fn generate_ms_token() -> String {
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         use rand::Rng;
 
         let mut rng = rand::thread_rng();

@@ -50,7 +50,7 @@ impl MediaExtractor {
     }
 
     /// 获取频道/播放列表信息
-    /// 
+    ///
     /// 支持抖音用户主页和其他平台（通过 yt-dlp）
     pub async fn get_channel_info(
         &self,
@@ -58,16 +58,14 @@ impl MediaExtractor {
         cookies: Option<&[PlatformCookie]>,
     ) -> Result<ChannelInfo, ExtractError> {
         let platform = Platform::detect(url);
-        
+
         // 抖音用户主页使用自研解析
         if matches!(platform, Platform::Douyin) && douyin::is_douyin_user_url(url) {
             tracing::info!("🚀 使用 extractor 解析抖音用户主页");
             return douyin::extract_channel_info(url, cookies).await;
         }
-        
+
         // 其他平台使用 yt-dlp
         ytdlp::extract_channel_info(url, cookies, &self.yt_dlp_path).await
     }
 }
-
-

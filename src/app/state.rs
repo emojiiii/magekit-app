@@ -1,7 +1,7 @@
 //! 应用程序核心状态
 //!
 //! 定义 AppState 结构体和基础方法
-//! 
+//!
 //! 设计原则：
 //! - AppState 作为 GUI 层与 ToolManager 的桥梁
 //! - 任务管理完全委托给 ToolManager
@@ -26,7 +26,7 @@ pub struct GlobalAppState(pub Arc<AppState>);
 impl Global for GlobalAppState {}
 
 /// 应用程序主状态
-/// 
+///
 /// 职责：
 /// - 持有 ToolManager 实例
 /// - 管理应用配置
@@ -76,7 +76,7 @@ impl AppState {
         let tool_manager_rx = tool_manager.subscribe();
         let event_tx_clone = event_tx.clone();
         let tasks_clone = tasks.clone();
-        
+
         runtime.spawn(async move {
             Self::event_listener_loop(tool_manager_rx, event_tx_clone, tasks_clone).await;
         });
@@ -89,7 +89,7 @@ impl AppState {
             if !restored_tasks.is_empty() {
                 tracing::info!("📦 恢复 {} 个持久化任务", restored_tasks.len());
                 let mut tasks_to_resume = Vec::new();
-                
+
                 {
                     let mut tasks_map = tasks_clone.write().await;
                     for task_status in restored_tasks {
@@ -98,16 +98,19 @@ impl AppState {
                             task_status.title.as_deref().unwrap_or("Unknown"),
                             task_status.state
                         );
-                        
+
                         // 记录需要恢复的任务（下载中或排队中的任务）
-                        if matches!(task_status.state, TaskState::Downloading | TaskState::Queued) {
+                        if matches!(
+                            task_status.state,
+                            TaskState::Downloading | TaskState::Queued
+                        ) {
                             tasks_to_resume.push(task_status.id);
                         }
-                        
+
                         tasks_map.insert(task_status.id, task_status);
                     }
                 }
-                
+
                 // 自动恢复下载中的任务
                 if !tasks_to_resume.is_empty() {
                     tracing::info!("🔄 自动恢复 {} 个下载任务", tasks_to_resume.len());
@@ -131,7 +134,7 @@ impl AppState {
     }
 
     /// 事件监听循环
-    /// 
+    ///
     /// 监听 ToolManager 的事件，更新本地任务缓存，并转发到应用事件
     async fn event_listener_loop(
         mut tool_manager_rx: broadcast::Receiver<ToolManagerEvent>,
@@ -139,7 +142,7 @@ impl AppState {
         tasks: Arc<RwLock<HashMap<TaskId, TaskStatus>>>,
     ) {
         tracing::info!("🎧 开始监听 ToolManager 事件");
-        
+
         loop {
             match tool_manager_rx.recv().await {
                 Ok(event) => {
@@ -147,7 +150,7 @@ impl AppState {
                         ToolManagerEvent::TaskUpdate(update) => {
                             // 更新本地任务缓存
                             Self::apply_task_update(&tasks, update).await;
-                            
+
                             // 转发到应用事件
                             let _ = event_tx.send(AppEvent::TaskUpdate(update.clone())).await;
                         }
@@ -179,10 +182,14 @@ impl AppState {
         update: &TaskUpdate,
     ) {
         let mut tasks = tasks.write().await;
-        
+
         match update {
             TaskUpdate::Created(status) => {
-                tracing::info!("📝 新任务创建: {} - {}", status.id, status.title.as_deref().unwrap_or("Unknown"));
+                tracing::info!(
+                    "📝 新任务创建: {} - {}",
+                    status.id,
+                    status.title.as_deref().unwrap_or("Unknown")
+                );
                 tasks.insert(status.id, status.clone());
             }
             TaskUpdate::Progress(task_id, progress, downloaded, total, speed, eta) => {
@@ -198,7 +205,10 @@ impl AppState {
                 tracing::info!("🔄 任务状态变更: {} -> {:?}", task_id, state);
                 if let Some(task) = tasks.get_mut(task_id) {
                     task.state = state.clone();
-                    if matches!(state, TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled) {
+                    if matches!(
+                        state,
+                        TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
+                    ) {
                         task.completed_at = Some(std::time::SystemTime::now());
                     }
                 }
@@ -273,13 +283,9 @@ impl AppState {
     // ==================== 下载相关 API（委托给 ToolManager）====================
 
     /// 开始下载任务
-    /// 
+    ///
     /// 委托给 ToolManager 处理，任务状态通过事件自动更新
-    pub async fn start_download(
-        &self,
-        url: &str,
-        options: DownloadOptions,
-    ) -> Result<TaskId> {
+    pub async fn start_download(&self, url: &str, options: DownloadOptions) -> Result<TaskId> {
         let cookies_vec = {
             let config = self.config.read().await;
             if config.advanced.cookies.is_empty() {
@@ -329,19 +335,19 @@ impl AppState {
     pub async fn delete_task(&self, task_id: TaskId) -> Result<()> {
         // 先取消（如果正在运行）
         let _ = self.tool_manager.cancel_download(task_id).await;
-        
+
         // 从持久化存储删除
         self.tool_manager
             .delete_task_status(task_id)
             .await
             .map_err(|e| anyhow::anyhow!("删除任务失败: {}", e))?;
-        
+
         // 从本地缓存删除
         {
             let mut tasks = self.tasks.write().await;
             tasks.remove(&task_id);
         }
-        
+
         Ok(())
     }
 
@@ -400,7 +406,7 @@ impl AppState {
             .clear_completed_tasks()
             .await
             .map_err(|e| anyhow::anyhow!("清理已完成任务失败: {}", e))?;
-        
+
         // 从本地缓存清理
         {
             let mut tasks = self.tasks.write().await;
@@ -408,7 +414,7 @@ impl AppState {
                 !matches!(task.state, TaskState::Completed | TaskState::Cancelled)
             });
         }
-        
+
         Ok(())
     }
 }

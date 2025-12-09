@@ -49,7 +49,7 @@ impl AppState {
                 tracing::error!("❌ 清理已完成任务失败: {}", e);
                 return;
             }
-            
+
             // 从本地缓存清理
             {
                 let mut tasks = tasks.write().await;
@@ -57,7 +57,7 @@ impl AppState {
                     !matches!(task.state, TaskState::Completed | TaskState::Cancelled)
                 });
             }
-            
+
             tracing::info!("✅ 已清理完成的任务");
         });
     }

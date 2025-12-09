@@ -379,7 +379,7 @@ impl HomePage {
                     Ok(info) => {
                         // 保存当前 URL
                         this.current_url = Some(url_for_save.clone());
-                        
+
                         // 保存原始视频信息（用于传递给 ToolManager）
                         this.original_video_info = Some(info.clone());
 
@@ -487,13 +487,8 @@ impl HomePage {
 
         // 在后台线程中启动下载
         // ToolManager 会自动处理任务创建、状态更新和持久化
-        let _handle = app_state.start_download_in_background(
-            url,
-            output_dir,
-            format_id,
-            options,
-        );
-        
+        let _handle = app_state.start_download_in_background(url, output_dir, format_id, options);
+
         // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
     }
 
@@ -655,7 +650,7 @@ impl HomePage {
             options,
             original_video_info,
         );
-        
+
         // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
     }
 

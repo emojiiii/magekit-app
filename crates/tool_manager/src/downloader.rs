@@ -1,18 +1,18 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
-    create_tokio_command, utils::generate_output_path, ChannelInfo, DownloadOptions,
-    PlatformCookie, TaskId, VideoInfo,
+    ChannelInfo, DownloadOptions, PlatformCookie, TaskId, VideoInfo, create_tokio_command,
+    utils::generate_output_path,
 };
 use std::path::PathBuf;
-use std::time::Instant;
 use std::process::Stdio;
+use std::time::Instant;
 use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
 /// 视频下载器
-/// 
+///
 /// 负责视频下载功能，解析逻辑统一交给 extractor 处理
 #[derive(Clone)]
 pub struct VideoDownloader {
@@ -64,7 +64,7 @@ impl VideoDownloader {
     /// 获取视频信息
     ///
     /// 统一调用 extractor 进行解析，支持所有平台
-    /// 
+    ///
     /// # 参数
     /// - `url`: 视频 URL
     /// - `cookies`: 可选的平台 Cookie 列表，用于访问需要登录的内容
@@ -74,7 +74,7 @@ impl VideoDownloader {
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<VideoInfo> {
         tracing::info!("🔍 获取视频信息，URL: {}", url);
-        
+
         let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
         extractor
             .get_video_info(url, cookies)
@@ -101,7 +101,7 @@ impl VideoDownloader {
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<ChannelInfo> {
         tracing::info!("📺 获取频道/播放列表信息，URL: {}", url);
-        
+
         let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
         extractor
             .get_channel_info(url, cookies)
@@ -246,8 +246,8 @@ impl VideoDownloader {
         use futures_util::StreamExt;
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|e| DownloadError::download_failed(download_url, e.to_string()))?;
+            let chunk =
+                chunk.map_err(|e| DownloadError::download_failed(download_url, e.to_string()))?;
 
             file.write_all(&chunk)
                 .await
@@ -276,7 +276,7 @@ impl VideoDownloader {
             .map_err(|e| DownloadError::internal(format!("Failed to flush file: {}", e)))?;
 
         tracing::info!("✅ 直链下载完成: {:?}", output_path);
-        
+
         // 发送完成事件
         let _ = progress_tx
             .send(DownloadProgress::Completed {
@@ -284,7 +284,7 @@ impl VideoDownloader {
                 output_path: output_path.clone(),
             })
             .await;
-        
+
         Ok(output_path)
     }
 
@@ -681,7 +681,7 @@ impl VideoDownloader {
         match &final_path {
             Some(path) => {
                 tracing::info!("✅ 下载完成，输出文件: {:?}", path);
-                
+
                 // 发送完成事件
                 let _ = progress_tx
                     .send(DownloadProgress::Completed {
@@ -738,23 +738,25 @@ impl VideoDownloader {
         let percent = percent_str.parse::<f64>().ok()? as f32;
 
         // 尝试解析总大小 (格式: "of 125.45MiB" 或 "of ~125.45MiB" 或 "of    3.18GiB")
-        let total_bytes = parts.iter()
+        let total_bytes = parts
+            .iter()
             .position(|p| *p == "of")
             .and_then(|i| parts.get(i + 1))
             .and_then(|s| self.parse_size(s));
 
         // 计算已下载大小
-        let downloaded_bytes = total_bytes.map(|total| {
-            ((percent as f64 / 100.0) * total as f64) as u64
-        });
+        let downloaded_bytes =
+            total_bytes.map(|total| ((percent as f64 / 100.0) * total as f64) as u64);
 
         // 尝试解析速度
-        let speed = parts.iter()
+        let speed = parts
+            .iter()
             .find(|p| p.ends_with("/s"))
             .and_then(|s| self.parse_speed(s));
 
         // 尝试解析 ETA
-        let eta = parts.iter()
+        let eta = parts
+            .iter()
             .position(|p| *p == "ETA")
             .and_then(|i| parts.get(i + 1))
             .and_then(|s| self.parse_eta(s));
@@ -772,11 +774,11 @@ impl VideoDownloader {
     fn parse_size(&self, size_str: &str) -> Option<u64> {
         // 移除前导 ~ 符号
         let size_str = size_str.trim_start_matches('~');
-        
+
         // 找到单位的起始位置（第一个字母）
         let unit_start = size_str.find(|c: char| c.is_alphabetic())?;
         let (num_str, unit) = size_str.split_at(unit_start);
-        
+
         let num: f64 = num_str.parse().ok()?;
         let multiplier = match unit {
             "B" => 1.0,

@@ -178,7 +178,13 @@ impl RenderOnce for TaskItem {
                                 ),
                             ),
                     )
-                    .child(div().flex_shrink_0().text_xs().text_color(status_color).child(status_text)),
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(status_color)
+                            .child(status_text),
+                    ),
             )
             // 失败原因显示
             .when_some(error_message, |this, msg| {

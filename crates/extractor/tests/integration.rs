@@ -1,11 +1,10 @@
 use magekit_extractor::MediaExtractor;
-use magekit_shared::resolve_yt_dlp_path;
 use magekit_shared::PlatformCookie;
-use tokio::time::{timeout, Duration};
+use magekit_shared::resolve_yt_dlp_path;
+use tokio::time::{Duration, timeout};
 
 const E2E_ENV: &str = "MAGEKIT_E2E";
 const COOKIE: &str = "";
-
 
 fn should_run() -> bool {
     std::env::var(E2E_ENV).is_ok()
@@ -22,7 +21,7 @@ fn cookies_from_env(key: &str, platform: &str) -> Option<Vec<PlatformCookie>> {
 }
 
 /// 抖音视频测试 - 使用真实有效的视频链接
-/// 
+///
 /// 注意：抖音 API 可能会因为以下原因返回错误：
 /// - 视频被删除或下架
 /// - 视频受地区限制
@@ -51,8 +50,11 @@ async fn douyin_single_video() {
 
     for url in test_urls {
         println!("🔍 测试抖音视频解析: {}", url);
-        let result = timeout(Duration::from_secs(30), extractor.get_video_info(url, Some(&cookies)))
-            .await;
+        let result = timeout(
+            Duration::from_secs(30),
+            extractor.get_video_info(url, Some(&cookies)),
+        )
+        .await;
 
         match result {
             Ok(Ok(info)) => {
@@ -62,7 +64,12 @@ async fn douyin_single_video() {
                 println!("   时长: {:?}", info.duration);
                 println!("   格式数: {}", info.formats.len());
                 for f in &info.formats {
-                    println!("   - {}: {:?} url={}", f.format_id, f.resolution, f.download_url.is_some());
+                    println!(
+                        "   - {}: {:?} url={}",
+                        f.format_id,
+                        f.resolution,
+                        f.download_url.is_some()
+                    );
                 }
                 assert!(!info.id.is_empty());
                 if !info.formats.is_empty() {
@@ -111,9 +118,12 @@ async fn douyin_short_link() {
     }];
 
     println!("🔍 测试抖音短链接解析: {}", url);
-    let result = timeout(Duration::from_secs(60), extractor.get_video_info(url, Some(&cookies)))
-        .await
-        .expect("timeout for douyin short link");
+    let result = timeout(
+        Duration::from_secs(60),
+        extractor.get_video_info(url, Some(&cookies)),
+    )
+    .await
+    .expect("timeout for douyin short link");
 
     match result {
         Ok(info) => {
@@ -152,8 +162,11 @@ async fn tiktok_single_video() {
 
     for url in test_urls {
         println!("🔍 测试 TikTok 视频解析: {}", url);
-        let result = timeout(Duration::from_secs(30), extractor.get_video_info(url, cookies.as_deref()))
-            .await;
+        let result = timeout(
+            Duration::from_secs(30),
+            extractor.get_video_info(url, cookies.as_deref()),
+        )
+        .await;
 
         match result {
             Ok(Ok(info)) => {
@@ -220,10 +233,13 @@ async fn bilibili_single_video_via_ytdlp() {
     let extractor = MediaExtractor::new(yt_dlp);
     let url = "https://www.bilibili.com/video/BV1fW411W7cR";
     let cookies = cookies_from_env("MAGEKIT_BILI_COOKIE", "bilibili");
-    let info = timeout(Duration::from_secs(40), extractor.get_video_info(url, cookies.as_deref()))
-        .await
-        .expect("timeout for bilibili video")
-        .expect("bilibili video parse failed");
+    let info = timeout(
+        Duration::from_secs(40),
+        extractor.get_video_info(url, cookies.as_deref()),
+    )
+    .await
+    .expect("timeout for bilibili video")
+    .expect("bilibili video parse failed");
     assert!(!info.id.is_empty());
     assert!(!info.formats.is_empty());
 }
@@ -239,10 +255,13 @@ async fn youtube_playlist_channel() {
     };
     let extractor = MediaExtractor::new(yt_dlp);
     let url = "https://www.youtube.com/playlist?list=PL9tY0BWXOZFtS9DD35Jt_zyXCTITVEWil";
-    let info = timeout(Duration::from_secs(60), extractor.get_channel_info(url, None))
-        .await
-        .expect("timeout for youtube playlist")
-        .expect("youtube playlist parse failed");
+    let info = timeout(
+        Duration::from_secs(60),
+        extractor.get_channel_info(url, None),
+    )
+    .await
+    .expect("timeout for youtube playlist")
+    .expect("youtube playlist parse failed");
     assert!(!info.entries.is_empty());
 }
 
@@ -258,10 +277,12 @@ async fn bilibili_space_channel() {
     let extractor = MediaExtractor::new(yt_dlp);
     let url = "https://space.bilibili.com/282357985";
     let cookies = cookies_from_env("MAGEKIT_BILI_COOKIE", "bilibili");
-    let info = timeout(Duration::from_secs(60), extractor.get_channel_info(url, cookies.as_deref()))
-        .await
-        .expect("timeout for bilibili space")
-        .expect("bilibili space parse failed");
+    let info = timeout(
+        Duration::from_secs(60),
+        extractor.get_channel_info(url, cookies.as_deref()),
+    )
+    .await
+    .expect("timeout for bilibili space")
+    .expect("bilibili space parse failed");
     assert!(!info.entries.is_empty());
 }
-

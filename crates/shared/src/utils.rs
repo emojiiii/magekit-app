@@ -139,7 +139,11 @@ pub fn get_tools_dir() -> Result<PathBuf> {
 
 /// 解析 yt-dlp 可执行路径：优先应用内工具目录，其次系统 PATH
 pub fn resolve_yt_dlp_path() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
+    let name = if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp"
+    };
     if let Ok(dir) = get_tools_dir() {
         let candidate = dir.join(name);
         if candidate.exists() {
@@ -151,7 +155,11 @@ pub fn resolve_yt_dlp_path() -> Option<PathBuf> {
 
 /// 解析 ffmpeg 可执行路径：优先应用内工具目录，其次系统 PATH
 pub fn resolve_ffmpeg_path() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     if let Ok(dir) = get_tools_dir() {
         let candidate = dir.join(name);
         if candidate.exists() {
@@ -187,7 +195,13 @@ pub fn resolve_browser_path(custom: Option<PathBuf>) -> Option<PathBuf> {
             }
         }
     } else {
-        for name in ["chrome", "google-chrome", "chromium", "chromium-browser", "edge"] {
+        for name in [
+            "chrome",
+            "google-chrome",
+            "chromium",
+            "chromium-browser",
+            "edge",
+        ] {
             if let Ok(p) = which::which(name) {
                 return Some(p);
             }
@@ -409,15 +423,15 @@ pub fn load_app_config_or_default() -> crate::types::AppConfig {
 }
 
 /// 安全截断字符串，确保在字符边界处截断
-/// 
+///
 /// 避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug。
 /// 当使用 `text_ellipsis()` 或 `line_clamp()` 时，GPUI 可能在多字节字符
 /// （如中文）的中间截断，导致 panic。
-/// 
+///
 /// # 参数
 /// - `s`: 要截断的字符串
 /// - `max_chars`: 最大字符数（不是字节数）
-/// 
+///
 /// # 返回
 /// 截断后的字符串，如果被截断则末尾添加省略号 `…`
 pub fn truncate_string(s: &str, max_chars: usize) -> String {

@@ -2,15 +2,15 @@
 //!
 //! 验证抖音 API 接口的正确性
 
-use bytedance::douyin::{DouyinApi, DouyinLiveApi, DouyinEndpoints};
-use bytedance::sign::{ab_sign, xbogus_sign, AbogusOptions};
+use bytedance::douyin::{DouyinApi, DouyinEndpoints, DouyinLiveApi};
+use bytedance::sign::{AbogusOptions, ab_sign, xbogus_sign};
 
 /// 测试签名函数
 #[test]
 fn test_ab_sign_basic() {
     let query = "device_platform=webapp&aid=6383&channel=channel_pc_web&msToken=";
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-    
+
     let result = ab_sign(query, ua, None);
     assert!(!result.is_empty());
     // A-Bogus 签名通常较长
@@ -81,25 +81,25 @@ fn test_extract_aweme_id() {
         DouyinApi::extract_aweme_id("https://www.douyin.com/video/7321613070743663893"),
         Some("7321613070743663893".to_string())
     );
-    
+
     // 笔记 URL
     assert_eq!(
         DouyinApi::extract_aweme_id("https://www.douyin.com/note/7321613070743663893"),
         Some("7321613070743663893".to_string())
     );
-    
+
     // modal_id 参数
     assert_eq!(
         DouyinApi::extract_aweme_id("https://www.douyin.com/discover?modal_id=7321613070743663893"),
         Some("7321613070743663893".to_string())
     );
-    
+
     // vid 参数
     assert_eq!(
         DouyinApi::extract_aweme_id("https://www.douyin.com/user/xxx?vid=7321613070743663893"),
         Some("7321613070743663893".to_string())
     );
-    
+
     // 无效 URL
     assert_eq!(
         DouyinApi::extract_aweme_id("https://www.example.com/"),
@@ -114,9 +114,11 @@ fn test_extract_sec_user_id() {
         DouyinApi::extract_sec_user_id("https://www.douyin.com/user/MS4wLjABAAAA123abc"),
         Some("MS4wLjABAAAA123abc".to_string())
     );
-    
+
     assert_eq!(
-        DouyinApi::extract_sec_user_id("https://www.douyin.com/page?sec_user_id=MS4wLjABAAAA456def"),
+        DouyinApi::extract_sec_user_id(
+            "https://www.douyin.com/page?sec_user_id=MS4wLjABAAAA456def"
+        ),
         Some("MS4wLjABAAAA456def".to_string())
     );
 }
@@ -137,7 +139,7 @@ fn test_set_cookie() {
 async fn test_get_hot_search() {
     let api = DouyinApi::new().unwrap();
     let result = api.get_hot_search().await;
-    
+
     // 热搜榜应该能正常获取
     if let Ok(json) = result {
         assert!(json.get("data").is_some() || json.get("word_list").is_some());
@@ -148,7 +150,7 @@ async fn test_get_hot_search() {
 #[ignore = "需要网络连接"]
 async fn test_resolve_short_url() {
     let api = DouyinApi::new().unwrap();
-    
+
     // 测试一个假的短链接（实际测试时使用真实链接）
     let result = api.resolve_short_url("https://v.douyin.com/test").await;
     // 即使失败也不应该 panic
@@ -159,10 +161,10 @@ async fn test_resolve_short_url() {
 #[ignore = "需要网络连接和有效 Cookie"]
 async fn test_get_post_detail() {
     let api = DouyinApi::new().unwrap();
-    
+
     // 使用一个已知的视频 ID 测试
     let result = api.get_post_detail("7321613070743663893").await;
-    
+
     // 应该返回 JSON 数据
     if let Ok(json) = result {
         // 检查是否有 status_code 字段

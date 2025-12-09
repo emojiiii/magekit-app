@@ -21,10 +21,10 @@ use gpui_component::radio::RadioGroup;
 use gpui_component::switch::Switch;
 use gpui_component::v_flex;
 use live_recorder::{LiveRecorder, RecordConfig, error::RecorderError, recorder::RecordingHandle};
+use magekit_shared::truncate_string;
 use magekit_shared::types::{
     LiveRecordConfig, LiveRecordQuality, LiveRoomStatus, MonitoredRoom, RecordingTask,
 };
-use magekit_shared::truncate_string;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -2226,4 +2226,3 @@ impl Render for RecordingPage {
             )
     }
 }
-
