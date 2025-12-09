@@ -1,7 +1,8 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
-    create_tokio_command, ChannelInfo, DownloadOptions, PlatformCookie, TaskId, VideoInfo,
+    create_tokio_command, utils::generate_output_path, ChannelInfo, DownloadOptions,
+    PlatformCookie, TaskId, VideoInfo,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -173,7 +174,7 @@ impl VideoDownloader {
     ) -> DownloadResult<PathBuf> {
         use tokio::io::AsyncWriteExt;
 
-        // 构建输出文件路径
+        // 构建输出文件路径（直链保持原有模板逻辑）
         let filename = options
             .output_template
             .as_deref()
@@ -394,9 +395,13 @@ impl VideoDownloader {
             .clone()
             .ok_or_else(|| DownloadError::internal("ffmpeg 未配置"))?;
 
-        // 输出文件名：用任务 id 保证唯一，后缀 mp4
-        let filename = format!("{}.mp4", task_id);
-        let output_path = options.output_path.join(&filename);
+        // 输出文件名：使用 task_title（若无则 task_id），并去重
+        let title_for_path = options
+            .task_title
+            .clone()
+            .unwrap_or_else(|| task_id.to_string());
+        let output_path = generate_output_path(&options.output_path, &title_for_path, "mp4")
+            .map_err(|e| DownloadError::internal(format!("生成输出路径失败: {}", e)))?;
 
         tracing::info!("  ffmpeg url: {}", ffmpeg_url);
         tracing::info!("  输出文件: {:?}", output_path);

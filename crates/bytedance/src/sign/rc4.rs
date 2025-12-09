@@ -36,6 +36,7 @@ pub fn rc4_encrypt(plaintext: &str, key: &str) -> String {
 }
 
 /// RC4 加密（字节版本）
+#[allow(dead_code)]
 pub fn rc4_encrypt_bytes(plaintext: &[u8], key: &[u8]) -> Vec<u8> {
     // 初始化状态数组
     let mut s: Vec<u8> = (0..=255).collect();
