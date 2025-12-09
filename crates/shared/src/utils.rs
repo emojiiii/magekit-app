@@ -161,6 +161,64 @@ pub fn resolve_ffmpeg_path() -> Option<PathBuf> {
     which::which("ffmpeg").ok()
 }
 
+/// 解析本机浏览器路径：优先用户自定义，其次常见安装位置/PATH
+pub fn resolve_browser_path(custom: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(path) = custom {
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    if cfg!(target_os = "windows") {
+        for path in candidate_windows_browsers() {
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        for path in [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ] {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    } else {
+        for name in ["chrome", "google-chrome", "chromium", "chromium-browser", "edge"] {
+            if let Ok(p) = which::which(name) {
+                return Some(p);
+            }
+        }
+    }
+
+    None
+}
+
+fn candidate_windows_browsers() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let base_program_files =
+        std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+    let base_program_files_x86 =
+        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".into());
+
+    let chrome = PathBuf::from(&base_program_files).join("Google/Chrome/Application/chrome.exe");
+    let chrome_x86 =
+        PathBuf::from(&base_program_files_x86).join("Google/Chrome/Application/chrome.exe");
+    let edge = PathBuf::from(&base_program_files).join("Microsoft/Edge/Application/msedge.exe");
+    let edge_x86 =
+        PathBuf::from(&base_program_files_x86).join("Microsoft/Edge/Application/msedge.exe");
+
+    candidates.push(chrome);
+    candidates.push(chrome_x86);
+    candidates.push(edge);
+    candidates.push(edge_x86);
+
+    candidates
+}
+
 /// 获取临时目录
 pub fn get_temp_dir() -> Result<PathBuf> {
     let temp_dir = std::env::temp_dir().join(APP_NAME);

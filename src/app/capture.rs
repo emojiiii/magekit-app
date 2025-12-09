@@ -5,7 +5,7 @@
 
 use crate::app::AppState;
 use anyhow::{anyhow, Context, Result};
-use magekit_shared::utils::{create_tokio_command, resolve_ffmpeg_path};
+use magekit_shared::utils::{resolve_browser_path};
 use rand::{distributions::Alphanumeric, Rng};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -159,103 +159,11 @@ impl AppState {
         })
     }
 
-    /// 使用本机 ffmpeg 下载并合并 m3u8
-    pub async fn download_m3u8_with_ffmpeg(
-        &self,
-        url: &str,
-        output_path: &Path,
-    ) -> Result<()> {
-        let ffmpeg_path = self
-            .config
-            .read()
-            .await
-            .tools
-            .custom_ffmpeg_path
-            .clone()
-            .or_else(resolve_ffmpeg_path)
-            .ok_or_else(|| anyhow!("未找到 ffmpeg，可在设置中指定路径"))?;
-
-        let mut cmd = create_tokio_command(ffmpeg_path);
-        cmd.arg("-y")
-            .arg("-i")
-            .arg(url)
-            .arg("-c")
-            .arg("copy")
-            .arg(output_path);
-
-        let status = cmd
-            .status()
-            .await
-            .context("执行 ffmpeg 失败，请确认可执行文件路径")?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!("ffmpeg 退出码非 0: {:?}", status.code()))
-        }
-    }
 }
 
 // =========================================================================================
 // 辅助函数
 // =========================================================================================
-
-fn resolve_browser_path(custom: Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(path) = custom {
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    if cfg!(target_os = "windows") {
-        for path in candidate_windows_browsers() {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    } else if cfg!(target_os = "macos") {
-        for path in [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ] {
-            let p = PathBuf::from(path);
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    } else {
-        // Linux: PATH 中查找
-        for name in ["chrome", "google-chrome", "chromium", "chromium-browser", "edge"] {
-            if let Ok(p) = which::which(name) {
-                return Some(p);
-            }
-        }
-    }
-
-    None
-}
-
-fn candidate_windows_browsers() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    let base_program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
-    let base_program_files_x86 =
-        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".into());
-
-    let chrome = PathBuf::from(&base_program_files).join("Google/Chrome/Application/chrome.exe");
-    let chrome_x86 =
-        PathBuf::from(&base_program_files_x86).join("Google/Chrome/Application/chrome.exe");
-    let edge = PathBuf::from(&base_program_files).join("Microsoft/Edge/Application/msedge.exe");
-    let edge_x86 =
-        PathBuf::from(&base_program_files_x86).join("Microsoft/Edge/Application/msedge.exe");
-
-    candidates.push(chrome);
-    candidates.push(chrome_x86);
-    candidates.push(edge);
-    candidates.push(edge_x86);
-
-    candidates
-}
 
 async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Result<Vec<M3u8Stream>> {
     let mut results = Vec::new();
