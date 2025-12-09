@@ -7,6 +7,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::*;
 use magekit_shared::types::DownloadOptions;
+use magekit_shared::truncate_string;
 use std::sync::Arc;
 
 /// 批量URL项
@@ -666,7 +667,9 @@ fn render_batch_item_inline(
     };
 
     let id = item.id.clone();
-    let title = item.title.clone().unwrap_or_else(|| item.url.clone());
+    // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+    let title = truncate_string(&item.title.clone().unwrap_or_else(|| item.url.clone()), 60);
+    let url_display = truncate_string(&item.url, 80);
     let status_label = item.status.label();
 
     h_flex()
@@ -692,7 +695,6 @@ fn render_batch_item_inline(
                         .text_sm()
                         .text_color(fg)
                         .overflow_hidden()
-                        .text_ellipsis()
                         .child(title),
                 )
                 .when(item.title.is_some(), |this| {
@@ -701,8 +703,7 @@ fn render_batch_item_inline(
                             .text_xs()
                             .text_color(muted)
                             .overflow_hidden()
-                            .text_ellipsis()
-                            .child(item.url.clone()),
+                            .child(url_display.clone()),
                     )
                 }),
         )

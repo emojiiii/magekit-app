@@ -71,6 +71,9 @@ pub struct DownloadOptions {
     pub embed_subs: bool,
     pub write_subs: bool,
     pub write_auto_subs: bool,
+    /// 直链下载地址（自研解析时使用，如抖音/TikTok）
+    #[serde(default)]
+    pub download_url: Option<String>,
 }
 
 impl Default for DownloadOptions {
@@ -87,6 +90,7 @@ impl Default for DownloadOptions {
             embed_subs: false,
             write_subs: false,
             write_auto_subs: false,
+            download_url: None,
         }
     }
 }

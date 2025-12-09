@@ -809,6 +809,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
+name = "bytedance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "indexmap",
+ "md5",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3579,6 +3601,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.21.7",
+ "bytedance",
  "bytes",
  "chrono",
  "clap",
@@ -3724,6 +3747,7 @@ dependencies = [
  "open",
  "parking_lot",
  "rand 0.8.5",
+ "reqwest",
  "reqwest_client",
  "rfd",
  "serde",
@@ -3745,6 +3769,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
+ "bytedance",
  "indexmap",
  "magekit-shared",
  "md5",
@@ -3760,7 +3785,6 @@ dependencies = [
  "url",
  "urlencoding",
  "which 7.0.3",
- "xbogus",
 ]
 
 [[package]]
@@ -3787,7 +3811,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "encoding_rs",
  "futures-util",
+ "magekit-extractor",
  "magekit-shared",
  "reqwest",
  "serde",

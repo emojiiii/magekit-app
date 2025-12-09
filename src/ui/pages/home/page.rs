@@ -1,13 +1,12 @@
 //! 首页主组件
 
-use crate::app::AppState;
+use crate::app::{AppState, DownloadVideoOptions};
 use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::WindowExt;
 use gpui_component::input::InputState;
 use gpui_component::notification::Notification;
 use gpui_router::use_navigate;
-use magekit_shared::{TaskState, TaskStatus};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -299,6 +298,8 @@ pub struct HomePage {
     output_path: String,
     /// 当前解析的 URL (用于下载)
     current_url: Option<String>,
+    /// 原始视频信息（用于传递给 ToolManager，避免重复获取）
+    original_video_info: Option<magekit_shared::VideoInfo>,
 }
 
 impl HomePage {
@@ -328,6 +329,7 @@ impl HomePage {
             selected_audio_id: None,
             output_path: default_path,
             current_url: None,
+            original_video_info: None,
         }
     }
 
@@ -377,6 +379,9 @@ impl HomePage {
                     Ok(info) => {
                         // 保存当前 URL
                         this.current_url = Some(url_for_save.clone());
+                        
+                        // 保存原始视频信息（用于传递给 ToolManager）
+                        this.original_video_info = Some(info.clone());
 
                         // 详细日志
                         tracing::info!("🎬 视频信息解析成功:");
@@ -422,6 +427,7 @@ impl HomePage {
                         this.current_url = None;
                         this.selected_video_id = None;
                         this.selected_audio_id = None;
+                        this.original_video_info = None;
                         this.download_state = DownloadState::Error(e.to_string());
                     }
                 }
@@ -442,29 +448,19 @@ impl HomePage {
             }
         };
 
-        // 获取视频标题（从当前状态中获取）
-        let video_title = match &self.download_state {
-            DownloadState::Ready(info) => Some(info.title.clone()),
-            _ => None,
-        };
-
         // 详细日志
         tracing::info!("📥 开始下载任务:");
         tracing::info!("  URL: {}", url);
-        tracing::info!("  标题: {}", video_title.as_deref().unwrap_or("未知"));
         tracing::info!("  输出目录: {}", self.output_path);
         tracing::info!("  质量: {:?}", self.selected_quality);
 
-        // 导航到任务页 - 先调用 navigate 释放 cx 借用
+        // 导航到任务页
         {
             let mut navigate = use_navigate(cx);
             navigate("/tasks".into());
         }
         window.refresh();
         tracing::info!("📍 已跳转到任务页面");
-
-        // 注意：不修改首页状态，保持 Ready 状态
-        // 下载进度在任务列表页显示
         cx.notify();
 
         let app_state = self.app_state.clone();
@@ -481,183 +477,24 @@ impl HomePage {
             QualityOption::AudioOnly => "bestaudio/best".to_string(),
         };
 
-        // 创建任务 ID
-        let task_id = uuid::Uuid::new_v4();
-
-        // 转换下载选项（使用默认值）
-        let options = crate::app::DownloadVideoOptions {
+        // 转换下载选项
+        let options = DownloadVideoOptions {
             embed_metadata: true,
             embed_thumbnail: false,
             download_subtitles: false,
             audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
         };
 
-        // 创建下载参数（用于暂停后恢复）
-        let download_params = magekit_shared::DownloadParams {
-            output_dir: output_dir.clone(),
-            format_id: format_id.clone(),
-            embed_metadata: options.embed_metadata,
-            embed_thumbnail: options.embed_thumbnail,
-            download_subtitles: options.download_subtitles,
-            audio_only: options.audio_only,
-        };
-
-        // 创建任务状态并添加到任务列表
-        let mut task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
-        task_status.download_params = Some(download_params);
-        {
-            let tasks = app_state.tasks.clone();
-            let runtime = app_state.runtime.clone();
-            let task_status_clone = task_status.clone();
-            let app_state_for_save = app_state.clone();
-            runtime.spawn(async move {
-                let mut tasks = tasks.write().await;
-                tasks.insert(task_id, task_status_clone.clone());
-                // 立即保存新创建的任务到持久化存储
-                app_state_for_save.save_task_to_persistence(&task_status_clone);
-            });
-        }
-
-        // 克隆 tasks 用于进度回调直接更新
-        let tasks_for_callback = app_state.tasks.clone();
-
-        // 进度回调 - 直接更新 tasks，无需轮询
-        let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> =
-            Arc::new(move |percent, speed, downloaded, total| {
-                tracing::info!(
-                    "📥 [with_format] 进度回调: percent={:.3}, speed={}, downloaded={}, total={}",
-                    percent,
-                    speed,
-                    downloaded,
-                    total
-                );
-                // 直接更新 tasks（使用 blocking_write）
-                let mut tasks = tasks_for_callback.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    task.progress = percent;
-                    task.speed = if speed > 0 { Some(speed) } else { None };
-                    task.downloaded_bytes = downloaded;
-                    task.total_bytes = if total > 0 { Some(total) } else { None };
-                }
-            });
-
-        // 在后台线程中运行下载
-        let handle = app_state.download_video_in_background(
-            task_id,
+        // 在后台线程中启动下载
+        // ToolManager 会自动处理任务创建、状态更新和持久化
+        let _handle = app_state.start_download_in_background(
             url,
             output_dir,
             format_id,
             options,
-            progress_callback,
-            video_title.clone(),
         );
-
-        // 克隆用于更新任务状态
-        let tasks_for_update = app_state.tasks.clone();
-
-        // 克隆 app_state 用于清理取消标志
-        let app_state_for_cleanup = app_state.clone();
-
-        // 使用 cx.spawn 来等待下载完成（不再需要轮询进度）
-        cx.spawn(async move |_this, _cx| {
-            // 首先将任务状态更新为 Downloading
-            {
-                let tasks = tasks_for_update.clone();
-                let app_state_clone = app_state_for_cleanup.clone();
-                smol::unblock(move || {
-                    // 使用 blocking_write 同步更新
-                    let mut tasks = tasks.blocking_write();
-                    if let Some(task) = tasks.get_mut(&task_id) {
-                        task.state = TaskState::Downloading;
-                        task.started_at = Some(std::time::SystemTime::now());
-                        // 保存任务状态（开始下载时）
-                        app_state_clone.save_task_to_persistence(task);
-                    }
-                })
-                .await;
-            }
-
-            // 等待后台线程完成（进度由回调直接更新，无需轮询）
-            tracing::info!("⏳ 等待下载完成 (start_download)");
-            loop {
-                if handle.is_finished() {
-                    tracing::info!("🏁 下载线程已完成");
-                    break;
-                }
-                // 只需等待线程完成，不需要更新进度
-                Timer::after(std::time::Duration::from_millis(100)).await;
-            }
-
-            // 在后台线程获取结果
-            let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
-            })
-            .await;
-
-            // 清理取消标志
-            app_state_for_cleanup.cleanup_download_task(task_id);
-
-            // 更新任务状态
-            let tasks = tasks_for_update.clone();
-            let result_for_task = result
-                .as_ref()
-                .map(|p| p.clone())
-                .map_err(|e| e.to_string());
-            let app_state_for_final_save = app_state_for_cleanup.clone();
-            smol::unblock(move || {
-                let mut tasks = tasks.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    match result_for_task {
-                        Ok(path) => {
-                            task.state = TaskState::Completed;
-                            task.progress = 1.0;
-                            task.output_path = Some(path.clone());
-                            task.completed_at = Some(std::time::SystemTime::now());
-
-                            // 获取文件大小
-                            if let Ok(metadata) = std::fs::metadata(&path) {
-                                task.total_bytes = Some(metadata.len());
-                                task.downloaded_bytes = metadata.len();
-                            }
-
-                            // 保存完成状态到持久化存储
-                            app_state_for_final_save.save_task_to_persistence(task);
-                        }
-                        Err(error) => {
-                            // 如果是暂停导致的错误，保持 Paused 状态
-                            if error.contains("下载已暂停") {
-                                task.state = TaskState::Paused;
-                            } else if error.contains("下载已取消") {
-                                task.state = TaskState::Cancelled;
-                            } else {
-                                task.state = TaskState::Failed(error);
-                                task.completed_at = Some(std::time::SystemTime::now());
-                            }
-                            // 保存失败/取消状态到持久化存储
-                            app_state_for_final_save.save_task_to_persistence(task);
-                        }
-                    }
-                }
-            })
-            .await;
-
-            // 日志输出（不更新首页状态）
-            match &result {
-                Ok(path) => {
-                    tracing::info!("✅ 下载完成: {}", path.display());
-                }
-                Err(e) => {
-                    if e.to_string().contains("下载已暂停") {
-                        tracing::info!("⏸️ 下载已暂停");
-                    } else {
-                        tracing::error!("❌ 下载失败: {}", e);
-                    }
-                }
-            }
-        })
-        .detach();
+        
+        // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
     }
 
     fn select_quality(&mut self, quality: QualityOption, cx: &mut Context<Self>) {
@@ -769,20 +606,13 @@ impl HomePage {
             }
         };
 
-        // 获取视频标题（从当前状态中获取）
-        let video_title = match &self.download_state {
-            DownloadState::Ready(info) => Some(info.title.clone()),
-            _ => None,
-        };
-
         // 详细日志
         tracing::info!("📥 开始下载任务:");
         tracing::info!("  URL: {}", url);
-        tracing::info!("  标题: {}", video_title.as_deref().unwrap_or("未知"));
         tracing::info!("  输出目录: {}", self.output_path);
         tracing::info!("  格式 ID: {}", format_id);
 
-        // 判断是否是音频格式（在修改状态前判断）
+        // 判断是否是音频格式
         let is_audio_only = match &self.download_state {
             DownloadState::Ready(info) => info
                 .formats
@@ -793,194 +623,40 @@ impl HomePage {
             _ => false,
         };
 
-        // 导航到任务页 - 先调用 navigate 释放 cx 借用
+        // 获取原始视频信息用于传递给 ToolManager
+        let original_video_info = self.original_video_info.clone();
+
+        // 导航到任务页
         {
             let mut navigate = use_navigate(cx);
             navigate("/tasks".into());
         }
         window.refresh();
         tracing::info!("📍 已跳转到任务页面");
-
-        // 注意：不修改首页状态，保持 Ready 状态
-        // 下载进度在任务列表页显示
         cx.notify();
 
         let app_state = self.app_state.clone();
         let output_dir = std::path::PathBuf::from(&self.output_path);
 
-        // 创建任务 ID
-        let task_id = uuid::Uuid::new_v4();
-
-        // 转换下载选项（使用默认值）
-        let options = crate::app::DownloadVideoOptions {
+        // 转换下载选项
+        let options = DownloadVideoOptions {
             embed_metadata: true,
             embed_thumbnail: false,
             download_subtitles: false,
             audio_only: is_audio_only,
         };
 
-        // 创建下载参数（用于暂停后恢复）
-        let download_params = magekit_shared::DownloadParams {
-            output_dir: output_dir.clone(),
-            format_id: format_id.clone(),
-            embed_metadata: options.embed_metadata,
-            embed_thumbnail: options.embed_thumbnail,
-            download_subtitles: options.download_subtitles,
-            audio_only: options.audio_only,
-        };
-
-        // 创建任务状态并添加到任务列表
-        let mut task_status = TaskStatus::new(task_id, url.clone(), video_title.clone());
-        task_status.download_params = Some(download_params);
-        {
-            let tasks = app_state.tasks.clone();
-            let runtime = app_state.runtime.clone();
-            let task_status_clone = task_status.clone();
-            let app_state_for_save = app_state.clone();
-            runtime.spawn(async move {
-                let mut tasks = tasks.write().await;
-                tasks.insert(task_id, task_status_clone.clone());
-                // 立即保存新创建的任务到持久化存储
-                app_state_for_save.save_task_to_persistence(&task_status_clone);
-            });
-        }
-
-        // 克隆 tasks 用于进度回调直接更新
-        let tasks_for_callback = app_state.tasks.clone();
-
-        // 进度回调 - 直接更新 tasks，无需轮询
-        let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> =
-            Arc::new(move |percent, speed, downloaded, total| {
-                tracing::info!(
-                    "📥 [with_format] 进度回调: percent={:.3}, speed={}, downloaded={}, total={}",
-                    percent,
-                    speed,
-                    downloaded,
-                    total
-                );
-                // 直接更新 tasks（使用 blocking_write）
-                let mut tasks = tasks_for_callback.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    task.progress = percent;
-                    task.speed = if speed > 0 { Some(speed) } else { None };
-                    task.downloaded_bytes = downloaded;
-                    task.total_bytes = if total > 0 { Some(total) } else { None };
-                }
-            });
-
-        // 在后台线程中运行下载
-        let handle = app_state.download_video_in_background(
-            task_id,
+        // 在后台线程中启动下载（传递已有的视频信息以避免重复获取）
+        // ToolManager 会自动处理任务创建、状态更新和持久化
+        let _handle = app_state.start_download_in_background_with_info(
             url,
             output_dir,
             format_id,
             options,
-            progress_callback,
-            video_title.clone(),
+            original_video_info,
         );
-
-        // 克隆用于更新任务状态
-        let tasks_for_update = app_state.tasks.clone();
-
-        // 克隆 app_state 用于清理取消标志
-        let app_state_for_cleanup = app_state.clone();
-
-        // 使用 cx.spawn 来等待下载完成（不再需要轮询进度）
-        cx.spawn(async move |_this, _cx| {
-            // 首先将任务状态更新为 Downloading
-            {
-                let tasks = tasks_for_update.clone();
-                smol::unblock(move || {
-                    let mut tasks = tasks.blocking_write();
-                    if let Some(task) = tasks.get_mut(&task_id) {
-                        task.state = TaskState::Downloading;
-                        task.started_at = Some(std::time::SystemTime::now());
-                    }
-                })
-                .await;
-            }
-
-            // 等待后台线程完成（进度由回调直接更新，无需轮询）
-            tracing::info!("⏳ 等待下载完成 (start_download_with_format)");
-            loop {
-                if handle.is_finished() {
-                    tracing::info!("🏁 下载线程已完成");
-                    break;
-                }
-                // 只需等待线程完成，不需要更新进度
-                Timer::after(std::time::Duration::from_millis(100)).await;
-            }
-
-            // 在后台线程获取结果
-            let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
-            })
-            .await;
-
-            // 清理取消标志
-            app_state_for_cleanup.cleanup_download_task(task_id);
-
-            // 更新任务状态
-            let tasks = tasks_for_update.clone();
-            let result_for_task = result
-                .as_ref()
-                .map(|p| p.clone())
-                .map_err(|e| e.to_string());
-            let app_state_for_final_save = app_state_for_cleanup.clone();
-            smol::unblock(move || {
-                let mut tasks = tasks.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    match result_for_task {
-                        Ok(path) => {
-                            task.state = TaskState::Completed;
-                            task.progress = 1.0;
-                            task.output_path = Some(path.clone());
-                            task.completed_at = Some(std::time::SystemTime::now());
-
-                            // 获取文件大小
-                            if let Ok(metadata) = std::fs::metadata(&path) {
-                                task.total_bytes = Some(metadata.len());
-                                task.downloaded_bytes = metadata.len();
-                            }
-
-                            // 保存完成状态到持久化存储
-                            app_state_for_final_save.save_task_to_persistence(task);
-                        }
-                        Err(error) => {
-                            // 如果是暂停导致的错误，保持 Paused 状态
-                            if error.contains("下载已暂停") {
-                                task.state = TaskState::Paused;
-                            } else if error.contains("下载已取消") {
-                                task.state = TaskState::Cancelled;
-                            } else {
-                                task.state = TaskState::Failed(error);
-                                task.completed_at = Some(std::time::SystemTime::now());
-                            }
-                            // 保存失败/取消状态到持久化存储
-                            app_state_for_final_save.save_task_to_persistence(task);
-                        }
-                    }
-                }
-            })
-            .await;
-
-            // 日志输出（不更新首页状态）
-            match &result {
-                Ok(path) => {
-                    tracing::info!("✅ 下载完成: {}", path.display());
-                }
-                Err(e) => {
-                    if e.to_string().contains("下载已暂停") {
-                        tracing::info!("⏸️ 下载已暂停");
-                    } else {
-                        tracing::error!("❌ 下载失败: {}", e);
-                    }
-                }
-            }
-        })
-        .detach();
+        
+        // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
     }
 
     /// 下载封面图
@@ -1079,6 +755,8 @@ impl HomePage {
         self.download_state = DownloadState::Idle;
         self.selected_video_id = None;
         self.selected_audio_id = None;
+        self.current_url = None;
+        self.original_video_info = None;
         cx.notify();
     }
 }

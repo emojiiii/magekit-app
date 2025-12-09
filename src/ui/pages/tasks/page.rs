@@ -1,4 +1,9 @@
 //! 任务列表页面主组件
+//!
+//! 设计原则：
+//! - 只负责渲染，不直接管理下载逻辑
+//! - 通过事件驱动更新任务状态
+//! - 所有操作委托给 AppState
 
 use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
@@ -35,33 +40,32 @@ pub struct TasksPage {
     app_state: Arc<AppState>,
     tasks: Vec<TaskStatus>,
     filter: TaskFilter,
-    is_loading: bool,
 }
 
 impl TasksPage {
     pub fn new(app_state: Arc<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 初始加载任务列表
-        let tasks = Self::load_tasks_sync(&app_state);
+        let tasks = app_state.get_all_tasks_sync();
 
         let page = Self {
             app_state: app_state.clone(),
             tasks,
             filter: TaskFilter::All,
-            is_loading: false,
         };
 
-        // 启动定时刷新任务（200ms 刷新一次，比 1 秒更实时）
+        // 启动定时刷新任务（200ms 刷新一次）
+        // 注意：这里仍然使用轮询方式读取缓存，但任务状态已经由事件驱动更新到 AppState.tasks
+        // 未来可以改为完全事件驱动，但目前这种方式更简单且性能足够
         let app_state_for_timer = app_state.clone();
         cx.spawn(async move |this, cx| {
             loop {
-                // 等待 200ms - 更快的刷新率
+                // 等待 200ms
                 Timer::after(std::time::Duration::from_millis(200)).await;
 
-                // 从 AppState 加载最新任务
-                let app_state = app_state_for_timer.clone();
-                let tasks: Vec<TaskStatus> = smol::unblock(move || {
-                    let tasks = app_state.tasks.blocking_read();
-                    tasks.values().cloned().collect()
+                // 从 AppState 缓存读取最新任务
+                let tasks: Vec<TaskStatus> = smol::unblock({
+                    let app_state = app_state_for_timer.clone();
+                    move || app_state.get_all_tasks_sync()
                 })
                 .await;
 
@@ -95,34 +99,10 @@ impl TasksPage {
         page
     }
 
-    /// 同步加载任务列表
-    fn load_tasks_sync(app_state: &AppState) -> Vec<TaskStatus> {
-        // 从 AppState 的 tasks HashMap 中获取所有任务
-        app_state.runtime.block_on(async {
-            let tasks = app_state.tasks.read().await;
-            tasks.values().cloned().collect()
-        })
-    }
-
     /// 刷新任务列表
     fn refresh_tasks(&mut self, cx: &mut Context<Self>) {
-        self.is_loading = true;
+        self.tasks = self.app_state.get_all_tasks_sync();
         cx.notify();
-
-        let app_state = self.app_state.clone();
-
-        cx.spawn(async move |this, cx| {
-            // 使用 smol::unblock 避免阻塞
-            let tasks: Vec<TaskStatus> =
-                smol::unblock(move || Self::load_tasks_sync(&app_state)).await;
-
-            let _ = this.update(cx, |this, cx| {
-                this.tasks = tasks;
-                this.is_loading = false;
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     /// 设置筛选器
@@ -156,249 +136,31 @@ impl TasksPage {
     /// 暂停任务
     fn pause_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("⏸️ 暂停任务: {}", task_id);
-
-        // 调用暂停下载进程
-        self.app_state.pause_download_task(task_id);
-
-        // 更新本地状态
-        if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-            task.state = TaskState::Paused;
-        }
-
-        // 更新 AppState 中的任务状态
-        let app_state = self.app_state.clone();
-        cx.spawn(async move |this, cx| {
-            smol::unblock(move || {
-                let mut tasks = app_state.tasks.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    task.state = TaskState::Paused;
-                    // 保存任务状态
-                    app_state.save_task_to_persistence(task);
-                }
-            })
-            .await;
-
-            let _ = this.update(cx, |_this, cx| {
-                cx.notify();
-            });
-        })
-        .detach();
-
+        self.app_state.pause_download_sync(task_id);
         cx.notify();
     }
 
     /// 恢复任务
     fn resume_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         tracing::info!("▶️ 恢复任务: {}", task_id);
-
-        // 从本地任务列表中获取任务信息
-        let task_info = self.tasks.iter().find(|t| t.id == task_id).cloned();
-
-        if let Some(task) = task_info {
-            // 检查是否有下载参数
-            if let Some(params) = &task.download_params {
-                // 更新本地状态
-                if let Some(local_task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-                    local_task.state = TaskState::Downloading;
-                }
-
-                let app_state = self.app_state.clone();
-                let url = task.url.clone();
-                let title = task.title.clone();
-                let output_dir = params.output_dir.clone();
-                let format_id = params.format_id.clone();
-                let options = crate::app::DownloadVideoOptions {
-                    embed_metadata: params.embed_metadata,
-                    embed_thumbnail: params.embed_thumbnail,
-                    download_subtitles: params.download_subtitles,
-                    audio_only: params.audio_only,
-                };
-
-                // 克隆 tasks 用于进度回调
-                let tasks_for_callback = app_state.tasks.clone();
-
-                // 创建进度回调
-                let progress_callback: std::sync::Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> =
-                    std::sync::Arc::new(move |percent, speed, downloaded, total| {
-                        let mut tasks = tasks_for_callback.blocking_write();
-                        if let Some(task) = tasks.get_mut(&task_id) {
-                            task.progress = percent;
-                            task.speed = if speed > 0 { Some(speed) } else { None };
-                            task.downloaded_bytes = downloaded;
-                            task.total_bytes = if total > 0 { Some(total) } else { None };
-                        }
-                    });
-
-                // 启动恢复下载
-                let handle = app_state.resume_download_in_background(
-                    task_id,
-                    url,
-                    output_dir,
-                    format_id,
-                    options,
-                    progress_callback,
-                    title,
-                );
-
-                // 更新 AppState 中的任务状态
-                let tasks_for_update = app_state.tasks.clone();
-                let app_state_for_cleanup = app_state.clone();
-
-                cx.spawn(async move |_this, _cx| {
-                    // 更新状态为 Downloading
-                    {
-                        let tasks = tasks_for_update.clone();
-                        smol::unblock(move || {
-                            let mut tasks = tasks.blocking_write();
-                            if let Some(task) = tasks.get_mut(&task_id) {
-                                task.state = TaskState::Downloading;
-                            }
-                        })
-                        .await;
-                    }
-
-                    // 等待下载完成
-                    tracing::info!("⏳ 等待恢复下载完成");
-                    loop {
-                        if handle.is_finished() {
-                            tracing::info!("🏁 恢复下载线程已完成");
-                            break;
-                        }
-                        gpui::Timer::after(std::time::Duration::from_millis(100)).await;
-                    }
-
-                    // 获取结果
-                    let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
-                        handle
-                            .join()
-                            .unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
-                    })
-                    .await;
-
-                    // 清理标志
-                    app_state_for_cleanup.cleanup_download_task(task_id);
-
-                    // 更新最终状态
-                    let tasks = tasks_for_update.clone();
-                    let result_for_task = result
-                        .as_ref()
-                        .map(|p| p.clone())
-                        .map_err(|e| e.to_string());
-                    let app_state_for_save = app_state_for_cleanup.clone();
-                    smol::unblock(move || {
-                        let mut tasks = tasks.blocking_write();
-                        if let Some(task) = tasks.get_mut(&task_id) {
-                            match result_for_task {
-                                Ok(path) => {
-                                    task.state = TaskState::Completed;
-                                    task.progress = 1.0;
-                                    task.output_path = Some(path.clone());
-                                    task.completed_at = Some(std::time::SystemTime::now());
-                                    if let Ok(metadata) = std::fs::metadata(&path) {
-                                        task.total_bytes = Some(metadata.len());
-                                        task.downloaded_bytes = metadata.len();
-                                    }
-                                }
-                                Err(error) => {
-                                    // 如果是暂停导致的，保持暂停状态
-                                    if error.contains("下载已暂停") {
-                                        task.state = TaskState::Paused;
-                                    } else if error.contains("下载已取消") {
-                                        task.state = TaskState::Cancelled;
-                                    } else {
-                                        task.state = TaskState::Failed(error);
-                                        task.completed_at = Some(std::time::SystemTime::now());
-                                    }
-                                }
-                            }
-                            // 保存任务状态到持久化存储
-                            app_state_for_save.save_task_to_persistence(task);
-                        }
-                    })
-                    .await;
-
-                    match result {
-                        Ok(path) => tracing::info!("✅ 恢复下载完成: {}", path.display()),
-                        Err(e) => tracing::error!("❌ 恢复下载失败: {}", e),
-                    }
-                })
-                .detach();
-            } else {
-                tracing::warn!("⚠️ 任务没有保存下载参数，无法恢复: {}", task_id);
-            }
-        }
-
+        self.app_state.resume_download_sync(task_id);
         cx.notify();
     }
 
     /// 取消任务
     fn cancel_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("取消任务: {}", task_id);
-
-        // 首先调用取消下载进程
-        self.app_state.cancel_download_task(task_id);
-
-        // 更新本地状态
-        if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-            task.state = TaskState::Cancelled;
-            task.completed_at = Some(std::time::SystemTime::now());
-        }
-
-        // 更新 AppState 中的任务状态
-        let app_state = self.app_state.clone();
-        cx.spawn(async move |this, cx| {
-            smol::unblock(move || {
-                // 清理取消标志
-                app_state.cleanup_download_task(task_id);
-
-                let mut tasks = app_state.tasks.blocking_write();
-                if let Some(task) = tasks.get_mut(&task_id) {
-                    task.state = TaskState::Cancelled;
-                    task.completed_at = Some(std::time::SystemTime::now());
-                    // 保存任务状态
-                    app_state.save_task_to_persistence(task);
-                }
-            })
-            .await;
-
-            let _ = this.update(cx, |_this, cx| {
-                cx.notify();
-            });
-        })
-        .detach();
-
+        tracing::info!("🛑 取消任务: {}", task_id);
+        self.app_state.cancel_download_sync(task_id);
         cx.notify();
     }
 
     /// 删除任务
     fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("删除任务: {}", task_id);
-
-        // 首先取消下载进程（如果还在运行）
-        self.app_state.cancel_download_task(task_id);
-
-        // 从本地列表中移除
+        tracing::info!("🗑️ 删除任务: {}", task_id);
+        self.app_state.delete_task_sync(task_id);
+        
+        // 立即从本地列表中移除
         self.tasks.retain(|t| t.id != task_id);
-
-        // 从 AppState 中移除并从持久化存储删除
-        let app_state = self.app_state.clone();
-        cx.spawn(async move |_this, _cx| {
-            smol::unblock(move || {
-                // 清理取消标志
-                app_state.cleanup_download_task(task_id);
-
-                // 从内存中移除
-                let mut tasks = app_state.tasks.blocking_write();
-                tasks.remove(&task_id);
-                drop(tasks);
-
-                // 从持久化存储删除
-                app_state.delete_task_from_persistence(task_id);
-            })
-            .await;
-        })
-        .detach();
-
         cx.notify();
     }
 
@@ -424,33 +186,11 @@ impl TasksPage {
 
     /// 清空已完成的任务
     fn clear_completed(&mut self, cx: &mut Context<Self>) {
-        // 获取要删除的任务 ID
-        let completed_ids: Vec<TaskId> = self
-            .tasks
-            .iter()
-            .filter(|t| matches!(t.state, TaskState::Completed))
-            .map(|t| t.id)
-            .collect();
-
-        // 从本地列表中移除
+        self.app_state.clear_completed_tasks_sync();
+        
+        // 立即从本地列表中移除
         self.tasks
             .retain(|t| !matches!(t.state, TaskState::Completed));
-
-        // 从 AppState 中移除
-        if !completed_ids.is_empty() {
-            let app_state = self.app_state.clone();
-            cx.spawn(async move |_this, _cx| {
-                smol::unblock(move || {
-                    let mut tasks = app_state.tasks.blocking_write();
-                    for id in completed_ids {
-                        tasks.remove(&id);
-                    }
-                })
-                .await;
-            })
-            .detach();
-        }
-
         cx.notify();
     }
 }

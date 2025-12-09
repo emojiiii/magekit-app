@@ -350,6 +350,28 @@ pub fn load_app_config_or_default() -> crate::types::AppConfig {
     }
 }
 
+/// 安全截断字符串，确保在字符边界处截断
+/// 
+/// 避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug。
+/// 当使用 `text_ellipsis()` 或 `line_clamp()` 时，GPUI 可能在多字节字符
+/// （如中文）的中间截断，导致 panic。
+/// 
+/// # 参数
+/// - `s`: 要截断的字符串
+/// - `max_chars`: 最大字符数（不是字节数）
+/// 
+/// # 返回
+/// 截断后的字符串，如果被截断则末尾添加省略号 `…`
+pub fn truncate_string(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{}…", truncated)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

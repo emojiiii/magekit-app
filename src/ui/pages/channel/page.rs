@@ -14,10 +14,9 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
 };
 use gpui_router::use_navigate;
-use magekit_shared::{ChannelInfo, ChannelVideoEntry, TaskState, TaskStatus};
+use magekit_shared::{ChannelInfo, ChannelVideoEntry};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// 格式化时长
 fn format_duration(seconds: Option<u64>) -> String {
@@ -338,46 +337,9 @@ impl ChannelPage {
         let output_dir = std::path::PathBuf::from(&self.output_path);
 
         // 为每个视频创建下载任务
+        // ToolManager 会自动处理任务创建、状态更新和持久化
         for entry in selected_entries {
-            let task_id = uuid::Uuid::new_v4();
             let url = entry.url.clone();
-            let title = Some(entry.title.clone());
-
-            // 创建任务状态
-            let download_params = magekit_shared::DownloadParams {
-                output_dir: output_dir.clone(),
-                format_id: "bestvideo+bestaudio/best".to_string(),
-                embed_metadata: true,
-                embed_thumbnail: false,
-                download_subtitles: false,
-                audio_only: false,
-            };
-
-            let mut task_status = TaskStatus::new(task_id, url.clone(), title.clone());
-            task_status.download_params = Some(download_params);
-
-            // 添加任务到列表
-            let tasks = app_state.tasks.clone();
-            let runtime = app_state.runtime.clone();
-            let task_status_clone = task_status.clone();
-            runtime.spawn(async move {
-                let mut tasks = tasks.write().await;
-                tasks.insert(task_id, task_status_clone);
-            });
-
-            // 克隆 tasks 用于进度回调
-            let tasks_for_callback = app_state.tasks.clone();
-
-            let progress_callback: Arc<dyn Fn(f32, u64, u64, u64) + Send + Sync> =
-                Arc::new(move |percent, speed, downloaded, total| {
-                    let mut tasks = tasks_for_callback.blocking_write();
-                    if let Some(task) = tasks.get_mut(&task_id) {
-                        task.progress = percent;
-                        task.speed = if speed > 0 { Some(speed) } else { None };
-                        task.downloaded_bytes = downloaded;
-                        task.total_bytes = if total > 0 { Some(total) } else { None };
-                    }
-                });
 
             let options = crate::app::DownloadVideoOptions {
                 embed_metadata: true,
@@ -387,89 +349,12 @@ impl ChannelPage {
             };
 
             // 在后台启动下载
-            let handle = app_state.download_video_in_background(
-                task_id,
+            let _handle = app_state.start_download_in_background(
                 url,
                 output_dir.clone(),
                 "bestvideo+bestaudio/best".to_string(),
                 options,
-                progress_callback,
-                title,
             );
-
-            // 启动监控任务
-            let tasks_for_update = app_state.tasks.clone();
-            let app_state_for_cleanup = app_state.clone();
-
-            cx.spawn(async move |_this, _cx| {
-                // 更新任务状态为下载中
-                {
-                    let tasks = tasks_for_update.clone();
-                    smol::unblock(move || {
-                        let mut tasks = tasks.blocking_write();
-                        if let Some(task) = tasks.get_mut(&task_id) {
-                            task.state = TaskState::Downloading;
-                            task.started_at = Some(std::time::SystemTime::now());
-                        }
-                    })
-                    .await;
-                }
-
-                // 等待下载完成
-                loop {
-                    if handle.is_finished() {
-                        break;
-                    }
-                    Timer::after(Duration::from_millis(100)).await;
-                }
-
-                // 获取结果
-                let result: anyhow::Result<std::path::PathBuf> = smol::unblock(move || {
-                    handle
-                        .join()
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("下载线程崩溃")))
-                })
-                .await;
-
-                // 清理
-                app_state_for_cleanup.cleanup_download_task(task_id);
-
-                // 更新最终状态
-                let tasks = tasks_for_update.clone();
-                let result_for_task = result
-                    .as_ref()
-                    .map(|p| p.clone())
-                    .map_err(|e| e.to_string());
-                smol::unblock(move || {
-                    let mut tasks = tasks.blocking_write();
-                    if let Some(task) = tasks.get_mut(&task_id) {
-                        match result_for_task {
-                            Ok(path) => {
-                                task.state = TaskState::Completed;
-                                task.progress = 1.0;
-                                task.output_path = Some(path.clone());
-                                task.completed_at = Some(std::time::SystemTime::now());
-                                if let Ok(metadata) = std::fs::metadata(&path) {
-                                    task.total_bytes = Some(metadata.len());
-                                    task.downloaded_bytes = metadata.len();
-                                }
-                            }
-                            Err(error) => {
-                                if error.contains("下载已暂停") {
-                                    task.state = TaskState::Paused;
-                                } else if error.contains("下载已取消") {
-                                    task.state = TaskState::Cancelled;
-                                } else {
-                                    task.state = TaskState::Failed(error);
-                                    task.completed_at = Some(std::time::SystemTime::now());
-                                }
-                            }
-                        }
-                    }
-                })
-                .await;
-            })
-            .detach();
         }
 
         window.push_notification(

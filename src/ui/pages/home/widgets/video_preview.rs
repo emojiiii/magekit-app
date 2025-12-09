@@ -7,6 +7,7 @@ use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
+use magekit_shared::truncate_string;
 use std::sync::Arc;
 
 /// 视频格式信息 (从解析获取)
@@ -541,6 +542,7 @@ impl RenderOnce for VideoPreviewReady {
                     // 缩略图区域
                     .child(
                         div()
+                            .flex_shrink_0()
                             .relative()
                             .w(px(220.0))
                             .h(px(124.0))
@@ -597,6 +599,7 @@ impl RenderOnce for VideoPreviewReady {
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0() // 防止 flex 子元素撑开容器
                             .flex()
                             .flex_col()
                             .justify_center()
@@ -606,9 +609,9 @@ impl RenderOnce for VideoPreviewReady {
                                     .text_base()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(title_color)
-                                    .line_clamp(2)
                                     .line_height(px(24.0))
-                                    .child(self.info.title.clone()),
+                                    // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+                                    .child(truncate_string(&self.info.title, 60)),
                             )
                             .when_some(self.info.uploader.clone(), |el, uploader| {
                                 el.child(

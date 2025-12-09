@@ -1,0 +1,52 @@
+[package]
+name = "bytedance"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "字节跳动平台 API 接口库 (抖音/TikTok)"
+
+[dependencies]
+# HTTP 客户端
+reqwest = { workspace = true }
+url = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 异步运行时
+tokio = { workspace = true }
+
+# 错误处理
+thiserror = { workspace = true }
+
+# 日志
+tracing = { workspace = true }
+
+# 加密相关
+rand = "0.8"
+base64 = "0.22"
+md5 = "0.7"
+urlencoding = "2.1"
+
+# 正则表达式
+regex = "1"
+
+# 有序 Map
+indexmap = "2"
+
+# 异步特征
+async-trait = "0.1"
+
+# QuickJS (用于 X-Bogus JS 签名)
+rquickjs = { version = "0.10.0", features = [
+    "full-async",
+    "parallel",
+    "macro",
+] }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+pretty_assertions = "1.4"

@@ -1,14 +1,18 @@
+//! X-Bogus 签名算法实现
+//!
+//! 移植自 Python 抖音爬虫实现
+
 #![allow(dead_code)]
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use md5;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHARSET: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
 const UA_KEY: [u8; 3] = [0, 1, 12];
 const EMPTY_MD5: &str = "d41d8cd98f00b204e9800998ecf8427e";
 
+/// X-Bogus 签名选项
 #[derive(Debug, Clone)]
 pub struct XBogusOptions {
     pub timestamp: Option<u64>,
@@ -24,6 +28,7 @@ impl Default for XBogusOptions {
     }
 }
 
+/// X-Bogus 签名结果
 #[derive(Debug, Clone)]
 pub struct XBogusResult {
     pub params: String,
@@ -31,7 +36,7 @@ pub struct XBogusResult {
     pub user_agent: String,
 }
 
-/// 生成 X-Bogus（移植自 crawlers/douyin/web/xbogus.py）
+/// 生成 X-Bogus 签名
 pub fn generate_xbogus(
     url_path: &str,
     user_agent: &str,
@@ -46,7 +51,7 @@ pub fn generate_xbogus(
 
     // array1
     let ua_rc4 = rc4_encrypt(&UA_KEY, ua.as_bytes());
-    let ua_base64 = STANDARD.encode(ua_rc4);
+    let ua_base64 = STANDARD.encode(&ua_rc4);
     let ua_md5 = md5_hex(latin1_bytes(&ua_base64));
     let array1 = md5_str_to_array(&ua_md5);
 
@@ -254,7 +259,9 @@ mod tests {
         );
 
         assert_eq!(res.signature, "DFSzswVYEmGANjultmWx-e9WX7jq");
-        assert_eq!(res.params, format!("{url}&X-Bogus=DFSzswVYEmGANjultmWx-e9WX7jq"));
+        assert_eq!(
+            res.params,
+            format!("{url}&X-Bogus=DFSzswVYEmGANjultmWx-e9WX7jq")
+        );
     }
 }
-

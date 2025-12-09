@@ -7,6 +7,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::*;
 use magekit_shared::types::{TaskId, TaskState, TaskStatus};
+use magekit_shared::truncate_string;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -323,6 +324,8 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
     let speed = task.speed;
     let eta = task.eta;
     let title = task.title.clone().unwrap_or_else(|| task.url.clone());
+    // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+    let title = truncate_string(&title, 40);
     let is_downloading = matches!(state, TaskState::Downloading);
     let is_paused = matches!(state, TaskState::Paused);
     let is_failed = matches!(state, TaskState::Failed(_));
@@ -379,7 +382,6 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(title_color)
                                 .overflow_hidden()
-                                .text_ellipsis()
                                 .max_w(px(300.0))
                                 .child(title),
                         ),

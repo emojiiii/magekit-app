@@ -3,7 +3,7 @@
 //! 负责将任务状态保存到磁盘，以便应用重启后恢复未完成的任务。
 
 use crate::error::{ToolManagerError, ToolManagerResult};
-use magekit_shared::{TaskId, TaskState, TaskStatus, get_app_data_dir};
+use magekit_shared::{DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, get_app_data_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,6 +14,12 @@ pub struct PersistedTask {
     pub status: TaskStatus,
     pub retry_count: u32,
     pub max_retries: u32,
+    /// 下载选项（恢复下载时需要）
+    #[serde(default)]
+    pub options: Option<DownloadOptions>,
+    /// Cookies（恢复下载时需要）
+    #[serde(default)]
+    pub cookies: Option<Vec<PlatformCookie>>,
 }
 
 /// 持久化的任务列表
@@ -125,6 +131,38 @@ impl PersistedTasks {
     pub fn clear_all(&mut self) {
         self.tasks.clear();
     }
+
+    /// 按 URL 去重，保留最新的任务
+    /// 返回被删除的任务数量
+    pub fn deduplicate_by_url(&mut self) -> usize {
+        let mut url_to_task: HashMap<String, (TaskId, std::time::SystemTime)> = HashMap::new();
+        let mut to_remove: Vec<TaskId> = Vec::new();
+
+        // 找出每个 URL 最新的任务
+        for (task_id, task) in &self.tasks {
+            let url = task.status.url.clone();
+            if let Some((existing_id, existing_time)) = url_to_task.get(&url) {
+                if task.status.created_at > *existing_time {
+                    // 当前任务更新，移除旧任务
+                    to_remove.push(*existing_id);
+                    url_to_task.insert(url, (*task_id, task.status.created_at));
+                } else {
+                    // 旧任务更新，移除当前任务
+                    to_remove.push(*task_id);
+                }
+            } else {
+                url_to_task.insert(url, (*task_id, task.status.created_at));
+            }
+        }
+
+        // 删除重复的任务
+        let removed_count = to_remove.len();
+        for task_id in to_remove {
+            self.tasks.remove(&task_id);
+        }
+
+        removed_count
+    }
 }
 
 /// 任务持久化管理器
@@ -136,7 +174,19 @@ pub struct TaskPersistence {
 impl TaskPersistence {
     /// 创建新的持久化管理器
     pub fn new() -> ToolManagerResult<Self> {
-        let tasks = PersistedTasks::load().unwrap_or_default();
+        let mut tasks = PersistedTasks::load().unwrap_or_default();
+        
+        // 启动时清理：去重并移除已完成/取消的任务
+        let dedup_count = tasks.deduplicate_by_url();
+        if dedup_count > 0 {
+            tracing::info!("🧹 清理了 {} 个重复任务", dedup_count);
+        }
+        
+        tasks.clear_completed_tasks();
+        
+        // 保存清理后的任务列表
+        let _ = tasks.save();
+        
         Ok(Self {
             tasks,
             auto_save: true,
@@ -149,11 +199,19 @@ impl TaskPersistence {
     }
 
     /// 添加任务
-    pub fn add_task(&mut self, status: TaskStatus, max_retries: u32) -> ToolManagerResult<()> {
+    pub fn add_task(
+        &mut self,
+        status: TaskStatus,
+        max_retries: u32,
+        options: Option<DownloadOptions>,
+        cookies: Option<Vec<PlatformCookie>>,
+    ) -> ToolManagerResult<()> {
         let task = PersistedTask {
             status,
             retry_count: 0,
             max_retries,
+            options,
+            cookies,
         };
         self.tasks.upsert_task(task);
 
@@ -178,6 +236,8 @@ impl TaskPersistence {
                 status,
                 retry_count: 0,
                 max_retries: 3, // 默认最大重试次数
+                options: None,
+                cookies: None,
             };
             self.tasks.upsert_task(persisted_task);
         }
@@ -231,6 +291,11 @@ impl TaskPersistence {
     /// 获取所有持久化的任务
     pub fn get_all_tasks(&self) -> Vec<&PersistedTask> {
         self.tasks.tasks.values().collect()
+    }
+
+    /// 获取单个任务
+    pub fn get_task(&self, task_id: TaskId) -> Option<&PersistedTask> {
+        self.tasks.tasks.get(&task_id)
     }
 
     /// 获取可恢复的任务

@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 # 内部依赖
 magekit-shared = { path = "../shared" }
+magekit-extractor = { path = "../extractor" }
 
 # 外部依赖
 anyhow = { workspace = true }
@@ -28,3 +29,7 @@ futures-util = "0.3"
 
 # 系统工具查找
 which = "4.0"
+
+# Windows 编码支持
+[target.'cfg(windows)'.dependencies]
+encoding_rs = "0.8"

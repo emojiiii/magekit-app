@@ -1,4 +1,9 @@
+//! TikTok 视频解析模块
+//!
+//! 使用 bytedance 包的 X-Bogus 签名实现 TikTok 视频解析
+
 use crate::error::{ExtractError, ExtractResult};
+use bytedance::xbogus_sign;
 use magekit_shared::{PlatformCookie, VideoFormat, VideoInfo};
 use regex::Regex;
 use std::collections::HashMap;
@@ -91,12 +96,12 @@ pub async fn extract_video_info(
     let params = build_params(&item_id);
     let query = params_to_query(&params);
 
-    // 使用 X-Bogus 签名
-    let xbogus = xbogus::sign(&query, UA).map_err(|e| ExtractError::Other(e.to_string()))?;
+    // 使用 bytedance 包的 X-Bogus 签名
+    let xbogus_result = xbogus_sign(&query, UA, None);
 
     let api_url = format!(
         "https://www.tiktok.com/api/item/detail/?{}&X-Bogus={}",
-        query, xbogus
+        query, xbogus_result.signature
     );
     tracing::debug!("🌐 API URL: {}", api_url);
 

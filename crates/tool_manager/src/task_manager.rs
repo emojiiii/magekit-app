@@ -4,11 +4,11 @@ use crate::storage::ToolStorage;
 use crate::task_persistence::TaskPersistence;
 use crate::task_queue::{QueueStats, QueuedTask, TaskPriority, TaskQueue};
 use crate::{config::ConfigManager, updater::UpdateInfo};
-use magekit_shared::{DownloadOptions, TaskId, TaskState, TaskStatus, TaskUpdate, VideoInfo};
+use magekit_shared::{DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, TaskUpdate, VideoInfo};
 use magekit_shared::{UpdateChannel, generate_output_path};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use uuid::Uuid;
 
 /// 工具管理器
@@ -18,7 +18,8 @@ pub struct ToolManager {
     downloader: VideoDownloader,
     config_manager: ConfigManager,
     tasks: Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
-    update_tx: mpsc::Sender<ToolManagerEvent>,
+    /// 事件广播发送器（用于向所有订阅者广播事件）
+    event_tx: broadcast::Sender<ToolManagerEvent>,
     /// 任务队列
     task_queue: Arc<Mutex<TaskQueue>>,
     /// 任务持久化
@@ -37,6 +38,10 @@ pub struct TaskHandle {
     pub retry_count: u32,
     /// 最大重试次数
     pub max_retries: u32,
+    /// 原始下载选项（用于恢复下载）
+    pub options: Option<DownloadOptions>,
+    /// 原始 cookies（用于恢复下载）
+    pub cookies: Option<Vec<PlatformCookie>>,
 }
 
 /// 工具管理器事件
@@ -74,7 +79,8 @@ impl ToolManager {
         let downloader = VideoDownloader::new(yt_dlp_path, ffmpeg_path);
         let config_manager = ConfigManager::new_sync()?;
 
-        let (update_tx, _) = mpsc::channel(1000);
+        // 创建广播通道（容量 1000）
+        let (event_tx, _) = broadcast::channel(1000);
 
         // 创建任务队列（默认3个并发）
         let max_concurrent = config_manager
@@ -94,7 +100,7 @@ impl ToolManager {
             downloader,
             config_manager,
             tasks: Arc::new(RwLock::new(HashMap::new())),
-            update_tx,
+            event_tx,
             task_queue: Arc::new(Mutex::new(task_queue)),
             persistence: Arc::new(Mutex::new(persistence)),
             max_retries,
@@ -107,12 +113,12 @@ impl ToolManager {
         Self::new_sync()
     }
 
-    /// 获取事件接收器
-    pub fn subscribe(&self) -> mpsc::Receiver<ToolManagerEvent> {
-        let (_tx, rx) = mpsc::channel(1000);
-        // 在实际实现中，这里应该转发事件
-        // 为了简化，我们直接返回一个空接收器
-        rx
+    /// 订阅事件流
+    /// 
+    /// 返回一个 broadcast::Receiver，可以接收所有任务更新事件。
+    /// 多个订阅者可以同时接收同一事件。
+    pub fn subscribe(&self) -> broadcast::Receiver<ToolManagerEvent> {
+        self.event_tx.subscribe()
     }
 
     /// 确保所有工具都已安装
@@ -163,16 +169,39 @@ impl ToolManager {
         &self,
         url: &str,
         options: DownloadOptions,
-        cookies: Option<&[magekit_shared::PlatformCookie]>,
+        cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<TaskId> {
+        self.start_download_with_info(url, options, cookies, None).await
+    }
+
+    /// 开始下载任务（带视频信息）
+    ///
+    /// # 参数
+    /// - `url`: 视频 URL
+    /// - `options`: 下载选项
+    /// - `cookies`: 可选的平台 Cookie 列表
+    /// - `video_info`: 可选的视频信息，如果提供则不再获取
+    pub async fn start_download_with_info(
+        &self,
+        url: &str,
+        options: DownloadOptions,
+        cookies: Option<&[PlatformCookie]>,
+        video_info: Option<VideoInfo>,
+    ) -> DownloadResult<TaskId> {
+        // 每次下载都创建新任务（使用新的 UUID）
         let task_id = Uuid::new_v4();
 
         // 创建任务状态
         let mut task_status = TaskStatus::new(task_id, url.to_string(), None);
         task_status.state = TaskState::Queued;
 
-        // 生成输出路径
-        let video_info = self.get_video_info(url, cookies).await?;
+        // 获取视频信息（如果未提供）
+        let video_info = match video_info {
+            Some(info) => info,
+            None => self.get_video_info(url, cookies).await?,
+        };
+        task_status.title = Some(video_info.title.clone());
+        
         let output_path = generate_output_path(
             &options.output_path,
             &video_info.title,
@@ -187,17 +216,16 @@ impl ToolManager {
 
         task_status.output_path = Some(output_path.clone());
 
-        // 发送任务创建事件
-        self.send_task_update(TaskUpdate::Created(task_status.clone()))
-            .await;
-
         // 创建任务句柄
         let (cancel_tx, cancel_rx) = mpsc::channel(1);
+        let cookies_owned: Option<Vec<PlatformCookie>> = cookies.map(|c| c.to_vec());
         let task_handle = TaskHandle {
-            status: task_status,
+            status: task_status.clone(),
             cancel_tx: Some(cancel_tx),
             retry_count: 0,
             max_retries: self.max_retries,
+            options: Some(options.clone()),
+            cookies: cookies_owned.clone(),
         };
 
         // 存储任务
@@ -206,13 +234,26 @@ impl ToolManager {
             tasks.insert(task_id, task_handle);
         }
 
+        // 持久化任务（包含下载选项和 cookies，以便恢复）
+        {
+            let mut persistence = self.persistence.lock().await;
+            let _ = persistence.add_task(
+                task_status.clone(),
+                self.max_retries,
+                Some(options.clone()),
+                cookies_owned.clone(),
+            );
+        }
+
+        // 发送任务创建事件
+        self.broadcast_event(ToolManagerEvent::TaskUpdate(TaskUpdate::Created(task_status)));
+
         // 启动下载任务
         let downloader = self.downloader.clone();
         let tasks = self.tasks.clone();
-        let update_tx = self.update_tx.clone();
+        let event_tx = self.event_tx.clone();
+        let persistence = self.persistence.clone();
         let url_clone = url.to_string();
-        let cookies_owned: Option<Vec<magekit_shared::PlatformCookie>> =
-            cookies.map(|c| c.to_vec());
 
         tokio::spawn(async move {
             Self::run_download_task(
@@ -221,7 +262,8 @@ impl ToolManager {
                 options,
                 downloader,
                 tasks,
-                update_tx,
+                event_tx,
+                persistence,
                 cancel_rx,
                 cookies_owned,
             )
@@ -239,16 +281,26 @@ impl ToolManager {
             if task.status.state == TaskState::Downloading {
                 task.status.state = TaskState::Paused;
 
-                // 发送取消信号
+                // 发送取消信号来停止下载进程
                 if let Some(cancel_tx) = task.cancel_tx.take() {
                     let _ = cancel_tx.send(()).await;
                 }
 
+                // 持久化暂停状态
+                let status = task.status.clone();
                 drop(tasks); // 释放锁
 
-                self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Paused))
-                    .await;
+                {
+                    let mut persistence = self.persistence.lock().await;
+                    let _ = persistence.update_task_status(task_id, status);
+                }
 
+                // 广播状态变更
+                self.broadcast_event(ToolManagerEvent::TaskUpdate(
+                    TaskUpdate::StateChanged(task_id, TaskState::Paused)
+                ));
+
+                tracing::info!("⏸️ 任务已暂停: {}", task_id);
                 Ok(())
             } else {
                 Err(DownloadError::task_operation_failed(
@@ -263,28 +315,143 @@ impl ToolManager {
     }
 
     /// 恢复下载任务
+    /// 
+    /// 真正重新启动下载任务（而不是仅更新状态）
+    /// 支持从内存和持久化存储中恢复任务
     pub async fn resume_download(&self, task_id: TaskId) -> DownloadResult<()> {
-        // 实际实现中，这里需要重新启动下载任务
-        // 为了简化，我们只是更新状态
-        self.update_task_state(task_id, TaskState::Downloading)
-            .await
+        // 首先尝试从内存中获取任务信息
+        let task_info = {
+            let tasks = self.tasks.read().await;
+            tasks.get(&task_id).map(|t| {
+                (t.status.clone(), t.options.clone(), t.cookies.clone())
+            })
+        };
+
+        // 如果内存中没有，尝试从持久化存储中获取
+        let (mut status, options, cookies) = match task_info {
+            Some(info) => info,
+            None => {
+                // 从持久化存储中获取
+                let persistence = self.persistence.lock().await;
+                let persisted_task = persistence.get_task(task_id)
+                    .ok_or_else(|| DownloadError::task_not_found(task_id))?;
+                (
+                    persisted_task.status.clone(),
+                    persisted_task.options.clone(),
+                    persisted_task.cookies.clone(),
+                )
+            }
+        };
+
+        // 检查状态 - 允许恢复 Downloading、Paused 和 Failed 状态的任务
+        if !matches!(status.state, TaskState::Downloading | TaskState::Paused | TaskState::Failed(_)) {
+            return Err(DownloadError::task_operation_failed(
+                task_id,
+                "resume",
+                format!("Task is in {:?} state, cannot resume", status.state),
+            ));
+        }
+
+        // 获取下载选项
+        let options = options.ok_or_else(|| {
+            DownloadError::task_operation_failed(
+                task_id,
+                "resume",
+                "No download options saved for this task".to_string(),
+            )
+        })?;
+
+        // 更新状态为 Downloading
+        status.state = TaskState::Downloading;
+        
+        // 重新创建取消通道
+        let (cancel_tx, cancel_rx) = mpsc::channel(1);
+        
+        // 创建或更新内存中的任务句柄
+        {
+            let mut tasks = self.tasks.write().await;
+            if let Some(task) = tasks.get_mut(&task_id) {
+                task.status.state = TaskState::Downloading;
+                task.cancel_tx = Some(cancel_tx);
+            } else {
+                // 任务不在内存中，需要创建新的任务句柄
+                let task_handle = TaskHandle {
+                    status: status.clone(),
+                    cancel_tx: Some(cancel_tx),
+                    retry_count: 0,
+                    max_retries: self.max_retries,
+                    options: Some(options.clone()),
+                    cookies: cookies.clone(),
+                };
+                tasks.insert(task_id, task_handle);
+            }
+        }
+
+        // 持久化状态
+        {
+            let mut persistence = self.persistence.lock().await;
+            let _ = persistence.update_task_status(task_id, status.clone());
+        }
+
+        // 广播状态变更
+        self.broadcast_event(ToolManagerEvent::TaskUpdate(
+            TaskUpdate::StateChanged(task_id, TaskState::Downloading)
+        ));
+
+        // 重新启动下载任务
+        let downloader = self.downloader.clone();
+        let tasks = self.tasks.clone();
+        let event_tx = self.event_tx.clone();
+        let persistence = self.persistence.clone();
+        let url = status.url.clone();
+
+        tokio::spawn(async move {
+            Self::run_download_task(
+                task_id,
+                url,
+                options,
+                downloader,
+                tasks,
+                event_tx,
+                persistence,
+                cancel_rx,
+                cookies,
+            )
+            .await;
+        });
+
+        tracing::info!("▶️ 任务已恢复: {}", task_id);
+        Ok(())
     }
 
     /// 取消下载任务
     pub async fn cancel_download(&self, task_id: TaskId) -> DownloadResult<()> {
         let mut tasks = self.tasks.write().await;
 
-        if let Some(task) = tasks.remove(&task_id) {
+        if let Some(task) = tasks.get_mut(&task_id) {
             // 发送取消信号
-            if let Some(cancel_tx) = task.cancel_tx {
+            if let Some(cancel_tx) = task.cancel_tx.take() {
                 let _ = cancel_tx.send(()).await;
             }
 
+            task.status.state = TaskState::Cancelled;
+            task.status.completed_at = Some(std::time::SystemTime::now());
+            let status = task.status.clone();
+
             drop(tasks); // 释放锁
 
-            self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Cancelled))
-                .await;
+            // 持久化取消状态
+            {
+                let mut persistence = self.persistence.lock().await;
+                let _ = persistence.update_task_status(task_id, status);
+            }
 
+            // 广播状态变更
+            self.broadcast_event(ToolManagerEvent::TaskUpdate(
+                TaskUpdate::StateChanged(task_id, TaskState::Cancelled)
+            ));
+
+            tracing::info!("🛑 任务已取消: {}", task_id);
             Ok(())
         } else {
             Err(DownloadError::task_not_found(task_id))
@@ -298,6 +465,8 @@ impl ToolManager {
     }
 
     /// 获取所有任务状态（包括持久化的任务）
+    /// 
+    /// 按 URL 去重，保留最新的任务（基于创建时间）
     pub async fn get_all_tasks(&self) -> Vec<TaskStatus> {
         let mut all_tasks: HashMap<TaskId, TaskStatus> = HashMap::new();
 
@@ -314,7 +483,21 @@ impl ToolManager {
             all_tasks.insert(*task_id, task_handle.status.clone());
         }
 
-        all_tasks.into_values().collect()
+        // 3. 按 URL 去重，保留最新的任务
+        let mut url_to_task: HashMap<String, TaskStatus> = HashMap::new();
+        for task in all_tasks.into_values() {
+            let url = task.url.clone();
+            if let Some(existing) = url_to_task.get(&url) {
+                // 比较创建时间，保留更新的
+                if task.created_at > existing.created_at {
+                    url_to_task.insert(url, task);
+                }
+            } else {
+                url_to_task.insert(url, task);
+            }
+        }
+
+        url_to_task.into_values().collect()
     }
 
     /// 更新任务状态
@@ -330,8 +513,10 @@ impl ToolManager {
 
             let _ = self.save_task_status(&status).await;
 
-            self.send_task_update(TaskUpdate::StateChanged(task_id, state))
-                .await;
+            // 广播状态变更
+            self.broadcast_event(ToolManagerEvent::TaskUpdate(
+                TaskUpdate::StateChanged(task_id, state)
+            ));
             Ok(())
         } else {
             Err(DownloadError::task_not_found(task_id))
@@ -349,6 +534,13 @@ impl ToolManager {
 
     /// 从持久化存储删除任务
     pub async fn delete_task_status(&self, task_id: TaskId) -> DownloadResult<()> {
+        // 从内存中移除
+        {
+            let mut tasks = self.tasks.write().await;
+            tasks.remove(&task_id);
+        }
+        
+        // 从持久化存储删除
         let mut persistence = self.persistence.lock().await;
         persistence
             .remove_task(task_id)
@@ -356,12 +548,10 @@ impl ToolManager {
         Ok(())
     }
 
-    /// 发送任务更新事件
-    async fn send_task_update(&self, update: TaskUpdate) {
-        let _ = self
-            .update_tx
-            .send(ToolManagerEvent::TaskUpdate(update))
-            .await;
+    /// 广播事件到所有订阅者
+    fn broadcast_event(&self, event: ToolManagerEvent) {
+        // broadcast::send 返回发送给的接收者数量，即使没有接收者也不会阻塞
+        let _ = self.event_tx.send(event);
     }
 
     /// 运行下载任务
@@ -371,101 +561,168 @@ impl ToolManager {
         options: DownloadOptions,
         downloader: VideoDownloader,
         tasks: Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
-        _update_tx: mpsc::Sender<ToolManagerEvent>,
+        event_tx: broadcast::Sender<ToolManagerEvent>,
+        persistence: Arc<Mutex<TaskPersistence>>,
         mut cancel_rx: mpsc::Receiver<()>,
-        cookies: Option<Vec<magekit_shared::PlatformCookie>>,
+        cookies: Option<Vec<PlatformCookie>>,
     ) {
         // 创建进度通道
         let (progress_tx, mut progress_rx) = mpsc::channel(1000);
 
-        // 克隆tasks用于发送更新
-        let tasks_clone = tasks.clone();
+        // 克隆用于进度监控
+        let tasks_for_progress = tasks.clone();
+        let event_tx_for_progress = event_tx.clone();
+        let persistence_for_progress = persistence.clone();
 
         // 启动进度监控任务
-        let progress_task_id = task_id;
-        tokio::spawn(async move {
+        let progress_handle = tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
                 match progress {
                     DownloadProgress::Started { .. } => {
-                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                        let status = Self::update_task_in_map(&tasks_for_progress, task_id, |status| {
                             status.state = TaskState::Downloading;
                             status.started_at = Some(std::time::SystemTime::now());
-                        })
-                        .await;
+                        }).await;
+                        
+                        // 广播状态变更
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(
+                            TaskUpdate::StateChanged(task_id, TaskState::Downloading)
+                        ));
+                        
+                        // 持久化
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(task_id, status);
+                        }
                     }
-                    DownloadProgress::Progress { percent, .. } => {
-                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
-                            status.progress = percent;
-                        })
-                        .await;
+                    DownloadProgress::Progress { percent, speed, eta, downloaded_bytes, total_bytes, .. } => {
+                        let status = Self::update_task_in_map(&tasks_for_progress, task_id, |status| {
+                            status.progress = percent / 100.0; // 转换为 0-1 范围
+                            if let Some(s) = speed {
+                                status.speed = Some(s);
+                            }
+                            status.eta = eta;
+                            if let Some(d) = downloaded_bytes {
+                                status.downloaded_bytes = d;
+                            }
+                            if let Some(t) = total_bytes {
+                                status.total_bytes = Some(t);
+                            }
+                        }).await;
+                        
+                        // 广播进度更新
+                        if let Some(s) = &status {
+                            let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(
+                                TaskUpdate::Progress(
+                                    task_id,
+                                    s.progress,
+                                    s.downloaded_bytes,
+                                    s.total_bytes,
+                                    s.speed,
+                                    s.eta,
+                                )
+                            ));
+                        }
                     }
                     DownloadProgress::Completed { output_path, .. } => {
-                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                        let status = Self::update_task_in_map(&tasks_for_progress, task_id, |status| {
                             status.state = TaskState::Completed;
-                            status.progress = 100.0;
+                            status.progress = 1.0;
                             status.completed_at = Some(std::time::SystemTime::now());
-                            status.output_path = Some(output_path);
-                        })
-                        .await;
-
-                        // 任务完成，退出循环
+                            status.output_path = Some(output_path.clone());
+                            
+                            // 获取文件大小
+                            if let Ok(metadata) = std::fs::metadata(&output_path) {
+                                status.total_bytes = Some(metadata.len());
+                                status.downloaded_bytes = metadata.len();
+                            }
+                        }).await;
+                        
+                        // 广播完成事件
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(
+                            TaskUpdate::Completed(task_id, output_path)
+                        ));
+                        
+                        // 持久化
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(task_id, status);
+                        }
+                        
+                        tracing::info!("✅ 下载完成: {}", task_id);
                         break;
                     }
                     DownloadProgress::Error { error, .. } => {
-                        Self::update_task_in_map(&tasks_clone, progress_task_id, |status| {
+                        let status = Self::update_task_in_map(&tasks_for_progress, task_id, |status| {
                             status.state = TaskState::Failed(error.clone());
                             status.completed_at = Some(std::time::SystemTime::now());
-                        })
-                        .await;
+                        }).await;
+                        
+                        // 广播失败事件
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(
+                            TaskUpdate::Failed(task_id, error.clone())
+                        ));
+                        
+                        // 持久化
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(task_id, status);
+                        }
+                        
+                        tracing::error!("❌ 下载失败: {} - {}", task_id, error);
                         break;
                     }
                 }
             }
         });
 
-        // 监控取消信号
-        let cancel_task_id = task_id;
-        let cancel_task = tokio::spawn(async move {
-            if let Some(()) = cancel_rx.recv().await {
-                tracing::info!("Download task {} cancelled", cancel_task_id);
-            }
-        });
-
-        // 执行下载
+        // 执行下载，同时监听取消信号
         let download_result = tokio::select! {
             result = downloader.start_download(task_id, &url, options, progress_tx, cookies.as_deref()) => {
                 result
             }
-            _ = cancel_task => {
+            _ = cancel_rx.recv() => {
+                tracing::info!("🛑 下载任务收到取消信号: {}", task_id);
                 Err(DownloadError::download_cancelled(&url))
             }
         };
 
-        match download_result {
+        // 等待进度监控任务完成
+        let _ = progress_handle.await;
+
+        // 处理下载结果（如果进度监控没有处理）
+        match &download_result {
             Ok(output_path) => {
-                tracing::info!("Download completed: {:?}", output_path);
+                tracing::info!("✅ 下载任务完成: {} -> {:?}", task_id, output_path);
             }
             Err(e) => {
-                tracing::error!("Download failed: {}", e);
+                let error_msg = e.to_string();
+                // 检查是否是取消导致的
+                if error_msg.contains("cancelled") || error_msg.contains("取消") {
+                    // 取消状态已经在 cancel_download 中处理
+                    tracing::info!("🛑 下载任务已取消: {}", task_id);
+                } else {
+                    tracing::error!("❌ 下载任务失败: {} - {}", task_id, e);
+                }
             }
         }
-
-        // 清理任务
-        let mut tasks = tasks.write().await;
-        tasks.remove(&task_id);
     }
 
-    /// 在任务映射中更新任务状态
+    /// 在任务映射中更新任务状态，返回更新后的状态副本
     async fn update_task_in_map<F>(
         tasks: &Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
         task_id: TaskId,
         updater: F,
-    ) where
+    ) -> Option<TaskStatus>
+    where
         F: FnOnce(&mut TaskStatus),
     {
         let mut tasks_guard = tasks.write().await;
         if let Some(task) = tasks_guard.get_mut(&task_id) {
             updater(&mut task.status);
+            Some(task.status.clone())
+        } else {
+            None
         }
     }
 
@@ -513,15 +770,19 @@ impl ToolManager {
             queue.enqueue(queued_task).await;
         }
 
-        // 持久化任务
+        // 持久化任务（包含下载选项，以便恢复）
         {
             let mut persistence = self.persistence.lock().await;
-            let _ = persistence.add_task(task_status.clone(), self.max_retries);
+            let _ = persistence.add_task(
+                task_status.clone(),
+                self.max_retries,
+                Some(options.clone()),
+                None, // 队列任务暂不支持 cookies
+            );
         }
 
-        // 发送任务创建事件
-        self.send_task_update(TaskUpdate::Created(task_status))
-            .await;
+        // 广播任务创建事件
+        self.broadcast_event(ToolManagerEvent::TaskUpdate(TaskUpdate::Created(task_status)));
 
         tracing::info!("Task {} enqueued with priority {:?}", task_id, priority);
         Ok(task_id)
@@ -601,11 +862,17 @@ impl ToolManager {
                 let _ = persistence.increment_retry(task_id);
             }
 
+            // 获取原始选项
+            let original_options = {
+                let tasks = self.tasks.read().await;
+                tasks.get(&task_id).and_then(|t| t.options.clone())
+            }.unwrap_or_default();
+
             // 重新加入队列
             let queued_task = QueuedTask {
                 task_id,
                 url: status.url.clone(),
-                options: DownloadOptions::default(), // 需要从某处获取原始选项
+                options: original_options,
                 priority: TaskPriority::Normal,
                 created_at: std::time::Instant::now(),
             };
@@ -615,8 +882,10 @@ impl ToolManager {
                 queue.enqueue(queued_task).await;
             }
 
-            self.send_task_update(TaskUpdate::StateChanged(task_id, TaskState::Queued))
-                .await;
+            // 广播状态变更
+            self.broadcast_event(ToolManagerEvent::TaskUpdate(
+                TaskUpdate::StateChanged(task_id, TaskState::Queued)
+            ));
 
             tracing::info!(
                 "Task {} retry scheduled (attempt {})",
@@ -688,6 +957,8 @@ impl ToolManager {
                     cancel_tx: None,
                     retry_count: task.retry_count,
                     max_retries: task.max_retries,
+                    options: None,
+                    cookies: None,
                 },
             );
         }

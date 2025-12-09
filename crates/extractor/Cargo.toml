@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 magekit-shared = { path = "../shared" }
-xbogus = { path = "../xbogus" }
+bytedance = { path = "../bytedance" }
 base64 = "0.21"
 indexmap = "2"
 md5 = "0.7"
@@ -26,4 +26,3 @@ urlencoding = "2"
 
 [dev-dependencies]
 which = "7"
-

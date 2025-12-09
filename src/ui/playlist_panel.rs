@@ -6,6 +6,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::*;
+use magekit_shared::truncate_string;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -554,7 +555,8 @@ fn render_playlist_item_inline(
     };
 
     let id = item.id.clone();
-    let title = item.title.clone();
+    // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+    let title = truncate_string(&item.title, 60);
     let duration = item
         .duration
         .map(format_duration_seconds)
@@ -595,7 +597,6 @@ fn render_playlist_item_inline(
                         .text_sm()
                         .text_color(fg)
                         .overflow_hidden()
-                        .text_ellipsis()
                         .child(title),
                 )
                 .when(uploader.is_some(), |this| {

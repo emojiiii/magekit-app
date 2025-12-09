@@ -24,6 +24,7 @@ use live_recorder::{LiveRecorder, RecordConfig, error::RecorderError, recorder::
 use magekit_shared::types::{
     LiveRecordConfig, LiveRecordQuality, LiveRoomStatus, MonitoredRoom, RecordingTask,
 };
+use magekit_shared::truncate_string;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1792,7 +1793,10 @@ impl RecordingPage {
         let is_recording = state.is_recording;
         let is_monitoring = room.monitoring_enabled;
         let cover_url = state.cover_url.clone();
-        let title = state.title.clone();
+        // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+        let title = state.title.as_ref().map(|t| truncate_string(t, 50));
+        let anchor_name = truncate_string(&room.anchor_name, 30);
+        let last_error = state.last_error.as_ref().map(|e| truncate_string(e, 60));
 
         // 根据状态获取颜色
         let status_color = match &state.status {
@@ -1924,8 +1928,7 @@ impl RecordingPage {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(title_color)
                                     .overflow_x_hidden()
-                                    .text_ellipsis()
-                                    .child(room.anchor_name.clone()),
+                                    .child(anchor_name.clone()),
                             )
                             .child(
                                 div()
@@ -1960,7 +1963,6 @@ impl RecordingPage {
                                 .text_xs()
                                 .text_color(desc_color)
                                 .overflow_x_hidden()
-                                .text_ellipsis()
                                 .child(t),
                         )
                     })
@@ -1995,13 +1997,12 @@ impl RecordingPage {
                             ),
                     )
                     // 错误信息
-                    .when_some(state.last_error.clone(), |el, error| {
+                    .when_some(last_error.clone(), |el, error| {
                         el.child(
                             div()
                                 .text_xs()
                                 .text_color(gpui::rgb(0xef4444))
                                 .overflow_x_hidden()
-                                .text_ellipsis()
                                 .child(format!("⚠️ {}", error)),
                         )
                     }),
@@ -2225,3 +2226,4 @@ impl Render for RecordingPage {
             )
     }
 }
+

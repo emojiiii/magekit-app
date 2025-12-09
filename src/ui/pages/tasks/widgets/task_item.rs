@@ -4,7 +4,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::*;
-use magekit_shared::{TaskState, TaskStatus};
+use magekit_shared::{TaskState, TaskStatus, truncate_string};
 use std::sync::Arc;
 
 /// 任务项组件
@@ -122,10 +122,13 @@ impl RenderOnce for TaskItem {
         };
 
         // 标题（使用 URL 的最后部分作为备用）
+        // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
+        // 使用较短的截断长度，因为 GPUI 可能会因为宽度限制再次截断
         let title = task
             .title
             .clone()
             .unwrap_or_else(|| task.url.split('/').last().unwrap_or("未知").to_string());
+        let title = truncate_string(&title, 50);
 
         let on_pause = self.on_pause;
         let on_resume = self.on_resume;
@@ -155,25 +158,27 @@ impl RenderOnce for TaskItem {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .gap(px(12.0))
                     .child(
                         div()
                             .flex()
+                            .flex_1()
+                            .min_w_0() // 防止标题撑开容器
                             .items_center()
                             .gap(px(8.0))
-                            .child(div().text_lg().child(status_icon))
+                            .child(div().flex_shrink_0().text_lg().child(status_icon))
                             .child(
-                                div().flex_1().overflow_hidden().child(
+                                div().flex_1().min_w_0().overflow_hidden().child(
                                     div()
                                         .text_sm()
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(title_color)
                                         .overflow_hidden()
-                                        .text_ellipsis()
                                         .child(title),
                                 ),
                             ),
                     )
-                    .child(div().text_xs().text_color(status_color).child(status_text)),
+                    .child(div().flex_shrink_0().text_xs().text_color(status_color).child(status_text)),
             )
             // 失败原因显示
             .when_some(error_message, |this, msg| {
