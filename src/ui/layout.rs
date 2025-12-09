@@ -116,6 +116,7 @@ impl RenderOnce for AppLayout {
         let nav_items = vec![
             NavItem::new("/", "首页", "🏠"),
             NavItem::new("/record", "录制", "🎥"),
+            NavItem::new("/capture", "嗅探", "🌐"),
             NavItem::new("/channel", "频道", "👥"),
             NavItem::new("/tasks", "任务", "📋"),
             NavItem::new("/tools", "工具", "🔧"),

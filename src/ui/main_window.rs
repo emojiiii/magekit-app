@@ -4,7 +4,9 @@
 
 use crate::app::AppState;
 use crate::ui::layout::{AppLayout, not_found_page};
-use crate::ui::pages::{ChannelPage, HomePage, RecordingPage, SettingsPage, TasksPage, ToolsPage};
+use crate::ui::pages::{
+    CapturePage, ChannelPage, HomePage, RecordingPage, SettingsPage, TasksPage, ToolsPage,
+};
 use gpui::*;
 use gpui_component::*;
 use gpui_router::{Route, Routes};
@@ -27,6 +29,8 @@ pub struct MainWindow {
     channel_page: Entity<ChannelPage>,
     /// 缓存的录制页 Entity
     recording_page: Entity<RecordingPage>,
+    /// 缓存的嗅探页 Entity
+    capture_page: Entity<CapturePage>,
 }
 
 impl MainWindow {
@@ -39,6 +43,7 @@ impl MainWindow {
         let settings_page = cx.new(|cx| SettingsPage::new(app_state.clone(), window, cx));
         let channel_page = cx.new(|cx| ChannelPage::new(app_state.clone(), window, cx));
         let recording_page = cx.new(|cx| RecordingPage::new(app_state.clone(), window, cx));
+        let capture_page = cx.new(|cx| CapturePage::new(app_state.clone(), window, cx));
 
         Self {
             app_state,
@@ -48,6 +53,7 @@ impl MainWindow {
             settings_page,
             channel_page,
             recording_page,
+            capture_page,
         }
     }
 }
@@ -63,6 +69,7 @@ impl Render for MainWindow {
         let settings_page = self.settings_page.clone();
         let channel_page = self.channel_page.clone();
         let recording_page = self.recording_page.clone();
+        let capture_page = self.capture_page.clone();
 
         div()
             .flex()
@@ -81,6 +88,10 @@ impl Render for MainWindow {
                         .child(
                             // 任务页面 - 使用缓存的 Entity
                             Route::new().path("tasks").element(tasks_page),
+                        )
+                        .child(
+                            // 嗅探页面 - 使用缓存的 Entity
+                            Route::new().path("capture").element(capture_page),
                         )
                         .child(
                             // 频道页面 - 使用缓存的 Entity

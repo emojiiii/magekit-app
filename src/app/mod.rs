@@ -10,6 +10,7 @@
 //! - `download` - 下载功能
 //! - `tasks` - 任务管理功能
 
+mod capture;
 mod download;
 mod state;
 mod tasks;
@@ -19,6 +20,7 @@ mod utils;
 
 // 重新导出公共类型
 pub use state::{AppState, GlobalAppState};
+pub use capture::{CaptureEvent, CaptureRequest, M3u8Stream};
 pub use types::{DownloadVideoOptions, ToolStatus};
 
 // 内部使用的类型（如果外部需要可以添加到上面）

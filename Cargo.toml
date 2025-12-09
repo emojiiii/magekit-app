@@ -111,6 +111,7 @@ reqwest_client = { workspace = true }
 
 # HTTP 直链下载
 reqwest = { workspace = true, features = ["blocking"] }
+url = { workspace = true }
 
 # 临时文件（用于 Cookie）
 tempfile = "3"

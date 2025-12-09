@@ -1,13 +1,15 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
-    ChannelInfo, DownloadOptions, PlatformCookie, TaskId, VideoInfo, create_tokio_command,
+    create_tokio_command, ChannelInfo, DownloadOptions, PlatformCookie, TaskId, VideoInfo,
 };
 use std::path::PathBuf;
+use std::time::Instant;
 use std::process::Stdio;
 use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
+use url::Url;
 
 /// 视频下载器
 /// 
@@ -139,6 +141,14 @@ impl VideoDownloader {
                 url: url.to_string(),
             })
             .await;
+
+        // ffmpeg 拉流优先
+        if let Some(ffmpeg_url) = &options.ffmpeg_url {
+            tracing::info!("🚀 使用 ffmpeg m3u8 下载模式");
+            return self
+                .download_with_ffmpeg(task_id, ffmpeg_url, &options, &progress_tx)
+                .await;
+        }
 
         // 如果有直链，使用 HTTP 直接下载
         if let Some(download_url) = &options.download_url {
@@ -369,6 +379,126 @@ impl VideoDownloader {
             .await?;
 
         tracing::info!("✅ yt-dlp 下载完成: {:?}", output_path);
+        Ok(output_path)
+    }
+
+    /// 使用 ffmpeg 下载 m3u8 直链
+    async fn download_with_ffmpeg(
+        &self,
+        task_id: TaskId,
+        ffmpeg_url: &str,
+        options: &DownloadOptions,
+        progress_tx: &mpsc::Sender<DownloadProgress>,
+    ) -> DownloadResult<PathBuf> {
+        let ffmpeg_path = self
+            .ffmpeg_path
+            .clone()
+            .ok_or_else(|| DownloadError::internal("ffmpeg 未配置"))?;
+
+        // 输出文件名：用任务 id 保证唯一，后缀 mp4
+        let filename = format!("{}.mp4", task_id);
+        let output_path = options.output_path.join(&filename);
+
+        tracing::info!("  ffmpeg url: {}", ffmpeg_url);
+        tracing::info!("  输出文件: {:?}", output_path);
+
+        // 启动 ffmpeg 子进程，打开 stdout 以便解析进度
+        let mut child = {
+            let mut cmd = create_tokio_command(ffmpeg_path);
+            cmd.arg("-y")
+                .arg("-i")
+                .arg(ffmpeg_url)
+                .arg("-c")
+                .arg("copy")
+                .arg("-progress")
+                .arg("pipe:1")
+                .arg("-nostats")
+                .arg(&output_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            cmd.spawn()
+                .map_err(|e| DownloadError::internal(format!("ffmpeg 启动失败: {}", e)))?
+        };
+
+        // 解析 ffmpeg progress 输出（pipe:1）
+        if let Some(stdout) = child.stdout.take() {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut reader = BufReader::new(stdout);
+            let mut buf = String::new();
+            let mut last_percent = 0.0;
+            let mut last_size: u64 = 0;
+            let mut last_ts = Instant::now();
+            while reader.read_line(&mut buf).await.unwrap_or(0) > 0 {
+                let line = buf.trim();
+                // ffmpeg -progress 输出键值对，如：
+                // frame=..., out_time_ms=1230000, speed=2.0x, progress=continue/end, total_size=12345
+                let mut send_progress = false;
+                let mut percent = None;
+                let mut speed_bps = None;
+                let mut downloaded = None;
+
+                if let Some(ms_str) = line.strip_prefix("out_time_ms=") {
+                    if let Ok(ms) = ms_str.parse::<f64>() {
+                        // 粗略用输出时长近似百分比，不超 99%
+                        let p = ((ms / 1_000_000.0) / 600.0).min(0.99) * 100.0;
+                        if (p - last_percent).abs() >= 1.0 {
+                            last_percent = p;
+                            percent = Some(p as f32);
+                            send_progress = true;
+                        }
+                    }
+                } else if let Some(size_str) = line.strip_prefix("total_size=") {
+                    if let Ok(size) = size_str.parse::<u64>() {
+                        downloaded = Some(size);
+                        let now = Instant::now();
+                        let elapsed = now.duration_since(last_ts).as_secs_f64().max(0.001);
+                        let delta = size.saturating_sub(last_size) as f64;
+                        speed_bps = Some((delta / elapsed) as u64);
+                        last_size = size;
+                        last_ts = now;
+                        send_progress = true;
+                    }
+                } else if line == "progress=end" {
+                    percent = Some(99.0);
+                    send_progress = true;
+                }
+
+                if send_progress {
+                    let _ = progress_tx
+                        .send(DownloadProgress::Progress {
+                            task_id,
+                            percent: percent.unwrap_or(last_percent as f32),
+                            speed: speed_bps,
+                            eta: None,
+                            downloaded_bytes: downloaded,
+                            total_bytes: None,
+                        })
+                        .await;
+                }
+
+                buf.clear();
+            }
+        }
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| DownloadError::internal(format!("ffmpeg 等待退出失败: {}", e)))?;
+
+        if !status.success() {
+            return Err(DownloadError::internal(format!(
+                "ffmpeg 退出码非 0: {:?}",
+                status.code()
+            )));
+        }
+
+        let _ = progress_tx
+            .send(DownloadProgress::Completed {
+                task_id,
+                output_path: output_path.clone(),
+            })
+            .await;
+
         Ok(output_path)
     }
 
