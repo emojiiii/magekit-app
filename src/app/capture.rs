@@ -5,14 +5,32 @@
 
 use crate::app::AppState;
 use anyhow::{Context, Result};
-use magekit_shared::utils::resolve_browser_path;
+use futures_util::{StreamExt, SinkExt};
+use magekit_shared::utils::{get_app_data_dir, resolve_browser_path};
 use rand::{Rng, distributions::Alphanumeric};
+use serde_json::Value;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::future::pending;
+use std::net::TcpListener;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time;
+use tokio_tungstenite::connect_async;
 use url::Url;
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_LANGUAGE};
+
+const CAPTURE_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const CAPTURE_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
+const BROWSER_PROFILE_DIR_NAME: &str = "browser_profile";
+const DEVTOOLS_HOST: &str = "127.0.0.1";
 
 /// 抓取请求
 #[derive(Debug, Clone)]
@@ -28,12 +46,16 @@ pub struct CaptureRequest {
 }
 
 /// 抓到的 m3u8 流
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct M3u8Stream {
     pub url: String,
     pub mime_type: Option<String>,
     pub referer: Option<String>,
     pub title: Option<String>,
+    /// 估算总时长（秒）
+    pub duration_seconds: Option<f64>,
+    /// 抓到时的请求头（用于透传 UA/Cookie/Referer 等）
+    pub headers: Option<Vec<(String, String)>>,
 }
 
 /// 抓取事件
@@ -69,8 +91,14 @@ impl AppState {
         let (event_tx, event_rx) = mpsc::channel(200);
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
 
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_static(CAPTURE_ACCEPT_LANGUAGE),
+        );
         let client = reqwest::Client::builder()
-            .user_agent("MageKit/1.0 (m3u8-sniffer)")
+            .user_agent(CAPTURE_USER_AGENT)
+            .default_headers(headers)
             .redirect(reqwest::redirect::Policy::limited(10))
             .timeout(Duration::from_secs(20))
             .build()
@@ -80,10 +108,20 @@ impl AppState {
         let timeout = request.timeout;
         let headless = request.headless;
         let browser_path = resolve_browser_path(request.custom_browser_path.clone());
+        let profile_dir = get_app_data_dir()
+            .context("获取应用数据目录失败")?
+            .join(BROWSER_PROFILE_DIR_NAME);
+        let _ = fs::create_dir_all(&profile_dir);
+        let page_title = fetch_html_title(&client, &target_url).await.ok().flatten();
+        let page_title_shared = Arc::new(Mutex::new(page_title.clone()));
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let sent_urls: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let devtools_port = pick_free_port();
 
         // 在 Tokio runtime 上运行
         self.runtime.spawn(async move {
-            let mut sent = HashSet::new();
+            let mut browser_child: Option<Child> = None;
 
             let _ = event_tx
                 .send(CaptureEvent::Log(format!(
@@ -93,33 +131,63 @@ impl AppState {
                 .await;
 
             if let Some(path) = browser_path.clone() {
-                let _ = event_tx
-                    .send(CaptureEvent::Log(format!(
-                        "🖥️ 浏览器路径: {}",
-                        path.display()
-                    )))
-                    .await;
+                match spawn_browser(&path, &profile_dir, devtools_port, &target_url, headless).await {
+                    Ok(child) => {
+                        browser_child = Some(child);
+                        let _ = event_tx
+                            .send(CaptureEvent::Log(format!(
+                                "🖥️ 已启动浏览器: {}",
+                                path.display()
+                            )))
+                            .await;
+                    }
+                    Err(err) => {
+                        let _ = event_tx
+                            .send(CaptureEvent::Log(format!(
+                                "⚠️ 浏览器启动失败: {}，仅进行静态扫描",
+                                err
+                            )))
+                            .await;
+                    }
+                }
             } else {
                 let _ = event_tx
                     .send(CaptureEvent::Log(
-                        "⚠️ 未找到浏览器，将仅进行静态扫描（建议手动指定浏览器路径）".into(),
+                        "⚠️ 未找到浏览器，将仅进行静态扫描（可在 UI 指定路径）".into(),
                     ))
                     .await;
             }
 
             let work = async {
                 // 1) 快速静态扫描（不依赖浏览器）
-                match quick_scan_for_m3u8(&client, &target_url).await {
-                    Ok(found) => {
+                match time::timeout(
+                    timeout,
+                    quick_scan_for_m3u8(&client, &target_url, page_title.clone()),
+                )
+                .await
+                {
+                    Ok(Ok(found)) => {
                         for item in found {
-                            if sent.insert(item.clone()) {
+                            let mut guard = sent_urls.lock().await;
+                            if guard.insert(item.url.clone()) {
+                                drop(guard);
                                 let _ = event_tx.send(CaptureEvent::Found(item)).await;
                             }
                         }
+                        let _ = event_tx
+                            .send(CaptureEvent::Log(
+                                "ℹ️ 静态扫描完成，继续监听（点击停止结束）".into(),
+                            ))
+                            .await;
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         let _ = event_tx
                             .send(CaptureEvent::Log(format!("⚠️ 静态扫描失败: {}", err)))
+                            .await;
+                    }
+                    Err(_) => {
+                        let _ = event_tx
+                            .send(CaptureEvent::Log("⚠️ 静态扫描超时，仍保持监听".into()))
                             .await;
                     }
                 }
@@ -128,25 +196,51 @@ impl AppState {
                 if browser_path.is_some() {
                     let _ = event_tx
                         .send(CaptureEvent::Log(
-                            "ℹ️ CDP 抓包未集成，后续将通过 remote debugging 捕获动态请求".into(),
+                            "ℹ️ 已保持浏览器运行，尝试通过 CDP 监听网络请求".into(),
                         ))
                         .await;
+
+                    let event_tx_clone = event_tx.clone();
+                    let client_clone = client.clone();
+                    let sent_urls_clone = sent_urls.clone();
+                    let cancel_flag_clone = cancel_flag.clone();
+                    let target_for_cdp = target_url.clone();
+                    let page_title_shared = page_title_shared.clone();
+                    tokio::spawn(async move {
+                        let maybe_err = cdp_listen(
+                            client_clone,
+                            devtools_port,
+                            sent_urls_clone,
+                            event_tx_clone.clone(),
+                            cancel_flag_clone,
+                            page_title_shared,
+                            target_for_cdp,
+                        )
+                        .await;
+                        if let Err(err) = maybe_err {
+                            let _ = event_tx_clone
+                                .send(CaptureEvent::Log(format!(
+                                    "⚠️ CDP 监听失败: {}",
+                                    err
+                                )))
+                                .await;
+                        }
+                    });
                 }
 
-                let _ = event_tx.send(CaptureEvent::Finished).await;
+                // 持续监听，直到用户停止
+                pending::<()>().await;
             };
 
             tokio::select! {
                 _ = &mut cancel_rx => {
+                    cancel_flag.store(true, Ordering::Relaxed);
                     let _ = event_tx.send(CaptureEvent::Log("⏹️ 嗅探已取消".into())).await;
+                    if let Some(mut child) = browser_child {
+                        let _ = child.kill();
+                    }
                 }
-                result = time::timeout(timeout, work) => {
-                    if result.is_err() {
-                        let _ = event_tx
-                            .send(CaptureEvent::Log("⏰ 抓取已超时".into()))
-                            .await;
-                    };
-                }
+                _ = work => { }
             };
         });
 
@@ -164,23 +258,30 @@ impl AppState {
 async fn quick_scan_for_m3u8(
     client: &reqwest::Client,
     target_url: &str,
+    page_title_prefetch: Option<String>,
 ) -> Result<Vec<M3u8Stream>> {
     let mut results = Vec::new();
     let url = Url::parse(target_url).context("URL 不合法")?;
 
-    // 先抓取 HTML，用于提取 title
-    let page_title = fetch_html_title(client, target_url).await.unwrap_or(None);
+    // 先抓取 HTML，用于提取 title（优先使用预取）
+    let page_title = match page_title_prefetch {
+        Some(t) => Some(t),
+        None => fetch_html_title(client, target_url).await.unwrap_or(None),
+    };
 
     // 1) HEAD 检查
     if let Ok(resp) = client.head(url.clone()).send().await {
         if let Some(mt) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
             if let Ok(mt) = mt.to_str() {
                 if mt.contains("mpegurl") || mt.contains("vnd.apple.mpegurl") {
+                    let duration = fetch_m3u8_duration(client, target_url, None).await;
                     results.push(M3u8Stream {
                         url: target_url.to_string(),
                         mime_type: Some(mt.to_string()),
                         referer: None,
                         title: page_title.clone(),
+                        duration_seconds: duration,
+                        headers: None,
                     });
                     return Ok(results);
                 }
@@ -218,17 +319,87 @@ async fn quick_scan_for_m3u8(
 
             let final_url = absolute.to_string();
             if seen.insert(final_url.clone()) {
+                let duration = fetch_m3u8_duration(client, &final_url, Some(target_url)).await;
                 results.push(M3u8Stream {
                     url: final_url,
                     mime_type: None,
                     referer: Some(target_url.to_string()),
                     title: page_title.clone(),
+                    duration_seconds: duration,
+                    headers: None,
                 });
             }
         }
     }
 
     Ok(results)
+}
+
+async fn fetch_m3u8_duration(
+    client: &reqwest::Client,
+    m3u8_url: &str,
+    referer: Option<&str>,
+) -> Option<f64> {
+    let mut req = client.get(m3u8_url);
+    if let Some(r) = referer {
+        req = req.header(reqwest::header::REFERER, r);
+    }
+    let text = req.send().await.ok()?.text().await.ok()?;
+    parse_m3u8_duration(&text)
+}
+
+fn parse_m3u8_duration(content: &str) -> Option<f64> {
+    let mut total = 0.0;
+    let mut found = false;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("#EXTINF:") {
+            if let Some((dur_str, _)) = rest.split_once(',') {
+                if let Ok(v) = dur_str.trim().parse::<f64>() {
+                    total += v;
+                    found = true;
+                }
+            } else if let Ok(v) = rest.trim().parse::<f64>() {
+                total += v;
+                found = true;
+            }
+        }
+    }
+    if found { Some(total) } else { None }
+}
+
+async fn ensure_title(
+    client: &reqwest::Client,
+    shared_title: &Arc<Mutex<Option<String>>>,
+    target_url: &str,
+) -> Option<String> {
+    // fast path
+    if let Some(t) = shared_title.lock().await.clone() {
+        return Some(t);
+    }
+    if let Ok(t) = fetch_html_title(client, target_url).await {
+        if let Some(tt) = t {
+            let mut guard = shared_title.lock().await;
+            *guard = Some(tt.clone());
+            return Some(tt);
+        }
+    }
+    None
+}
+
+fn extract_headers(v: Option<&Value>) -> Option<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    if let Some(obj) = v.and_then(|vv| vv.get("headers")).and_then(|h| h.as_object()) {
+        for (k, v) in obj {
+            if let Some(val) = v.as_str() {
+                out.push((k.clone(), val.to_string()));
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 async fn fetch_html_title(client: &reqwest::Client, target_url: &str) -> Result<Option<String>> {
@@ -263,4 +434,221 @@ fn make_temp_user_data_dir() -> PathBuf {
         .collect();
 
     std::env::temp_dir().join(format!("magekit-profile-{}", random_suffix))
+}
+
+fn pick_free_port() -> u16 {
+    TcpListener::bind((DEVTOOLS_HOST, 0))
+        .ok()
+        .and_then(|s| s.local_addr().ok().map(|a| a.port()))
+        .unwrap_or(0)
+}
+
+async fn spawn_browser(
+    path: &Path,
+    profile_dir: &Path,
+    devtools_port: u16,
+    target_url: &str,
+    headless: bool,
+) -> Result<Child> {
+    let mut cmd = Command::new(path);
+    cmd.arg(format!("--user-data-dir={}", profile_dir.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-popup-blocking")
+        .arg("--remote-allow-origins=*")
+        .arg(format!("--remote-debugging-port={}", devtools_port))
+        .arg("--lang=zh-CN")
+        .arg("--disable-features=PrivacySandboxAdsAPIs,SameSiteByDefaultCookies")
+        .arg("--window-size=1280,720")
+        .arg(target_url);
+
+    if headless {
+        cmd.arg("--headless=new");
+    }
+
+    cmd.spawn().context("启动浏览器失败")
+}
+
+async fn cdp_listen(
+    client: reqwest::Client,
+    devtools_port: u16,
+    sent_urls: Arc<Mutex<HashSet<String>>>,
+    event_tx: mpsc::Sender<CaptureEvent>,
+    cancel_flag: Arc<AtomicBool>,
+    page_title: Arc<Mutex<Option<String>>>,
+    referer: String,
+) -> Result<()> {
+    if devtools_port == 0 {
+        let _ = event_tx
+            .send(CaptureEvent::Log(
+                "⚠️ 未找到可用调试端口，跳过 CDP 监听".into(),
+            ))
+            .await;
+        return Ok(());
+    }
+
+    let ws_url = wait_for_ws_url(&client, devtools_port).await?;
+    let (ws_stream, _) = connect_async(ws_url)
+        .await
+        .context("连接 DevTools WebSocket 失败")?;
+    let (mut write, mut read) = ws_stream.split();
+
+    // 启用 Network
+    let enable_msg = serde_json::json!({
+        "id": 1,
+        "method": "Network.enable",
+        "params": {
+            "maxResourceBufferSize": 0,
+            "maxTotalBufferSize": 0,
+        }
+    })
+    .to_string();
+    write.send(tokio_tungstenite::tungstenite::Message::Text(enable_msg)).await?;
+
+    while let Some(msg) = read.next().await {
+        if cancel_flag.load(Ordering::Relaxed) {
+            break;
+        }
+        let msg = match msg {
+            Ok(tokio_tungstenite::tungstenite::Message::Text(t)) => t,
+            _ => continue,
+        };
+        let v: Value = match serde_json::from_str(&msg) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
+            match method {
+                "Network.requestWillBeSent" => {
+                    if let Some(params) = v.get("params") {
+                        if let Some(url) = params.get("request").and_then(|r| r.get("url")).and_then(|u| u.as_str()) {
+                            if is_m3u8_url(url) {
+                                let title = ensure_title(&client, &page_title, &referer).await;
+                                let duration =
+                                    fetch_m3u8_duration(&client, url, Some(&referer)).await;
+                                let headers = extract_headers(params.get("request"));
+                                push_found(
+                                    url.to_string(),
+                                    None,
+                                    title,
+                                    duration,
+                                    Some(referer.clone()),
+                                    headers,
+                                    sent_urls.clone(),
+                                    event_tx.clone(),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+                "Network.responseReceived" => {
+                    if let Some(params) = v.get("params") {
+                        let url = params
+                            .get("response")
+                            .and_then(|r| r.get("url"))
+                            .and_then(|u| u.as_str());
+                        let mime = params
+                            .get("response")
+                            .and_then(|r| r.get("mimeType"))
+                            .and_then(|m| m.as_str());
+                        if let Some(url) = url {
+                            if is_m3u8_url(url) || mime.map(|m| m.contains("mpegurl")).unwrap_or(false) {
+                                let title = ensure_title(&client, &page_title, &referer).await;
+                                let duration =
+                                    fetch_m3u8_duration(&client, url, Some(&referer)).await;
+                                let headers = extract_headers(params.get("response"));
+                                push_found(
+                                    url.to_string(),
+                                        mime.map(|s| s.to_string()),
+                                    title,
+                                    duration,
+                                    Some(referer.clone()),
+                                    headers,
+                                        sent_urls.clone(),
+                                        event_tx.clone(),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn push_found(
+    url: String,
+    mime: Option<String>,
+    title: Option<String>,
+    duration: Option<f64>,
+    referer: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    sent_urls: Arc<Mutex<HashSet<String>>>,
+    event_tx: mpsc::Sender<CaptureEvent>,
+) {
+    let mut guard = sent_urls.lock().await;
+    if guard.insert(url.clone()) {
+        drop(guard);
+        let _ = event_tx
+            .send(CaptureEvent::Found(M3u8Stream {
+                url,
+                mime_type: mime,
+                referer,
+                title,
+                duration_seconds: duration,
+                headers,
+            }))
+            .await;
+    }
+}
+
+async fn wait_for_ws_url(client: &reqwest::Client, port: u16) -> Result<String> {
+    let endpoint_version = format!("http://{}:{}/json/version", DEVTOOLS_HOST, port);
+    let endpoint_list = format!("http://{}:{}/json", DEVTOOLS_HOST, port);
+    for _ in 0..30 {
+        // 优先取 page target
+        if let Ok(resp) = client.get(&endpoint_list).send().await {
+            if let Ok(text) = resp.text().await {
+                if let Ok(arr) = serde_json::from_str::<Vec<Value>>(&text) {
+                    if let Some(ws) = arr
+                        .iter()
+                        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("page"))
+                        .filter_map(|v| v.get("webSocketDebuggerUrl").and_then(|u| u.as_str()))
+                        .next()
+                    {
+                        return Ok(ws.to_string());
+                    }
+                    // 退而求其次取列表里的第一个 ws
+                    if let Some(ws) = arr
+                        .iter()
+                        .filter_map(|v| v.get("webSocketDebuggerUrl").and_then(|u| u.as_str()))
+                        .next()
+                    {
+                        return Ok(ws.to_string());
+                    }
+                }
+            }
+        }
+        // 最后再尝试 browser 级 ws
+        if let Ok(resp) = client.get(&endpoint_version).send().await {
+            if let Ok(text) = resp.text().await {
+                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                    if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(|u| u.as_str()) {
+                        return Ok(ws.to_string());
+                    }
+                }
+            }
+        }
+        time::sleep(Duration::from_millis(200)).await;
+    }
+    Err(anyhow::anyhow!("获取 DevTools WebSocket 地址失败"))
+}
+
+fn is_m3u8_url(url: &str) -> bool {
+    url.contains(".m3u8")
 }

@@ -77,6 +77,9 @@ pub struct DownloadOptions {
     /// 使用 ffmpeg 拉流的 m3u8 直链
     #[serde(default)]
     pub ffmpeg_url: Option<String>,
+    /// ffmpeg 直链时附加的自定义参数（按顺序透传给 ffmpeg）
+    #[serde(default)]
+    pub ffmpeg_args: Vec<String>,
     /// 任务标题（优先用于任务列表显示和命名）
     #[serde(default)]
     pub task_title: Option<String>,
@@ -98,6 +101,7 @@ impl Default for DownloadOptions {
             write_auto_subs: false,
             download_url: None,
             ffmpeg_url: None,
+            ffmpeg_args: Vec::new(),
             task_title: None,
         }
     }

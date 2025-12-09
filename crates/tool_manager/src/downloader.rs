@@ -405,24 +405,51 @@ impl VideoDownloader {
 
         tracing::info!("  ffmpeg url: {}", ffmpeg_url);
         tracing::info!("  输出文件: {:?}", output_path);
+        if !options.ffmpeg_args.is_empty() {
+            tracing::info!("  ffmpeg args: {:?}", options.ffmpeg_args);
+        }
 
-        // 启动 ffmpeg 子进程，打开 stdout 以便解析进度
+        // 启动 ffmpeg 子进程，打开 stdout/stderr 以便解析进度与错误
         let mut child = {
-            let mut cmd = create_tokio_command(ffmpeg_path);
-            cmd.arg("-y")
-                .arg("-i")
-                .arg(ffmpeg_url)
-                .arg("-c")
+            let mut cmd = create_tokio_command(ffmpeg_path.clone());
+            cmd.arg("-y");
+
+            // 透传自定义参数（扩展性）
+            for a in &options.ffmpeg_args {
+                cmd.arg(a);
+            }
+
+            // 输入参数必须在 headers 之后
+            cmd.arg("-i").arg(ffmpeg_url);
+
+            cmd.arg("-c")
                 .arg("copy")
                 .arg("-progress")
                 .arg("pipe:1")
                 .arg("-nostats")
                 .arg(&output_path)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null());
+                .stderr(Stdio::piped());
+            tracing::info!("  ffmpeg cmd: {:?}", cmd);
             cmd.spawn()
                 .map_err(|e| DownloadError::internal(format!("ffmpeg 启动失败: {}", e)))?
         };
+
+        // 捕获 stderr 以便失败时返回
+        let mut stderr_buf = String::new();
+        let stderr_take = child.stderr.take();
+        let stderr_handle = tokio::spawn(async move {
+            if let Some(stderr) = stderr_take {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stderr);
+                let mut buf = String::new();
+                while reader.read_line(&mut buf).await.unwrap_or(0) > 0 {
+                    stderr_buf.push_str(&buf);
+                    buf.clear();
+                }
+            }
+            stderr_buf
+        });
 
         // 解析 ffmpeg progress 输出（pipe:1）
         if let Some(stdout) = child.stdout.take() {
@@ -512,10 +539,13 @@ impl VideoDownloader {
             .await
             .map_err(|e| DownloadError::internal(format!("ffmpeg 等待退出失败: {}", e)))?;
 
+        let stderr_output = stderr_handle.await.unwrap_or_default();
+
         if !status.success() {
             return Err(DownloadError::internal(format!(
-                "ffmpeg 退出码非 0: {:?}",
-                status.code()
+                "ffmpeg 退出码非 0: {:?}, stderr: {}",
+                status.code(),
+                stderr_output
             )));
         }
 

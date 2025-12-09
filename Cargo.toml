@@ -116,6 +116,8 @@ url = { workspace = true }
 # 临时文件（用于 Cookie）
 tempfile = "3"
 open = "5.3.3"
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 
 [profile.dev]
 codegen-units = 16

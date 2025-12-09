@@ -37,7 +37,25 @@ pub fn capture_row(
         .border_1()
         .border_color(theme.border)
         .rounded(px(8.0))
-        .child(div().text_sm().text_color(theme.text).child(label))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().text_sm().text_color(theme.text).child(label))
+                .when_some(item.duration_seconds, |row, secs| {
+                    row.child(
+                        div()
+                            .text_xs()
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(6.0))
+                            .bg(theme.border.opacity(0.15))
+                            .text_color(theme.text)
+                            .child(format!("≈ {}", format_secs(secs))),
+                    )
+                }),
+        )
         .child(
             div()
                 .flex()
@@ -54,5 +72,17 @@ pub fn capture_row(
                     row.child(div().text_xs().text_color(theme.text).child(s))
                 }),
         )
+}
+
+fn format_secs(secs: f64) -> String {
+    let total = secs.max(0.0) as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{:02}:{:02}", m, s)
+    }
 }
 

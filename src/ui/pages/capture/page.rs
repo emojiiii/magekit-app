@@ -19,6 +19,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+const DEFAULT_FFMPEG_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 /// 嗅探页面
 pub struct CapturePage {
     app_state: Arc<AppState>,
@@ -201,6 +204,11 @@ impl CapturePage {
 
         let app_state = self.app_state.clone();
         let title_hint = self.item_title_from_list(&url);
+        let captured_item = self
+            .captured
+            .iter()
+            .find(|i| i.url == url)
+            .cloned();
 
         cx.spawn(async move |this, cx| {
             let url_clone = url.clone();
@@ -219,6 +227,21 @@ impl CapturePage {
                 options.task_title = title_hint.clone();
                 // 使用 ffmpeg 拉流
                 options.ffmpeg_url = Some(url_clone.clone());
+                // 写死 headers（放在 -i 之前）
+                let mut header_lines = Vec::new();
+                header_lines.push("Accept: *".to_string());
+                header_lines.push("Accept-Encoding: gzip, deflate".to_string());
+                header_lines.push("Accept-Language: zh-CN,zh;q=0.9,ko;q=0.8".to_string());
+                header_lines.push("Cache-Control: no-cache".to_string());
+                header_lines.push("Pragma: no-cache".to_string());
+                header_lines.push("Upgrade-Insecure-Requests: 1".to_string());
+                header_lines.push(format!("User-Agent: {}", DEFAULT_FFMPEG_UA));
+                // Referer 使用下载链接本身
+                // header_lines.push(format!("Referer: {}", url_clone));
+
+                let header_block = format!("{}\r\n", header_lines.join("\r\n"));
+                options.ffmpeg_args.push("-headers".to_string());
+                options.ffmpeg_args.push(header_block);
                 runtime.block_on(async { app_state.start_download(&url_clone, options).await })
             })
             .await;
