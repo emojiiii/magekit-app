@@ -4,11 +4,11 @@
 //! - UI 通过 `CaptureEvent` 订阅进度/日志
 
 use crate::app::AppState;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use magekit_shared::utils::resolve_browser_path;
 use rand::{Rng, distributions::Alphanumeric};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time;

@@ -1,16 +1,20 @@
 //! M3U8 嗅探页面
 
 use crate::app::{AppState, CaptureEvent, CaptureRequest, M3u8Stream};
-use gpui::prelude::FluentBuilder;
+use crate::ui::pages::capture::widgets::{capture_row, CaptureRowTheme};
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
-use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt};
+use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarState};
+use gpui_component::{
+    ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list,
+};
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
 use magekit_shared::utils::sanitize_filename;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +31,11 @@ pub struct CapturePage {
     cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     output_dir: String,
     download_status: HashMap<String, String>,
+    scroll_handle: VirtualListScrollHandle,
+    scroll_state: ScrollbarState,
 }
+
+const CAPTURE_ITEM_HEIGHT: f32 = 110.0;
 
 impl CapturePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -61,6 +69,8 @@ impl CapturePage {
             cancel_tx: None,
             output_dir,
             download_status: HashMap::new(),
+            scroll_handle: VirtualListScrollHandle::new(),
+            scroll_state: ScrollbarState::default(),
         }
     }
 
@@ -233,32 +243,125 @@ impl CapturePage {
 
 impl Render for CapturePage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 先构造捕获列表，完成对 cx 的可变借用
-        let capture_items: Vec<AnyElement> = if self.captured.is_empty() {
-            vec![
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .flex_1()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("尚未捕获到 m3u8 链接")
-                    .into_any_element(),
-            ]
-        } else {
-            let output_dir = self.output_dir.clone();
-            self.captured
-                .iter()
-                .enumerate()
-                .map(|(idx, item)| {
-                    let status = self.download_status.get(&item.url).cloned();
-                    render_capture_row(idx, item, status, cx, output_dir.clone()).into_any_element()
-                })
-                .collect()
-        };
-
         // 完成列表构造后，再读取主题
         let theme = cx.theme();
+        let row_theme = CaptureRowTheme {
+            bg: theme.background,
+            border: theme.border,
+            text: theme.foreground,
+            muted: theme.muted_foreground,
+        };
+
+        let captured_data: Vec<(M3u8Stream, Option<String>)> = self
+            .captured
+            .iter()
+            .cloned()
+            .map(|item| {
+                let status = self.download_status.get(&item.url).cloned();
+                (item, status)
+            })
+            .collect();
+
+        let captured_data_rc: Rc<Vec<(M3u8Stream, Option<String>)>> =
+            Rc::new(captured_data.clone());
+        let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
+            captured_data
+                .iter()
+                .map(|_| size(px(800.0), px(CAPTURE_ITEM_HEIGHT)))
+                .collect(),
+        );
+
+        let scroll_handle = self.scroll_handle.clone();
+        let row_theme_copy = row_theme;
+        let output_dir = self.output_dir.clone();
+        let entity = cx.entity().clone();
+        let capture_list = v_virtual_list(
+            cx.entity().clone(),
+            "capture-list",
+            item_sizes,
+            move |_page, visible_range, _window, _cx| {
+                let row_theme = row_theme_copy;
+                let output_dir = output_dir.clone();
+                let captured_data = captured_data_rc.clone();
+                let entity = entity.clone();
+                visible_range
+                    .filter_map(move |ix| {
+                        let captured_data = captured_data.clone();
+                        let entity = entity.clone();
+                        let output_dir = output_dir.clone();
+                        captured_data.get(ix).cloned().map(move |(item, status)| {
+                            let url = item.url.clone();
+                            let status_clone = status.clone();
+                            let entity_for_btn = entity.clone();
+                            let action = NavLink::new().to("/tasks").child(
+                                Button::new(("capture-download", ix))
+                                    .primary()
+                                    .small()
+                                    .label("加入下载")
+                                    .disabled(matches!(status_clone.as_deref(), Some("提交中...")))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = entity_for_btn.update(cx, |this, cx| {
+                                            this.download_link(url.clone(), cx);
+                                        });
+                                    }),
+                            );
+                            capture_row(
+                                item,
+                                status_clone,
+                                output_dir.clone(),
+                                row_theme,
+                                action,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .track_scroll(&scroll_handle);
+
+        let capture_body: AnyElement = if captured_data.is_empty() {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_1()
+                .text_color(row_theme.muted)
+                .child("尚未捕获到 m3u8 链接")
+                .into_any_element()
+        } else {
+            div()
+                .relative()
+                .flex_1()
+                .w_full()
+                .overflow_hidden()
+                .rounded(px(12.0))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right(px(12.0))
+                        .bottom_0()
+                        .p(px(8.0))
+                        .border_1()
+                        .border_color(theme.border)
+                        .rounded(px(12.0))
+                        .child(capture_list),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .bottom_0()
+                        .w(px(12.0))
+                        .child(
+                            Scrollbar::both(&self.scroll_state, &self.scroll_handle)
+                                .axis(ScrollbarAxis::Vertical),
+                        ),
+                )
+                .into_any_element()
+        };
 
         div()
             .flex()
@@ -415,6 +518,8 @@ impl Render for CapturePage {
                                     .label("清空")
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.captured.clear();
+                                        this.scroll_handle = VirtualListScrollHandle::new();
+                                        this.scroll_state = ScrollbarState::default();
                                         cx.notify();
                                     })),
                             ),
@@ -425,63 +530,8 @@ impl Render for CapturePage {
                             .flex_col()
                             .gap(px(8.0))
                             .flex_1()
-                            .scrollable(Axis::Vertical)
-                            .children(capture_items),
+                            .child(capture_body),
                     ),
             )
     }
-}
-
-fn render_capture_row(
-    idx: usize,
-    item: &M3u8Stream,
-    status: Option<String>,
-    cx: &mut Context<CapturePage>,
-    output_dir: String,
-) -> impl IntoElement {
-    let theme = cx.theme();
-    let url = item.url.clone();
-    let label = item.title.clone().unwrap_or_else(|| {
-        url.replace('/', "/\u{200b}")
-            .replace('?', "?\u{200b}")
-            .replace('&', "&\u{200b}")
-    });
-
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.0))
-        .p(px(10.0))
-        .bg(theme.background)
-        .border_1()
-        .border_color(theme.border)
-        .rounded(px(8.0))
-        .child(div().text_sm().text_color(theme.foreground).child(label))
-        .child(
-            div()
-                .flex()
-                .gap(px(8.0))
-                .items_center()
-                .child(
-                    NavLink::new().to("/tasks").child(
-                        Button::new(("download", idx))
-                            .primary()
-                            .small()
-                            .label("加入下载")
-                            .disabled(matches!(status.as_deref(), Some("提交中...")))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.download_link(url.clone(), cx);
-                            })),
-                    ),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(format!("输出目录: {}", output_dir)),
-                )
-                .when_some(status, |row, s| {
-                    row.child(div().text_xs().text_color(theme.foreground).child(s))
-                }),
-        )
 }
