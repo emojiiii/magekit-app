@@ -1,12 +1,14 @@
 //! M3U8 嗅探页面
 
 use crate::app::{AppState, CaptureEvent, CaptureRequest, M3u8Stream};
-use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt};
+use gpui_router::NavLink;
+use magekit_shared::utils::sanitize_filename;
 use magekit_shared::DownloadOptions;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -60,6 +62,13 @@ impl CapturePage {
             output_dir,
             download_status: HashMap::new(),
         }
+    }
+
+    fn item_title_from_list(&self, url: &str) -> Option<String> {
+        self.captured
+            .iter()
+            .find(|it| it.url == url)
+            .and_then(|it| it.title.clone())
     }
 
     fn start_capture(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -181,6 +190,8 @@ impl CapturePage {
         cx.notify();
 
         let app_state = self.app_state.clone();
+        let title_hint = self.item_title_from_list(&url);
+
         cx.spawn(async move |this, cx| {
             let url_clone = url.clone();
             let result = smol::unblock(move || {
@@ -192,6 +203,10 @@ impl CapturePage {
                 options.embed_metadata = cfg.download.embed_metadata;
                 options.embed_thumbnail = cfg.download.embed_thumbnail;
                 options.extract_audio = cfg.download.auto_extract_audio;
+                if let Some(t) = title_hint.clone() {
+                    options.output_template = Some(format!("{}.%(ext)s", sanitize_filename(&t)));
+                }
+                options.task_title = title_hint.clone();
                 // 使用 ffmpeg 拉流
                 options.ffmpeg_url = Some(url_clone.clone());
                 runtime.block_on(async { app_state.start_download(&url_clone, options).await })
@@ -235,7 +250,14 @@ impl Render for CapturePage {
                 .enumerate()
                 .map(|(idx, item)| {
                     let status = self.download_status.get(&item.url).cloned();
-                    render_capture_row(idx, item, status, cx, output_dir.clone()).into_any_element()
+                    render_capture_row(
+                        idx,
+                        item,
+                        status,
+                        cx,
+                        output_dir.clone(),
+                    )
+                    .into_any_element()
                 })
                 .collect()
         };
@@ -428,10 +450,14 @@ fn render_capture_row(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let url = item.url.clone();
-    let label = url
-        .replace('/', "/\u{200b}")
-        .replace('?', "?\u{200b}")
-        .replace('&', "&\u{200b}");
+    let label = item
+        .title
+        .clone()
+        .unwrap_or_else(|| {
+            url.replace('/', "/\u{200b}")
+                .replace('?', "?\u{200b}")
+                .replace('&', "&\u{200b}")
+        });
 
     div()
         .flex()
@@ -454,14 +480,16 @@ fn render_capture_row(
                 .gap(px(8.0))
                 .items_center()
                 .child(
-                    Button::new(("download", idx))
-                        .primary()
-                        .small()
-                        .label("加入下载")
-                        .disabled(matches!(status.as_deref(), Some("提交中...")))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.download_link(url.clone(), cx);
-                        })),
+                    NavLink::new().to("/tasks").child(
+                        Button::new(("download", idx))
+                            .primary()
+                            .small()
+                            .label("加入下载")
+                            .disabled(matches!(status.as_deref(), Some("提交中...")))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.download_link(url.clone(), cx);
+                            })),
+                    ),
                 )
                 .child(
                     div()

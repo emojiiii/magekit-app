@@ -77,6 +77,9 @@ pub struct DownloadOptions {
     /// 使用 ffmpeg 拉流的 m3u8 直链
     #[serde(default)]
     pub ffmpeg_url: Option<String>,
+    /// 任务标题（优先用于任务列表显示和命名）
+    #[serde(default)]
+    pub task_title: Option<String>,
 }
 
 impl Default for DownloadOptions {
@@ -95,6 +98,7 @@ impl Default for DownloadOptions {
             write_auto_subs: false,
             download_url: None,
             ffmpeg_url: None,
+            task_title: None,
         }
     }
 }

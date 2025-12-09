@@ -191,8 +191,9 @@ impl ToolManager {
         // 每次下载都创建新任务（使用新的 UUID）
         let task_id = Uuid::new_v4();
 
-        // 创建任务状态
-        let mut task_status = TaskStatus::new(task_id, url.to_string(), None);
+        // 创建任务状态（标题优先使用 options.task_title）
+        let mut task_status =
+            TaskStatus::new(task_id, url.to_string(), options.task_title.clone());
         task_status.state = TaskState::Queued;
 
         // 获取视频信息（如果未提供）
@@ -200,11 +201,17 @@ impl ToolManager {
             Some(info) => info,
             None => self.get_video_info(url, cookies).await?,
         };
-        task_status.title = Some(video_info.title.clone());
+        if task_status.title.is_none() {
+            task_status.title = Some(video_info.title.clone());
+        }
+        let title_for_path = task_status
+            .title
+            .clone()
+            .unwrap_or_else(|| video_info.title.clone());
         
         let output_path = generate_output_path(
             &options.output_path,
-            &video_info.title,
+            &title_for_path,
             &video_info
                 .formats
                 .iter()

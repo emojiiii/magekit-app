@@ -33,6 +33,7 @@ pub struct M3u8Stream {
     pub url: String,
     pub mime_type: Option<String>,
     pub referer: Option<String>,
+    pub title: Option<String>,
 }
 
 /// 抓取事件
@@ -260,6 +261,9 @@ async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Resu
     let mut results = Vec::new();
     let url = Url::parse(target_url).context("URL 不合法")?;
 
+    // 先抓取 HTML，用于提取 title
+    let page_title = fetch_html_title(client, target_url).await.unwrap_or(None);
+
     // 1) HEAD 检查
     if let Ok(resp) = client.head(url.clone()).send().await {
         if let Some(mt) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
@@ -269,6 +273,7 @@ async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Resu
                         url: target_url.to_string(),
                         mime_type: Some(mt.to_string()),
                         referer: None,
+                        title: page_title.clone(),
                     });
                     return Ok(results);
                 }
@@ -308,12 +313,35 @@ async fn quick_scan_for_m3u8(client: &reqwest::Client, target_url: &str) -> Resu
                     url: final_url,
                     mime_type: None,
                     referer: Some(target_url.to_string()),
+                    title: page_title.clone(),
                 });
             }
         }
     }
 
     Ok(results)
+}
+
+async fn fetch_html_title(client: &reqwest::Client, target_url: &str) -> Result<Option<String>> {
+    let body = client
+        .get(target_url)
+        .send()
+        .await
+        .context("获取页面失败")?
+        .text()
+        .await
+        .context("读取页面内容失败")?;
+
+    if let Some(start) = body.to_lowercase().find("<title>") {
+        if let Some(end) = body.to_lowercase().find("</title>") {
+            if end > start + 7 {
+                let title_raw = &body[start + 7..end];
+                let title = title_raw.trim().replace('\n', " ").replace('\r', " ");
+                return Ok(Some(title));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// 为 CDP 会话创建临时用户数据目录

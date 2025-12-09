@@ -9,7 +9,6 @@ use std::process::Stdio;
 use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
-use url::Url;
 
 /// 视频下载器
 /// 
@@ -428,14 +427,14 @@ impl VideoDownloader {
             let mut last_percent = 0.0;
             let mut last_size: u64 = 0;
             let mut last_ts = Instant::now();
+            let mut downloaded: Option<u64> = None;
+            let mut speed_bps: Option<u64> = None;
             while reader.read_line(&mut buf).await.unwrap_or(0) > 0 {
                 let line = buf.trim();
                 // ffmpeg -progress 输出键值对，如：
                 // frame=..., out_time_ms=1230000, speed=2.0x, progress=continue/end, total_size=12345
                 let mut send_progress = false;
                 let mut percent = None;
-                let mut speed_bps = None;
-                let mut downloaded = None;
 
                 if let Some(ms_str) = line.strip_prefix("out_time_ms=") {
                     if let Ok(ms) = ms_str.parse::<f64>() {
@@ -458,12 +457,35 @@ impl VideoDownloader {
                         last_ts = now;
                         send_progress = true;
                     }
+                } else if let Some(br_str) = line.strip_prefix("bitrate=") {
+                    // 示例: bitrate=2037.4kbits/s
+                    let clean = br_str.trim_end_matches("bits/s").trim();
+                    let (num, unit) = if clean.ends_with('k') {
+                        (clean.trim_end_matches('k'), 1_000f64)
+                    } else if clean.ends_with('M') {
+                        (clean.trim_end_matches('M'), 1_000_000f64)
+                    } else {
+                        (clean, 1f64)
+                    };
+                    if let Ok(val) = num.parse::<f64>() {
+                        speed_bps = Some((val * unit / 8.0) as u64); // 字节每秒
+                        send_progress = true;
+                    }
                 } else if line == "progress=end" {
                     percent = Some(99.0);
                     send_progress = true;
                 }
 
                 if send_progress {
+                    let total_est = if let (Some(d), Some(p)) = (downloaded, percent) {
+                        if p > 0.1 {
+                            Some((d as f64 / (p as f64 / 100.0)) as u64)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     let _ = progress_tx
                         .send(DownloadProgress::Progress {
                             task_id,
@@ -471,7 +493,7 @@ impl VideoDownloader {
                             speed: speed_bps,
                             eta: None,
                             downloaded_bytes: downloaded,
-                            total_bytes: None,
+                            total_bytes: total_est,
                         })
                         .await;
                 }
