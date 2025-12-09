@@ -608,7 +608,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -3064,7 +3064,7 @@ dependencies = [
  "hyper 1.8.1",
  "libc",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -4974,7 +4974,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -5011,7 +5011,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5326,8 +5326,8 @@ dependencies = [
 
 [[package]]
 name = "reqwest_client"
-version = "0.4.2"
-source = "git+https://github.com/longbridge/gpui-component.git?tag=v0.4.2#70b413c78d9f44c0201a1324a58ccf5d45dc8456"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/gpui-component.git?tag=v0.5.0#76424dd0aec19c21f590e8fc37e5e635e61ff0cd"
 dependencies = [
  "anyhow",
  "bytes",
