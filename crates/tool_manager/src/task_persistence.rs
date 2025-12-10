@@ -178,13 +178,11 @@ impl TaskPersistence {
     pub fn new() -> ToolManagerResult<Self> {
         let mut tasks = PersistedTasks::load().unwrap_or_default();
 
-        // 启动时清理：去重并移除已完成/取消的任务
+        // 启动时清理：去重（保留最新任务）
         let dedup_count = tasks.deduplicate_by_url();
         if dedup_count > 0 {
             tracing::info!("🧹 清理了 {} 个重复任务", dedup_count);
         }
-
-        tasks.clear_completed_tasks();
 
         // 保存清理后的任务列表
         let _ = tasks.save();

@@ -1,6 +1,6 @@
 # CLAUDE - MageKit 工作区索引
 
-- 更新时间：2025-12-08T01:16:31Z (UTC)
+- 更新时间：2025-12-10T10:19:18Z (UTC)
 - 仓库：Rust 2024 工作区，核心依赖 GPUI、yt-dlp、ffmpeg，默认二进制入口 `src/main.rs`（包名 `magekit-app`）。
 
 ## 愿景与高层概览
@@ -17,6 +17,8 @@
 | `crates/tool_manager/`  | 工具与下载任务调度        | `src/task_manager.rs`，`downloader.rs`，`config.rs` |
 | `crates/shared/`        | 共享类型/配置/工具函数    | `src/types.rs`，`utils.rs`                          |
 | `crates/live_recorder/` | 直播录制/探测库           | `src/core.rs`，`types.rs`                           |
+| `crates/extractor/`     | 自研解析/yt-dlp 桥接      | `src/lib.rs`，`douyin.rs`                           |
+| `crates/bytedance/`     | 抖音/TikTok Web API/签名  | `src/douyin/api.rs`，`sign/*`                       |
 | `crates/xbogus/`        | X-Bogus/AB-Sign 签名      | `src/lib.rs`，`x-bogus.js`                          |
 
 ## 结构图（已生成 Mermaid）
@@ -27,6 +29,9 @@ graph TD
     app --> tool_manager["crates/tool_manager"]
     app --> live_recorder["crates/live_recorder"]
     tool_manager --> shared
+    tool_manager --> extractor["crates/extractor"]
+    extractor --> shared
+    extractor --> bytedance["crates/bytedance"]
     live_recorder --> shared
     live_recorder --> xbogus["crates/xbogus"]
 ```
@@ -48,6 +53,6 @@ graph TD
 
 ## 覆盖率与缺口
 
-- 已扫文件：约 20 / 130（~15%）；已覆盖模块：5/5（入口/核心逻辑）。
-- 未细读：GUI 子页面与组件细节（`ui/pages/*`）、工具存储/更新实现（`tool_manager/{storage,updater,task_queue}.rs`）、直播平台适配与录制实现（`live_recorder/platforms`, `recorder`, `stream`）、xbogus 具体 JS、测试目录。
-- 建议下一步：优先补扫 `tool_manager/storage.rs` 与 `task_queue.rs`（持久化与并发约束）、`src/ui/pages`（路由与交互绑定）、`live_recorder/platforms/*`（平台兼容性）、`xbogus/x-bogus.js`（签名算法细节）。
+- 已扫文件：约 32 / 150（~21%）；已覆盖模块：7/7（含 extractor/bytedance 关键路径）。
+- 未细读：GUI 子页面与组件（`src/ui/pages/*`）、工具存储/更新与队列（`tool_manager/{storage,updater,task_queue}.rs`）、extractor 的 `tiktok.rs` 与 `ytdlp.rs`、bytedance 签名与 endpoints 细节、直播平台适配与录制实现（`live_recorder/platforms`, `recorder`, `stream`）、`xbogus/x-bogus.js`、测试目录。
+- 建议下一步：优先补扫 `tool_manager/storage.rs`、`task_queue.rs`，`crates/extractor/tiktok.rs` 与 `ytdlp.rs`，`crates/bytedance/sign/*`，`src/ui/pages` 交互绑定。
