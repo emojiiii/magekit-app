@@ -13,11 +13,12 @@ use gpui_component::{
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
 use magekit_shared::utils::sanitize_filename;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use url::Url;
 
 const DEFAULT_FFMPEG_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -227,17 +228,52 @@ impl CapturePage {
                 options.task_title = title_hint.clone();
                 // 使用 ffmpeg 拉流
                 options.ffmpeg_url = Some(url_clone.clone());
-                // 写死 headers（放在 -i 之前）
+                // 写死 headers（放在 -i 之前），优先透传嗅探到的真实请求头，再补齐常见头
                 let mut header_lines = Vec::new();
-                header_lines.push("Accept: *".to_string());
-                header_lines.push("Accept-Encoding: gzip, deflate".to_string());
-                header_lines.push("Accept-Language: zh-CN,zh;q=0.9,ko;q=0.8".to_string());
-                header_lines.push("Cache-Control: no-cache".to_string());
-                header_lines.push("Pragma: no-cache".to_string());
-                header_lines.push("Upgrade-Insecure-Requests: 1".to_string());
-                header_lines.push(format!("User-Agent: {}", DEFAULT_FFMPEG_UA));
-                // Referer 使用下载链接本身
-                // header_lines.push(format!("Referer: {}", url_clone));
+                let mut seen = HashSet::new();
+                if let Some(item) = captured_item.clone() {
+                    if let Some(headers) = item.headers {
+                        for (k, v) in headers {
+                            let key_lower = k.to_ascii_lowercase();
+                            if seen.insert(key_lower) {
+                                header_lines.push(format!("{}: {}", k, v));
+                            }
+                        }
+                    }
+                    if let Some(referer) = item.referer {
+                        if seen.insert("referer".into()) {
+                            header_lines.push(format!("Referer: {}", referer));
+                        }
+                        if seen.insert("origin".into()) {
+                            if let Ok(u) = Url::parse(&referer) {
+                                if let Some(host) = u.host_str() {
+                                    header_lines.push(format!("Origin: {}://{}", u.scheme(), host));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 兜底补齐缺失的常用头（避免覆盖已抓到的）
+                let defaults = [
+                    ("user-agent", format!("User-Agent: {}", DEFAULT_FFMPEG_UA)),
+                    ("accept", "Accept: */*".to_string()),
+                    (
+                        "accept-encoding",
+                        "Accept-Encoding: gzip, deflate, br".to_string(),
+                    ),
+                    (
+                        "accept-language",
+                        "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+                    ),
+                    ("cache-control", "Cache-Control: no-cache".to_string()),
+                    ("pragma", "Pragma: no-cache".to_string()),
+                ];
+                for (k, v) in defaults {
+                    if seen.insert(k.to_string()) {
+                        header_lines.push(v);
+                    }
+                }
 
                 let header_block = format!("{}\r\n", header_lines.join("\r\n"));
                 options.ffmpeg_args.push("-headers".to_string());

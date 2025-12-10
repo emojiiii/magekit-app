@@ -9,7 +9,7 @@ use futures_util::{StreamExt, SinkExt};
 use magekit_shared::utils::{get_app_data_dir, resolve_browser_path};
 use rand::{Rng, distributions::Alphanumeric};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::net::TcpListener;
 use std::fs;
@@ -31,6 +31,15 @@ const CAPTURE_USER_AGENT: &str =
 const CAPTURE_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
 const BROWSER_PROFILE_DIR_NAME: &str = "browser_profile";
 const DEVTOOLS_HOST: &str = "127.0.0.1";
+// 需要透传的 Header 白名单（小写）
+const HEADER_WHITELIST: &[&str] = &[
+    "referer",
+    "user-agent",
+    "cookie",
+    "origin",
+    "authorization",
+    "accept-language",
+];
 
 /// 抓取请求
 #[derive(Debug, Clone)]
@@ -117,6 +126,8 @@ impl AppState {
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let sent_urls: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let request_headers: Arc<Mutex<HashMap<String, Vec<(String, String)>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let devtools_port = pick_free_port();
 
         // 在 Tokio runtime 上运行
@@ -204,6 +215,7 @@ impl AppState {
                     let client_clone = client.clone();
                     let sent_urls_clone = sent_urls.clone();
                     let cancel_flag_clone = cancel_flag.clone();
+                    let request_headers_clone = request_headers.clone();
                     let target_for_cdp = target_url.clone();
                     let page_title_shared = page_title_shared.clone();
                     tokio::spawn(async move {
@@ -214,6 +226,7 @@ impl AppState {
                             event_tx_clone.clone(),
                             cancel_flag_clone,
                             page_title_shared,
+                            request_headers_clone,
                             target_for_cdp,
                         )
                         .await;
@@ -388,13 +401,94 @@ async fn ensure_title(
 
 fn extract_headers(v: Option<&Value>) -> Option<Vec<(String, String)>> {
     let mut out = Vec::new();
-    if let Some(obj) = v.and_then(|vv| vv.get("headers")).and_then(|h| h.as_object()) {
+    if let Some(obj) = v
+        .and_then(|vv| vv.get("headers").and_then(|h| h.as_object()).or_else(|| vv.as_object()))
+    {
         for (k, v) in obj {
             if let Some(val) = v.as_str() {
                 out.push((k.clone(), val.to_string()));
             }
         }
     }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn canonical_header_name(key_lower: &str) -> String {
+    match key_lower {
+        "user-agent" => "User-Agent".into(),
+        "referer" => "Referer".into(),
+        "cookie" => "Cookie".into(),
+        "origin" => "Origin".into(),
+        "authorization" => "Authorization".into(),
+        "accept-language" => "Accept-Language".into(),
+        _ => key_lower.to_string(),
+    }
+}
+
+fn header_value(headers: Option<&Vec<(String, String)>>, key: &str) -> Option<String> {
+    headers.and_then(|list| {
+        list.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.clone())
+    })
+}
+
+fn fetch_cookies_string(headers: Option<&Vec<(String, String)>>) -> Option<String> {
+    header_value(headers, "cookie")
+}
+
+fn build_m3u8_headers(
+    request_headers: Option<Vec<(String, String)>>,
+    fallback_referer: &str,
+) -> Option<Vec<(String, String)>> {
+    let headers_ref = request_headers.as_ref();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    for key in HEADER_WHITELIST {
+        match *key {
+            "user-agent" => {
+                let ua = header_value(headers_ref, "user-agent")
+                    .unwrap_or_else(|| CAPTURE_USER_AGENT.to_string());
+                if seen.insert("user-agent".into()) {
+                    out.push((canonical_header_name("user-agent"), ua));
+                }
+            }
+            "referer" => {
+                let referer_val = header_value(headers_ref, "referer")
+                    .unwrap_or_else(|| fallback_referer.to_string());
+                if !referer_val.is_empty() && seen.insert("referer".into()) {
+                    out.push((canonical_header_name("referer"), referer_val));
+                }
+            }
+            "cookie" => {
+                if let Some(cookie) = fetch_cookies_string(headers_ref) {
+                    if seen.insert("cookie".into()) {
+                        out.push((canonical_header_name("cookie"), cookie));
+                    }
+                }
+            }
+            "origin" => {
+                if let Some(origin) = header_value(headers_ref, "origin") {
+                    if seen.insert("origin".into()) {
+                        out.push((canonical_header_name("origin"), origin));
+                    }
+                }
+            }
+            other => {
+                if let Some(val) = header_value(headers_ref, other) {
+                    if seen.insert(other.to_string()) {
+                        out.push((canonical_header_name(other), val));
+                    }
+                }
+            }
+        }
+    }
+
     if out.is_empty() {
         None
     } else {
@@ -476,6 +570,7 @@ async fn cdp_listen(
     event_tx: mpsc::Sender<CaptureEvent>,
     cancel_flag: Arc<AtomicBool>,
     page_title: Arc<Mutex<Option<String>>>,
+    request_headers: Arc<Mutex<HashMap<String, Vec<(String, String)>>>>,
     referer: String,
 ) -> Result<()> {
     if devtools_port == 0 {
@@ -505,6 +600,22 @@ async fn cdp_listen(
     .to_string();
     write.send(tokio_tungstenite::tungstenite::Message::Text(enable_msg)).await?;
 
+    // 获取页面标题（通过 CDP，而不是额外拉取页面）
+    let title_eval_msg = serde_json::json!({
+        "id": 2,
+        "method": "Runtime.evaluate",
+        "params": {
+            "expression": "document.title",
+            "returnByValue": true
+        }
+    })
+    .to_string();
+    write
+        .send(tokio_tungstenite::tungstenite::Message::Text(title_eval_msg))
+        .await?;
+
+    let mut request_id_url: HashMap<String, String> = HashMap::new();
+
     while let Some(msg) = read.next().await {
         if cancel_flag.load(Ordering::Relaxed) {
             break;
@@ -517,56 +628,90 @@ async fn cdp_listen(
             Ok(v) => v,
             Err(_) => continue,
         };
+        // 捕获标题的响应
+        if v.get("id").and_then(|i| i.as_i64()) == Some(2) {
+            if let Some(val) = v
+                .get("result")
+                .and_then(|r| r.get("result"))
+                .and_then(|r| r.get("value"))
+                .and_then(|v| v.as_str())
+            {
+                let mut guard = page_title.lock().await;
+                *guard = Some(val.to_string());
+            }
+            continue;
+        }
         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
             match method {
                 "Network.requestWillBeSent" => {
                     if let Some(params) = v.get("params") {
-                        if let Some(url) = params.get("request").and_then(|r| r.get("url")).and_then(|u| u.as_str()) {
-                            if is_m3u8_url(url) {
-                                let title = ensure_title(&client, &page_title, &referer).await;
-                                let duration =
-                                    fetch_m3u8_duration(&client, url, Some(&referer)).await;
-                                let headers = extract_headers(params.get("request"));
-                                push_found(
-                                    url.to_string(),
-                                    None,
-                                    title,
-                                    duration,
-                                    Some(referer.clone()),
-                                    headers,
-                                    sent_urls.clone(),
-                                    event_tx.clone(),
-                                )
-                                .await;
+                        if let Some(req_id) =
+                            params.get("requestId").and_then(|r| r.as_str())
+                        {
+                            if let Some(url) = params
+                                .get("request")
+                                .and_then(|r| r.get("url"))
+                                .and_then(|u| u.as_str())
+                            {
+                                request_id_url.insert(req_id.to_string(), url.to_string());
+                            }
+                        }
+                    }
+                }
+                "Network.requestWillBeSentExtraInfo" => {
+                    if let Some(params) = v.get("params") {
+                        if let Some(req_id) =
+                            params.get("requestId").and_then(|r| r.as_str())
+                        {
+                            if let Some(headers) = extract_headers(params.get("headers")) {
+                                let mut guard = request_headers.lock().await;
+                                guard.insert(req_id.to_string(), headers);
+                                // 防止过度增长
+                                if guard.len() > 2000 {
+                                    guard.clear();
+                                }
                             }
                         }
                     }
                 }
                 "Network.responseReceived" => {
                     if let Some(params) = v.get("params") {
+                        let request_id = params
+                            .get("requestId")
+                            .and_then(|r| r.as_str());
+                        let mut request_headers_for_id = None;
+                        if let Some(req_id) = request_id {
+                            let mut guard = request_headers.lock().await;
+                            request_headers_for_id = guard.remove(req_id);
+                        }
+
                         let url = params
                             .get("response")
                             .and_then(|r| r.get("url"))
-                            .and_then(|u| u.as_str());
+                            .and_then(|u| u.as_str())
+                            .map(|u| u.to_string())
+                            .or_else(|| request_id.and_then(|id| request_id_url.remove(id)));
                         let mime = params
                             .get("response")
                             .and_then(|r| r.get("mimeType"))
                             .and_then(|m| m.as_str());
                         if let Some(url) = url {
-                            if is_m3u8_url(url) || mime.map(|m| m.contains("mpegurl")).unwrap_or(false) {
+                            if is_m3u8_url(&url) || mime.map(|m| m.contains("mpegurl")).unwrap_or(false) {
                                 let title = ensure_title(&client, &page_title, &referer).await;
                                 let duration =
-                                    fetch_m3u8_duration(&client, url, Some(&referer)).await;
-                                let headers = extract_headers(params.get("response"));
+                                    fetch_m3u8_duration(&client, &url, Some(&referer)).await;
+                                // 仅使用请求阶段的白名单头，避免 response 头过多
+                                let headers =
+                                    build_m3u8_headers(request_headers_for_id, &referer);
                                 push_found(
-                                    url.to_string(),
-                                        mime.map(|s| s.to_string()),
+                                    url,
+                                    mime.map(|s| s.to_string()),
                                     title,
                                     duration,
                                     Some(referer.clone()),
                                     headers,
-                                        sent_urls.clone(),
-                                        event_tx.clone(),
+                                    sent_urls.clone(),
+                                    event_tx.clone(),
                                 )
                                 .await;
                             }
