@@ -1,4 +1,4 @@
-// #![warn(missing_docs)]
+#![warn(missing_docs)]
 #![warn(clippy::all)]
 #![allow(clippy::type_complexity)]
 
@@ -8,7 +8,7 @@
 //!
 //! ## 主要模块
 //!
-//! - [`types`]: 共享的数据类型定义
+//! - [`types`]: 共享的数据类型定义（下载、任务、配置、平台、事件）
 //! - [`constants`]: 应用程序常量
 //! - [`utils`]: 工具函数集合
 //!

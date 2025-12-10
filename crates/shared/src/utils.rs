@@ -1,13 +1,18 @@
+//! 通用工具函数集合。
+
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::constants::*;
 
+#[cfg(feature = "tools")]
+use std::process::Command;
+
 /// 创建一个在 Windows 上不显示控制台窗口的 Command (std::process::Command)
 /// 在非 Windows 平台上，这只是普通的 Command::new
+#[cfg(feature = "tools")]
 #[cfg(windows)]
 pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     use std::os::windows::process::CommandExt;
@@ -18,6 +23,7 @@ pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     cmd
 }
 
+#[cfg(feature = "tools")]
 #[cfg(not(windows))]
 pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     Command::new(program)
@@ -25,6 +31,7 @@ pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
 
 /// 创建一个在 Windows 上不显示控制台窗口的 tokio Command
 /// 在非 Windows 平台上，这只是普通的 tokio::process::Command::new
+#[cfg(feature = "tools")]
 #[cfg(windows)]
 pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -35,6 +42,7 @@ pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::pro
     cmd
 }
 
+#[cfg(feature = "tools")]
 #[cfg(not(windows))]
 pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
     tokio::process::Command::new(program)
@@ -138,6 +146,7 @@ pub fn get_tools_dir() -> Result<PathBuf> {
 }
 
 /// 解析 yt-dlp 可执行路径：优先应用内工具目录，其次系统 PATH
+#[cfg(feature = "tools")]
 pub fn resolve_yt_dlp_path() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "yt-dlp.exe"
@@ -154,6 +163,7 @@ pub fn resolve_yt_dlp_path() -> Option<PathBuf> {
 }
 
 /// 解析 ffmpeg 可执行路径：优先应用内工具目录，其次系统 PATH
+#[cfg(feature = "tools")]
 pub fn resolve_ffmpeg_path() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "ffmpeg.exe"
@@ -170,6 +180,7 @@ pub fn resolve_ffmpeg_path() -> Option<PathBuf> {
 }
 
 /// 解析本机浏览器路径：优先用户自定义，其次常见安装位置/PATH
+#[cfg(feature = "tools")]
 pub fn resolve_browser_path(custom: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(path) = custom {
         if path.exists() {
@@ -211,6 +222,7 @@ pub fn resolve_browser_path(custom: Option<PathBuf>) -> Option<PathBuf> {
     None
 }
 
+#[cfg(feature = "tools")]
 fn candidate_windows_browsers() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let base_program_files =

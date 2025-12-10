@@ -1,211 +1,97 @@
 # Live Recorder
 
-一个可扩展的直播录制工具，支持多个平台的直播流录制。
-
-## 特性
-
-- 🎯 **多平台支持**: 可扩展的架构，轻松添加新的直播平台
-- 🔧 **灵活配置**: 支持多种录制质量和格式
-- 🚀 **高性能**: 异步IO，支持流式下载
-- 📦 **易于使用**: 简单的API和命令行工具
-- 🔐 **支持代理**: 内置代理支持
-- 📊 **进度监控**: 实时录制进度和状态
+可扩展的直播录制工具，支持多平台直播流录制并提供 CLI / 库两种使用方式。
 
 ## 支持的平台
 
-- ✅ **抖音** (Douyin)
-- 🚧 **更多平台** (架构已准备就绪，可轻松扩展)
+- ✅ 抖音
+- ✅ Bilibili
+- ✅ 斗鱼 / 虎牙 / 快手 / SOOP（对应 `platforms/*` 实现）
+- 🚧 其余平台可通过新增 `PlatformHandler` 扩展
+
+## 核心 API
+
+- `LiveRecorder` / `LiveRecorderCore`
+  - `new()` / `with_factory(PlatformFactory)`
+  - `start_recording(url, RecordConfig)` → `RecordingHandle`
+  - `check_room_status(url)`、`get_stream_info(url)`
+  - 便捷录制：`quick_record(url, output_template)`
+- `RecordConfig`
+  - `output_path_template`、`quality: VideoQuality`、`format`
+  - `max_duration`、`proxy`、`headers` 等
+- `RecordingHandle`
+  - `get_progress()`、`wait()`、`stop()`（见 `recorder.rs`）
+- 扩展接口
+  - 实现 `platforms::PlatformHandler` 可接入新平台
 
 ## 快速开始
 
-### 安装依赖
-
-```bash
-# 需要安装 FFmpeg (用于 MP4 格式录制)
-# Ubuntu/Debian:
-sudo apt-get install ffmpeg
-
-# macOS:
-brew install ffmpeg
-
-# Windows:
-# 下载 FFmpeg 并添加到 PATH
-```
-
-### 基本使用
-
-#### 作为库使用
+### 作为库
 
 ```rust
 use live_recorder::{LiveRecorder, RecordConfig, VideoQuality};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 创建录制器
+async fn main() -> anyhow::Result<()> {
     let recorder = LiveRecorder::new();
+    let mut handle = recorder
+        .start_recording(
+            "https://live.douyin.com/123456",
+            RecordConfig {
+                output_path_template: "./downloads/{platform}_{timestamp}.mp4".into(),
+                quality: VideoQuality::High,
+                format: "mp4".into(),
+                ..Default::default()
+            },
+        )
+        .await?;
 
-    // 抖音直播间URL
-    let url = "https://live.douyin.com/123456";
-
-    // 配置录制参数
-    let config = RecordConfig {
-        output_path_template: "./downloads/{platform}_{anchor_name}_{timestamp}.mp4".to_string(),
-        quality: VideoQuality::High,
-        format: "mp4".to_string(),
-        ..Default::default()
-    };
-
-    // 开始录制
-    let mut handle = recorder.start_recording(url, config).await?;
-
-    // 监控录制进度
-    while let Some(progress) = handle.get_progress().await {
-        println!("录制中... 时长: {}秒", progress.duration);
-        if progress.status == live_recorder::RecordStatus::Completed {
-            break;
-        }
+    while let Some(p) = handle.get_progress().await {
+        println!("录制中: {:.1?}s", p.duration);
     }
-
-    // 等待录制完成
     handle.wait().await?;
     Ok(())
 }
 ```
 
-#### 命令行使用
+### 命令行
 
 ```bash
-# 基本录制
-cargo run -- --url https://live.douyin.com/123456
-
-# 指定输出路径和质量
 cargo run -- --url https://live.douyin.com/123456 \
   --output ./my_video.mp4 \
-  --quality hd
-
-# 使用代理
-cargo run -- --url https://live.douyin.com/123456 \
+  --quality hd \
   --proxy http://127.0.0.1:7890
-
-# 仅检查直播间状态
-cargo run -- --url https://live.douyin.com/123456 --check
-```
-
-## API 文档
-
-### LiveRecorder
-
-主要的录制器类，提供以下方法：
-
-- `new()` - 创建新的录制器
-- `start_recording(url, config)` - 开始录制
-- `check_room_status(url)` - 检查直播间状态
-- `get_stream_info(url)` - 获取流信息
-
-### RecordConfig
-
-录制配置：
-
-```rust
-pub struct RecordConfig {
-    pub output_path_template: String,    // 输出路径模板
-    pub quality: VideoQuality,           // 视频质量
-    pub format: String,                  // 录制格式 (mp4, flv, m3u8)
-    pub max_duration: Option<u64>,       // 最大录制时长
-    pub proxy: Option<String>,           // 代理设置
-    pub headers: HashMap<String, String>, // 请求头
-    // ... 其他字段
-}
-```
-
-### VideoQuality
-
-支持的视频质量：
-
-- `Original` / `Blue` - 原画/蓝光
-- `Ultra` - 超清
-- `High` - 高清
-- `Standard` - 标清
-- `Low` - 流畅
-
-## 扩展新平台
-
-要添加新的直播平台支持，只需实现 `PlatformHandler` trait：
-
-```rust
-use async_trait::async_trait;
-use live_recorder::platforms::PlatformHandler;
-
-pub struct NewPlatformHandler;
-
-#[async_trait]
-impl PlatformHandler for NewPlatformHandler {
-    fn platform_name(&self) -> &'static str {
-        "new_platform"
-    }
-
-    fn supported_url_patterns(&self) -> Vec<&'static str> {
-        vec!["newplatform.com", "live.newplatform.com"]
-    }
-
-    async fn extract_room_id(&self, url: &str) -> RecorderResult<String> {
-        // 实现房间ID提取逻辑
-        todo!()
-    }
-
-    async fn get_stream_info(&self, room_id: &str) -> RecorderResult<StreamInfo> {
-        // 实现流信息获取逻辑
-        todo!()
-    }
-}
 ```
 
 ## 路径模板变量
 
-输出路径模板支持以下变量：
+`{platform}` / `{anchor_name}` / `{room_id}` / `{title}` / `{timestamp}` / `{quality}`
 
-- `{platform}` - 平台名称
-- `{anchor_name}` - 主播名称
-- `{room_id}` - 房间ID
-- `{title}` - 直播标题
-- `{timestamp}` - 时间戳
-- `{quality}` - 视频质量
+示例：`./downloads/{platform}/{anchor_name}/{room_id}_{timestamp}.mp4`
 
-示例：
-```
-./downloads/{platform}/{anchor_name}/{room_id}_{timestamp}.mp4
-```
+## 错误与依赖
 
-## 错误处理
+- 错误类型：`RecorderError`（房间不存在、流不可用、认证失败、限流等）
+- 主要依赖：`tokio`、`reqwest`、`serde`、`xbogus`、`tracing`、`clap`
 
-库使用 `RecorderError` 统一处理各种错误情况：
+## 扩展新平台
 
-- `RoomNotFound` - 房间不存在
-- `StreamNotAvailable` - 流不可用
-- `AuthenticationFailed` - 认证失败
-- `RateLimitExceeded` - 触发频率限制
-- 等等...
+实现 `PlatformHandler` trait，声明 `platform_name`、`supported_url_patterns`，并实现 `extract_room_id` / `get_stream_info`，即可通过 `PlatformFactory` 注册。
 
-## 依赖项
+## 优点
 
-- `tokio` - 异步运行时
-- `reqwest` - HTTP客户端
-- `serde` - 序列化/反序列化
-- `xbogus` - X-Bogus签名生成
-- `tracing` - 日志记录
-- `clap` - 命令行参数解析
+- 平台处理抽象清晰，可独立扩展新平台。
+- 支持代理、质量选择、路径模板，覆盖常见录制需求。
+- 异步流式下载，进度可订阅，CLI/库复用同一核心。
 
-## 许可证
+## 局限 / 风险
 
-MIT License
+- 录制流程仍依赖外部 ffmpeg，缺少启动前的可用性检测。
+- 各平台实现成熟度不一致，缺少集成测试保障。
+- `RecordConfig` 部分字段缺少文档/示例（如自定义 headers）。
 
-## 贡献
+## 改进建议
 
-欢迎提交 Issue 和 Pull Request！
-
-## 注意事项
-
-1. 请确保遵守各平台的服务条款
-2. 录制功能仅用于个人学习和研究
-3. 请勿用于商业用途或侵犯版权
-4. 使用代理时请确保网络连接稳定
+- 在启动录制前检查 ffmpeg、输出目录可写性，并给出友好错误。
+- 为主流平台添加端到端测试与回归用例，避免协议变更导致静默失败。
+- 增加 WebSocket/事件流接口，便于 UI 实时显示录制状态与错误。
