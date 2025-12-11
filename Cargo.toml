@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/download",
     "crates/shared",
     "crates/tool_manager",
     "crates/live_recorder",

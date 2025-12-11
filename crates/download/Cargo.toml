@@ -1,0 +1,36 @@
+[package]
+name = "download"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio-util = { version = "0.7", features = ["full"] }
+reqwest = { workspace = true, features = ["stream"] }
+url = { workspace = true }
+tracing = { workspace = true }
+futures-util = "0.3"
+futures = "0.3"
+async-trait = "0.1"
+tokio = { workspace = true }
+m3u8-rs = "6"
+dash-mpd = "0.6"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hex = "0.4"
+
+[dependencies.serde]
+workspace = true
+optional = true
+features = ["derive"]
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dev-dependencies]
+hyper = { version = "0.14", features = ["server", "http1", "http2", "stream"] }
+tempfile = "3"
