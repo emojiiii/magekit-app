@@ -18,15 +18,12 @@ pub fn capture_row(
     action: impl IntoElement,
 ) -> impl IntoElement {
     // 为长链接分隔插入零宽空格
-    let label = item
-        .title
-        .clone()
-        .unwrap_or_else(|| {
-            item.url
-                .replace('/', "/\u{200b}")
-                .replace('?', "?\u{200b}")
-                .replace('&', "&\u{200b}")
-        });
+    let label = item.title.clone().unwrap_or_else(|| {
+        item.url
+            .replace('/', "/\u{200b}")
+            .replace('?', "?\u{200b}")
+            .replace('&', "&\u{200b}")
+    });
 
     div()
         .flex()
@@ -85,4 +82,3 @@ fn format_secs(secs: f64) -> String {
         format!("{:02}:{:02}", m, s)
     }
 }
-

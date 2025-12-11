@@ -2,8 +2,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{DownloadRequest, DownloadStrategy};
 use crate::downloader::{
-    direct::DirectDownloader, ffmpeg::FfmpegDownloader, hls_dash::HlsDashDownloader,
-    ytdlp::YtDlpDownloader, Downloader, DownloaderRegistry,
+    Downloader, DownloaderRegistry, direct::DirectDownloader, ffmpeg::FfmpegDownloader,
+    hls_dash::HlsDashDownloader, ytdlp::YtDlpDownloader,
 };
 use crate::error::{DownloadError, DownloadResult};
 use crate::progress::DownloadCallback;
@@ -58,12 +58,10 @@ impl DownloadClient {
             .resolve_downloader(&request)
             .ok_or_else(|| DownloadError::Unsupported("No downloader matched".into()))?;
 
-        let downloader = self
-            .registry
-            .get(name)
-            .ok_or_else(|| DownloadError::Unsupported(format!("Downloader `{}` not found", name)))?;
+        let downloader = self.registry.get(name).ok_or_else(|| {
+            DownloadError::Unsupported(format!("Downloader `{}` not found", name))
+        })?;
 
         downloader.download(request, callback, cancel).await
     }
 }
-

@@ -150,4 +150,3 @@ pub struct DownloadParams {
     /// 是否仅音频。
     pub audio_only: bool,
 }
-

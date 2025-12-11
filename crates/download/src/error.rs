@@ -10,10 +10,7 @@ pub enum DownloadError {
     #[error("I/O 错误: {0}")]
     Io(String),
     #[error("外部进程退出异常 code={code:?}, stderr={stderr}")]
-    ProcessExit {
-        code: Option<i32>,
-        stderr: String,
-    },
+    ProcessExit { code: Option<i32>, stderr: String },
     #[error("请求超时")]
     Timeout,
     #[error("已取消")]
@@ -45,4 +42,3 @@ impl From<reqwest::Error> for DownloadError {
         }
     }
 }
-

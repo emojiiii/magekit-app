@@ -77,11 +77,13 @@ impl crate::downloader::Downloader for DirectDownloader {
                         .open(&temp_path)
                         .await?
                 }
-                Err(_) => tokio::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .open(&temp_path)
-                    .await?,
+                Err(_) => {
+                    tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .open(&temp_path)
+                        .await?
+                }
             }
         } else {
             let _ = tokio::fs::remove_file(&temp_path).await;
@@ -99,10 +101,7 @@ impl crate::downloader::Downloader for DirectDownloader {
 
         let resp = req.send().await.map_err(DownloadError::from)?;
         if !resp.status().is_success() {
-            return Err(DownloadError::Network(format!(
-                "HTTP {}",
-                resp.status()
-            )));
+            return Err(DownloadError::Network(format!("HTTP {}", resp.status())));
         }
 
         // 如果服务器不支持 Range（返回 200），且有已下载，重下
@@ -154,14 +153,14 @@ impl crate::downloader::Downloader for DirectDownloader {
             }
             let speed_bytes: u64 = speed_window.iter().map(|(_, b)| *b).sum();
             let speed = speed_bytes
-                .checked_div(now.duration_since(speed_window.front().map(|(t, _)| *t).unwrap_or(now)).as_secs().max(1))
+                .checked_div(
+                    now.duration_since(speed_window.front().map(|(t, _)| *t).unwrap_or(now))
+                        .as_secs()
+                        .max(1),
+                )
                 .or(Some(0));
 
-            callback.on_progress(DownloadProgress::downloading(
-                downloaded,
-                total,
-                speed,
-            ));
+            callback.on_progress(DownloadProgress::downloading(downloaded, total, speed));
         }
 
         file.flush().await?;
@@ -191,4 +190,3 @@ pub fn parse_content_range_total(headers: &reqwest::header::HeaderMap) -> Option
         })
     })
 }
-

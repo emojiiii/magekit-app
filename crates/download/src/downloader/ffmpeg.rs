@@ -123,9 +123,10 @@ impl crate::downloader::Downloader for FfmpegDownloader {
             }
         }
 
-        let status = child.wait().await.map_err(|e| {
-            DownloadError::Internal(format!("wait ffmpeg failed: {}", e))
-        })?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| DownloadError::Internal(format!("wait ffmpeg failed: {}", e)))?;
 
         if !status.success() {
             return Err(DownloadError::ProcessExit {
@@ -213,4 +214,3 @@ pub fn parse_timestamp_to_secs(ts: &str) -> Option<f64> {
     let s = parts[2].parse::<f64>().ok()?;
     Some(h * 3600.0 + m * 60.0 + s)
 }
-

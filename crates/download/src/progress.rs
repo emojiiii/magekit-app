@@ -36,23 +36,26 @@ impl DownloadProgress {
         }
     }
 
-    pub fn downloading(bytes_downloaded: u64, total_bytes: Option<u64>, speed_bps: Option<u64>) -> Self {
+    pub fn downloading(
+        bytes_downloaded: u64,
+        total_bytes: Option<u64>,
+        speed_bps: Option<u64>,
+    ) -> Self {
         Self {
             stage: DownloadStage::Downloading,
             bytes_downloaded,
             total_bytes,
             speed_bps,
-            eta: total_bytes
-                .and_then(|total| {
-                    speed_bps.and_then(|speed| {
-                        if speed == 0 {
-                            None
-                        } else {
-                            let remain = total.saturating_sub(bytes_downloaded);
-                            Some(Duration::from_secs(remain / speed))
-                        }
-                    })
-                }),
+            eta: total_bytes.and_then(|total| {
+                speed_bps.and_then(|speed| {
+                    if speed == 0 {
+                        None
+                    } else {
+                        let remain = total.saturating_sub(bytes_downloaded);
+                        Some(Duration::from_secs(remain / speed))
+                    }
+                })
+            }),
         }
     }
 
@@ -135,4 +138,3 @@ impl DownloadCallback for ChannelCallback {
         let _ = self.sender.send(DownloadEvent::Log(line));
     }
 }
-

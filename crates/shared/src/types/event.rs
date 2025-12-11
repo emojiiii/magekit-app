@@ -82,4 +82,3 @@ pub enum NotificationType {
     /// 错误。
     Error,
 }
-

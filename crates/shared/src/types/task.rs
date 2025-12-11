@@ -113,4 +113,3 @@ pub enum TaskUpdate {
     /// 失败。
     Failed(TaskId, String),
 }
-

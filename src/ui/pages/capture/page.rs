@@ -1,27 +1,24 @@
 //! M3U8 嗅探页面
 
 use crate::app::{AppState, CaptureEvent, CaptureRequest, M3u8Stream};
-use crate::ui::pages::capture::widgets::{capture_row, CaptureRowTheme};
+use crate::ui::pages::capture::widgets::{CaptureRowTheme, capture_row};
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarState};
-use gpui_component::{
-    ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list,
-};
+use gpui_component::{ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
 use magekit_shared::utils::sanitize_filename;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-const DEFAULT_FFMPEG_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const DEFAULT_FFMPEG_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /// 嗅探页面
 pub struct CapturePage {
@@ -205,11 +202,7 @@ impl CapturePage {
 
         let app_state = self.app_state.clone();
         let title_hint = self.item_title_from_list(&url);
-        let captured_item = self
-            .captured
-            .iter()
-            .find(|i| i.url == url)
-            .cloned();
+        let captured_item = self.captured.iter().find(|i| i.url == url).cloned();
 
         cx.spawn(async move |this, cx| {
             let url_clone = url.clone();
@@ -364,13 +357,7 @@ impl Render for CapturePage {
                                         });
                                     }),
                             );
-                            capture_row(
-                                item,
-                                status_clone,
-                                output_dir.clone(),
-                                row_theme,
-                                action,
-                            )
+                            capture_row(item, status_clone, output_dir.clone(), row_theme, action)
                         })
                     })
                     .collect::<Vec<_>>()

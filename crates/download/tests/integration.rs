@@ -215,9 +215,8 @@ async fn direct_timeout() {
 
 async fn spawn_test_server() -> (SocketAddr, oneshot::Sender<()>) {
     let (tx, rx) = oneshot::channel();
-    let make_svc = make_service_fn(|_conn| async {
-        Ok::<_, Infallible>(service_fn(handle_request))
-    });
+    let make_svc =
+        make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(handle_request)) });
 
     let server = Server::bind(&([127, 0, 0, 1], 0).into()).serve(make_svc);
     let addr = server.local_addr();
@@ -234,12 +233,18 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible
         "/file.bin" => {
             let full = b"hello world!";
             if let Some(range) = req.headers().get("range").and_then(|v| v.to_str().ok()) {
-                if let Some(start) = range.strip_prefix("bytes=").and_then(|s| s.trim_end_matches('-').parse::<usize>().ok()) {
+                if let Some(start) = range
+                    .strip_prefix("bytes=")
+                    .and_then(|s| s.trim_end_matches('-').parse::<usize>().ok())
+                {
                     let slice = &full[start.min(full.len())..];
                     let body = Body::from(slice.to_vec());
                     let resp = Response::builder()
                         .status(StatusCode::PARTIAL_CONTENT)
-                        .header("Content-Range", format!("bytes {}-{}/{}", start, full.len()-1, full.len()))
+                        .header(
+                            "Content-Range",
+                            format!("bytes {}-{}/{}", start, full.len() - 1, full.len()),
+                        )
                         .body(body)
                         .unwrap();
                     return Ok(resp);
@@ -265,17 +270,13 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible
         }
         "/s1.ts" => Ok(Response::new(Body::from("AAA\n"))),
         "/s2.ts" => Ok(Response::new(Body::from("BBB\n"))),
-        "/aes1.ts" => {
-            Ok(Response::new(Body::from(encrypt_segment(0))))
-        }
+        "/aes1.ts" => Ok(Response::new(Body::from(encrypt_segment(0)))),
         "/aes2.ts" => {
             // 故意延迟，验证乱序也能排序写入
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             Ok(Response::new(Body::from(encrypt_segment(1))))
         }
-        "/key.bin" => {
-            Ok(Response::new(Body::from([1u8;16].to_vec())))
-        }
+        "/key.bin" => Ok(Response::new(Body::from([1u8; 16].to_vec()))),
         "/slow.bin" => {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             Ok(Response::new(Body::from("slow")))
@@ -299,13 +300,11 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible
 }
 
 fn encrypt_segment(idx: u8) -> Vec<u8> {
-    use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
     type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
     let key = [1u8; 16];
     let mut iv = [0u8; 16];
     iv[15] = 1; // 与 m3u8 的 IV 对齐
     let plaintext = format!("SEG{}\n", idx).into_bytes();
-    Aes128CbcEnc::new(&key.into(), &iv.into())
-        .encrypt_padded_vec_mut::<Pkcs7>(&plaintext)
+    Aes128CbcEnc::new(&key.into(), &iv.into()).encrypt_padded_vec_mut::<Pkcs7>(&plaintext)
 }
-

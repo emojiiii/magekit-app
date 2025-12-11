@@ -5,29 +5,28 @@
 
 use crate::app::AppState;
 use anyhow::{Context, Result};
-use futures_util::{StreamExt, SinkExt};
+use futures_util::{SinkExt, StreamExt};
 use magekit_shared::utils::{get_app_data_dir, resolve_browser_path};
 use rand::{Rng, distributions::Alphanumeric};
+use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::future::pending;
 use std::net::TcpListener;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time;
 use tokio_tungstenite::connect_async;
 use url::Url;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_LANGUAGE};
 
-const CAPTURE_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const CAPTURE_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const CAPTURE_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
 const BROWSER_PROFILE_DIR_NAME: &str = "browser_profile";
 const DEVTOOLS_HOST: &str = "127.0.0.1";
@@ -142,7 +141,8 @@ impl AppState {
                 .await;
 
             if let Some(path) = browser_path.clone() {
-                match spawn_browser(&path, &profile_dir, devtools_port, &target_url, headless).await {
+                match spawn_browser(&path, &profile_dir, devtools_port, &target_url, headless).await
+                {
                     Ok(child) => {
                         browser_child = Some(child);
                         let _ = event_tx
@@ -232,10 +232,7 @@ impl AppState {
                         .await;
                         if let Err(err) = maybe_err {
                             let _ = event_tx_clone
-                                .send(CaptureEvent::Log(format!(
-                                    "⚠️ CDP 监听失败: {}",
-                                    err
-                                )))
+                                .send(CaptureEvent::Log(format!("⚠️ CDP 监听失败: {}", err)))
                                 .await;
                         }
                     });
@@ -401,20 +398,18 @@ async fn ensure_title(
 
 fn extract_headers(v: Option<&Value>) -> Option<Vec<(String, String)>> {
     let mut out = Vec::new();
-    if let Some(obj) = v
-        .and_then(|vv| vv.get("headers").and_then(|h| h.as_object()).or_else(|| vv.as_object()))
-    {
+    if let Some(obj) = v.and_then(|vv| {
+        vv.get("headers")
+            .and_then(|h| h.as_object())
+            .or_else(|| vv.as_object())
+    }) {
         for (k, v) in obj {
             if let Some(val) = v.as_str() {
                 out.push((k.clone(), val.to_string()));
             }
         }
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn canonical_header_name(key_lower: &str) -> String {
@@ -489,11 +484,7 @@ fn build_m3u8_headers(
         }
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 async fn fetch_html_title(client: &reqwest::Client, target_url: &str) -> Result<Option<String>> {
@@ -598,7 +589,9 @@ async fn cdp_listen(
         }
     })
     .to_string();
-    write.send(tokio_tungstenite::tungstenite::Message::Text(enable_msg)).await?;
+    write
+        .send(tokio_tungstenite::tungstenite::Message::Text(enable_msg))
+        .await?;
 
     // 获取页面标题（通过 CDP，而不是额外拉取页面）
     let title_eval_msg = serde_json::json!({
@@ -611,7 +604,9 @@ async fn cdp_listen(
     })
     .to_string();
     write
-        .send(tokio_tungstenite::tungstenite::Message::Text(title_eval_msg))
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            title_eval_msg,
+        ))
         .await?;
 
     let mut request_id_url: HashMap<String, String> = HashMap::new();
@@ -645,9 +640,7 @@ async fn cdp_listen(
             match method {
                 "Network.requestWillBeSent" => {
                     if let Some(params) = v.get("params") {
-                        if let Some(req_id) =
-                            params.get("requestId").and_then(|r| r.as_str())
-                        {
+                        if let Some(req_id) = params.get("requestId").and_then(|r| r.as_str()) {
                             if let Some(url) = params
                                 .get("request")
                                 .and_then(|r| r.get("url"))
@@ -660,9 +653,7 @@ async fn cdp_listen(
                 }
                 "Network.requestWillBeSentExtraInfo" => {
                     if let Some(params) = v.get("params") {
-                        if let Some(req_id) =
-                            params.get("requestId").and_then(|r| r.as_str())
-                        {
+                        if let Some(req_id) = params.get("requestId").and_then(|r| r.as_str()) {
                             if let Some(headers) = extract_headers(params.get("headers")) {
                                 let mut guard = request_headers.lock().await;
                                 guard.insert(req_id.to_string(), headers);
@@ -676,9 +667,7 @@ async fn cdp_listen(
                 }
                 "Network.responseReceived" => {
                     if let Some(params) = v.get("params") {
-                        let request_id = params
-                            .get("requestId")
-                            .and_then(|r| r.as_str());
+                        let request_id = params.get("requestId").and_then(|r| r.as_str());
                         let mut request_headers_for_id = None;
                         if let Some(req_id) = request_id {
                             let mut guard = request_headers.lock().await;
@@ -696,13 +685,14 @@ async fn cdp_listen(
                             .and_then(|r| r.get("mimeType"))
                             .and_then(|m| m.as_str());
                         if let Some(url) = url {
-                            if is_m3u8_url(&url) || mime.map(|m| m.contains("mpegurl")).unwrap_or(false) {
+                            if is_m3u8_url(&url)
+                                || mime.map(|m| m.contains("mpegurl")).unwrap_or(false)
+                            {
                                 let title = ensure_title(&client, &page_title, &referer).await;
                                 let duration =
                                     fetch_m3u8_duration(&client, &url, Some(&referer)).await;
                                 // 仅使用请求阶段的白名单头，避免 response 头过多
-                                let headers =
-                                    build_m3u8_headers(request_headers_for_id, &referer);
+                                let headers = build_m3u8_headers(request_headers_for_id, &referer);
                                 push_found(
                                     url,
                                     mime.map(|s| s.to_string()),

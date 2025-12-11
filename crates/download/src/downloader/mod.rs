@@ -48,4 +48,3 @@ impl DownloaderRegistry {
         self.inner.get(name).cloned()
     }
 }
-

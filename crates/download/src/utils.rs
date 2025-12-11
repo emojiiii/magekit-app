@@ -30,4 +30,3 @@ pub fn resolve_output_path(request: &DownloadRequest, url: &url::Url) -> Downloa
 
     Ok(dir.join(filename))
 }
-

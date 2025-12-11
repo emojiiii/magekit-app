@@ -135,9 +135,10 @@ impl crate::downloader::Downloader for YtDlpDownloader {
             }
         }
 
-        let status = child.wait().await.map_err(|e| {
-            DownloadError::Internal(format!("wait yt-dlp failed: {}", e))
-        })?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| DownloadError::Internal(format!("wait yt-dlp failed: {}", e)))?;
         if !status.success() {
             return Err(DownloadError::ProcessExit {
                 code: status.code(),
@@ -252,4 +253,3 @@ fn parse_size_to_bytes(s: &str) -> Option<u64> {
     }
     None
 }
-

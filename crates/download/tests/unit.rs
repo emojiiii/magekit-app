@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use download::downloader::ffmpeg::{parse_ffmpeg_size, parse_ffmpeg_time, parse_timestamp_to_secs};
-use download::downloader::ytdlp::{parse_progress_line, parse_destination};
 use download::downloader::direct::parse_content_range_total;
-use download::utils::resolve_output_path;
+use download::downloader::ffmpeg::{parse_ffmpeg_size, parse_ffmpeg_time, parse_timestamp_to_secs};
+use download::downloader::ytdlp::{parse_destination, parse_progress_line};
 use download::error::DownloadError;
+use download::utils::resolve_output_path;
 use url::Url;
 
 #[test]
@@ -124,4 +124,3 @@ fn test_download_error_clone() {
     let e2 = e1.clone();
     assert_eq!(format!("{e1}"), format!("{e2}"));
 }
-

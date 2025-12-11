@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use m3u8_rs::{KeyMethod, MasterPlaylist, Playlist, VariantStream};
@@ -58,8 +58,9 @@ impl crate::downloader::Downloader for HlsDashDownloader {
                     .join(variant.uri.as_str())
                     .map_err(|e| DownloadError::InvalidRequest(e.to_string()))?;
                 let text = fetch_text(&uri, &request, &cancel).await?;
-                let parsed_media = m3u8_rs::parse_playlist_res(text.as_bytes())
-                    .map_err(|e| DownloadError::Unsupported(format!("media m3u8 parse error: {:?}", e)))?;
+                let parsed_media = m3u8_rs::parse_playlist_res(text.as_bytes()).map_err(|e| {
+                    DownloadError::Unsupported(format!("media m3u8 parse error: {:?}", e))
+                })?;
                 match parsed_media {
                     Playlist::MediaPlaylist(m) => (uri, m),
                     _ => return Err(DownloadError::Unsupported("expected media playlist".into())),
@@ -87,18 +88,25 @@ impl crate::downloader::Downloader for HlsDashDownloader {
                         .uri
                         .as_ref()
                         .and_then(|u| media_base.join(u).ok())
-                        .ok_or_else(|| DownloadError::Unsupported("AES-128 key uri missing".into()))?;
+                        .ok_or_else(|| {
+                            DownloadError::Unsupported("AES-128 key uri missing".into())
+                        })?;
                     let key_bytes = fetch_bytes(&key_uri, &request, &cancel).await?;
                     let iv = key
                         .iv
                         .as_ref()
                         .and_then(|s| hex::decode(s.trim_start_matches("0x")).ok())
                         .and_then(|v| {
-                            let mut iv = [0u8;16];
-                            if v.len() == 16 { iv.copy_from_slice(&v); Some(iv) } else { None }
+                            let mut iv = [0u8; 16];
+                            if v.len() == 16 {
+                                iv.copy_from_slice(&v);
+                                Some(iv)
+                            } else {
+                                None
+                            }
                         })
-                        .unwrap_or([0u8;16]);
-                    let mut key_arr = [0u8;16];
+                        .unwrap_or([0u8; 16]);
+                    let mut key_arr = [0u8; 16];
                     key_arr.copy_from_slice(&key_bytes[..16.min(key_bytes.len())]);
                     current_key = Some(AesKey { key: key_arr, iv });
                 } else {
@@ -144,7 +152,11 @@ impl crate::downloader::Downloader for HlsDashDownloader {
             written_segments += 1;
 
             let elapsed = start.elapsed().as_secs();
-            let speed = if elapsed == 0 { None } else { Some(downloaded_bytes / elapsed) };
+            let speed = if elapsed == 0 {
+                None
+            } else {
+                Some(downloaded_bytes / elapsed)
+            };
             callback.on_progress(DownloadProgress::downloading(
                 written_segments,
                 Some(total_segments),
@@ -172,10 +184,7 @@ impl crate::downloader::Downloader for HlsDashDownloader {
 }
 
 fn pick_variant(master: &MasterPlaylist) -> Option<&VariantStream> {
-    master
-        .variants
-        .iter()
-        .max_by_key(|v| v.bandwidth)
+    master.variants.iter().max_by_key(|v| v.bandwidth)
 }
 
 async fn fetch_text(
@@ -197,9 +206,9 @@ async fn fetch_bytes(
     if let Some(timeout) = request.timeout {
         client_builder = client_builder.timeout(timeout);
     }
-    let client = client_builder.build().map_err(|e| {
-        DownloadError::Internal(format!("HTTP client build failed: {}", e))
-    })?;
+    let client = client_builder
+        .build()
+        .map_err(|e| DownloadError::Internal(format!("HTTP client build failed: {}", e)))?;
 
     let mut req = client.get(url.clone());
     for (k, v) in &request.extra.headers {
@@ -211,10 +220,7 @@ async fn fetch_bytes(
 
     let resp = req.send().await.map_err(DownloadError::from)?;
     if !resp.status().is_success() {
-        return Err(DownloadError::Network(format!(
-            "HTTP {}",
-            resp.status()
-        )));
+        return Err(DownloadError::Network(format!("HTTP {}", resp.status())));
     }
 
     if cancel.is_cancelled() {
@@ -239,4 +245,3 @@ fn decrypt_aes128(buf: &[u8], key: &AesKey) -> DownloadResult<Vec<u8>> {
         .map_err(|e| DownloadError::Internal(format!("AES-128 decrypt: {:?}", e)))?;
     Ok(decrypted.to_vec())
 }
-
