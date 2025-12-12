@@ -8,6 +8,7 @@ members = [
     "crates/xbogus",
     "crates/extractor",
     "crates/bytedance",
+    "crates/capture",
 ]
 resolver = "2"
 [workspace.package]

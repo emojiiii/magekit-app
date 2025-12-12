@@ -536,6 +536,8 @@ async fn spawn_browser(
     headless: bool,
 ) -> Result<Child> {
     let mut cmd = Command::new(path);
+    
+    // 基础配置
     cmd.arg(format!("--user-data-dir={}", profile_dir.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
@@ -543,13 +545,47 @@ async fn spawn_browser(
         .arg("--remote-allow-origins=*")
         .arg(format!("--remote-debugging-port={}", devtools_port))
         .arg("--lang=zh-CN")
-        .arg("--disable-features=PrivacySandboxAdsAPIs,SameSiteByDefaultCookies")
         .arg("--window-size=1280,720")
-        .arg(target_url);
+        .arg("--start-maximized");
+
+    // 绕过 Cloudflare 检测的关键参数
+    // 禁用自动化控制特征（隐藏 webdriver 标志）
+    cmd.arg("--disable-blink-features=AutomationControlled")
+        // 排除自动化开关
+        .arg("--exclude-switches=enable-automation")
+        // 禁用自动化相关的特征
+        .arg("--disable-features=IsolateOrigins,site-per-process,AutomationControlled")
+        // 禁用沙箱（在某些环境下需要，但可能降低安全性）
+        .arg("--no-sandbox")
+        .arg("--disable-setuid-sandbox")
+        // 禁用 GPU 和硬件加速（headless 模式下推荐）
+        .arg("--disable-gpu")
+        .arg("--disable-software-rasterizer")
+        // 禁用共享内存（避免 /dev/shm 问题）
+        .arg("--disable-dev-shm-usage")
+        // 禁用扩展和插件（减少指纹特征）
+        .arg("--disable-extensions")
+        .arg("--disable-plugins")
+        .arg("--disable-plugins-discovery")
+        // 设置正常的用户代理（与 CAPTURE_USER_AGENT 保持一致）
+        .arg(format!(
+            "--user-agent={}",
+            CAPTURE_USER_AGENT
+        ))
+        // 禁用一些可能暴露自动化的特征
+        .arg("--disable-background-timer-throttling")
+        .arg("--disable-backgrounding-occluded-windows")
+        .arg("--disable-renderer-backgrounding")
+        // 启用正常的浏览器行为
+        .arg("--enable-features=NetworkService,NetworkServiceInProcess")
+        // 禁用隐私沙箱（某些网站可能需要）
+        .arg("--disable-features=PrivacySandboxAdsAPIs,SameSiteByDefaultCookies");
 
     if headless {
         cmd.arg("--headless=new");
     }
+
+    cmd.arg(target_url);
 
     cmd.spawn().context("启动浏览器失败")
 }

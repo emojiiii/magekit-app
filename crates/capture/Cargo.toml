@@ -1,0 +1,38 @@
+[package]
+name = "magekit-capture"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# 内部依赖
+magekit-shared = { path = "../shared" }
+
+# 错误处理
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# 异步运行时
+tokio = { workspace = true, features = ["full"] }
+futures-util = "0.3"
+
+# HTTP 客户端
+reqwest = { workspace = true }
+url = { workspace = true }
+
+# WebSocket (用于 CDP)
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+
+# 随机数
+rand = "0.8"
+
+# 正则表达式
+regex = "1"
+
+# 日志
+tracing = { workspace = true }

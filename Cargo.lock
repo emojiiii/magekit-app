@@ -3949,6 +3949,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "magekit-capture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "magekit-shared",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "magekit-extractor"
 version = "0.1.0"
 dependencies = [
