@@ -8,7 +8,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarState};
+use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
 use gpui_component::spinner::Spinner;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
@@ -71,8 +71,6 @@ pub struct ChannelPage {
     current_page: usize,
     /// VirtualList 滚动句柄
     scroll_handle: VirtualListScrollHandle,
-    /// 滚动条状态
-    scroll_state: ScrollbarState,
     /// 预计算的 item sizes
     item_sizes: Rc<Vec<Size<Pixels>>>,
 }
@@ -100,7 +98,6 @@ impl ChannelPage {
             current_tab_index: None,
             current_page: 0,
             scroll_handle: VirtualListScrollHandle::new(),
-            scroll_state: ScrollbarState::default(),
             item_sizes: Rc::new(Vec::new()),
         }
     }
@@ -806,8 +803,7 @@ impl ChannelPage {
                             .bottom_0()
                             .w(px(12.))
                             .child(
-                                Scrollbar::both(&self.scroll_state, &self.scroll_handle)
-                                    .axis(ScrollbarAxis::Vertical),
+                                Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical),
                             ),
                     ),
             )

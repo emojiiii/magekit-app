@@ -169,14 +169,15 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                     while let Ok(Some(line)) = reader.next_line().await {
                         buf.push_str(&line);
                         buf.push('\n');
-                        // 🔧 改为info级别，让用户能看到错误
+                        // 默认不打印 stderr，避免刷屏（如 HLS "Opening ... for reading"）。
+                        // 仅在明显错误时输出，便于定位问题。
                         if line.contains("error")
                             || line.contains("Error")
                             || line.contains("failed")
+                            || line.contains("Invalid data")
+                            || line.contains("HTTP")
                         {
                             tracing::error!("[ffmpeg stderr] {}", line);
-                        } else {
-                            tracing::debug!("[ffmpeg stderr] {}", line);
                         }
                     }
                 }
@@ -212,8 +213,21 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                                     last_size = size;
                                 }
                             } else if let Some(time_str) = l.strip_prefix("out_time_us=") {
-                                if let Ok(time_us) = time_str.parse::<f64>() {
-                                    last_time_secs = time_us / 1_000_000.0;
+                                if let Ok(time_us) = time_str.parse::<u64>() {
+                                    last_time_secs = time_us as f64 / 1_000_000.0;
+                                }
+                            } else if let Some(time_str) = l.strip_prefix("out_time_ms=") {
+                                // 兼容不同 ffmpeg 版本：有的 out_time_ms 实际是 ms，有的为 us（历史兼容）。
+                                if let Ok(v) = time_str.parse::<u64>() {
+                                    last_time_secs = if v >= 1_000_000_000 {
+                                        v as f64 / 1_000_000.0
+                                    } else {
+                                        v as f64 / 1000.0
+                                    };
+                                }
+                            } else if let Some(time_str) = l.strip_prefix("out_time=") {
+                                if let Some(secs) = parse_timestamp_to_secs(time_str.trim()) {
+                                    last_time_secs = secs;
                                 }
                             } else if l == "progress=end" {
                                 tracing::info!("✅ ffmpeg 完成，total_size={}", last_size);

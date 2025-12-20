@@ -93,12 +93,183 @@ pub struct RecordingPage {
 
     /// 最后一次添加房间的错误
     last_add_error: Option<String>,
+    pending_toasts: Vec<(ToastLevel, String)>,
 
     /// 监控定时器 ID
     check_task_running: Arc<RwLock<bool>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ToastLevel {
+    Success,
+    Info,
+    Warning,
+    Error,
+}
+
 impl RecordingPage {
+    fn push_toast(&mut self, level: ToastLevel, message: impl Into<String>) {
+        self.pending_toasts.push((level, message.into()));
+    }
+
+    fn resolve_ffmpeg_path(&self) -> Option<PathBuf> {
+        let bundled = self
+            .app_state
+            .tool_manager
+            .storage
+            .get_tool_path(magekit_shared::ToolType::Ffmpeg);
+        if bundled.exists() {
+            return Some(bundled);
+        }
+        magekit_shared::resolve_ffmpeg_path().or_else(|| which::which("ffmpeg").ok())
+    }
+
+    fn transcode_target_path(&self, input_path: &PathBuf) -> Option<PathBuf> {
+        if !self.record_config.auto_transcode {
+            return None;
+        }
+
+        let target_ext = self
+            .record_config
+            .transcode_format
+            .as_deref()
+            .unwrap_or("mp4");
+
+        let input_ext = input_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        if input_ext.eq_ignore_ascii_case(target_ext) {
+            return None;
+        }
+
+        Some(input_path.with_extension(target_ext))
+    }
+
+    fn start_transcode_in_background(
+        &mut self,
+        room_id: Uuid,
+        input_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let output_path = match self.transcode_target_path(&input_path) {
+            Some(p) => p,
+            None => return,
+        };
+
+        let ffmpeg = match self.resolve_ffmpeg_path() {
+            Some(p) => p,
+            None => {
+                self.push_toast(ToastLevel::Warning, "未找到 ffmpeg，跳过自动转码");
+                cx.notify();
+                return;
+            }
+        };
+
+        if let Some(state) = self.room_states.get_mut(&room_id) {
+            if let Some(ref mut task) = state.current_task {
+                task.status = magekit_shared::types::RecordingTaskStatus::Transcoding;
+            }
+        }
+
+        self.push_toast(
+            ToastLevel::Info,
+            format!(
+                "开始转码：{} -> {}",
+                input_path.display(),
+                output_path.display()
+            ),
+        );
+        cx.notify();
+
+        let runtime = self.app_state.runtime.clone();
+        cx.spawn(async move |this, cx| {
+            let ffmpeg = ffmpeg.clone();
+            let output_path_clone = output_path.clone();
+            let input_path_clone = input_path.clone();
+
+            let result = runtime
+                .spawn(async move {
+                    let mut cmd = magekit_shared::create_tokio_command(&ffmpeg);
+                    cmd.arg("-hide_banner")
+                        .arg("-loglevel")
+                        .arg("warning")
+                        .arg("-y")
+                        .arg("-i")
+                        .arg(&input_path_clone)
+                        .arg("-c")
+                        .arg("copy");
+
+                    let out_ext = output_path_clone
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    if out_ext.eq_ignore_ascii_case("mp4") {
+                        cmd.arg("-bsf:a").arg("aac_adtstoasc");
+                        cmd.arg("-movflags").arg("+faststart");
+                    }
+
+                    cmd.arg(&output_path_clone).output().await
+                })
+                .await;
+
+            let _ = this.update(cx, |page, cx| {
+                match result {
+                    Ok(Ok(output)) => {
+                        if output.status.success() {
+                            page.push_toast(
+                                ToastLevel::Success,
+                                format!("转码完成：{}", output_path.display()),
+                            );
+                            if let Some(state) = page.room_states.get_mut(&room_id) {
+                                if let Some(ref mut task) = state.current_task {
+                                    task.status = magekit_shared::types::RecordingTaskStatus::Completed;
+                                    task.output_path = output_path.clone();
+                                }
+                            }
+                        } else {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            page.push_toast(
+                                ToastLevel::Error,
+                                format!("转码失败：{}", stderr.trim()),
+                            );
+                            if let Some(state) = page.room_states.get_mut(&room_id) {
+                                if let Some(ref mut task) = state.current_task {
+                                    task.status = magekit_shared::types::RecordingTaskStatus::Failed(
+                                        stderr.trim().to_string(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        page.push_toast(ToastLevel::Error, format!("启动 ffmpeg 失败：{}", e));
+                        if let Some(state) = page.room_states.get_mut(&room_id) {
+                            if let Some(ref mut task) = state.current_task {
+                                task.status = magekit_shared::types::RecordingTaskStatus::Failed(
+                                    e.to_string(),
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        page.push_toast(ToastLevel::Error, format!("转码任务失败：{}", e));
+                        if let Some(state) = page.room_states.get_mut(&room_id) {
+                            if let Some(ref mut task) = state.current_task {
+                                task.status = magekit_shared::types::RecordingTaskStatus::Failed(
+                                    e.to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn format_record_duration(seconds: u64) -> String {
         let hours = seconds / 3600;
         let minutes = (seconds % 3600) / 60;
@@ -108,6 +279,38 @@ impl RecordingPage {
             format!("{:02}:{:02}:{:02}", hours, minutes, secs)
         } else {
             format!("{:02}:{:02}", minutes, secs)
+        }
+    }
+
+    fn platform_record_dir_name(platform: &str) -> &str {
+        match platform {
+            // 兼容旧配置（曾保存为中文平台名）
+            "抖音直播" | "douyin" => "抖音直播",
+            "B站直播" | "bilibili" => "B站直播",
+            "虎牙直播" | "huya" => "虎牙直播",
+            "斗鱼直播" | "douyu" => "斗鱼直播",
+            "快手直播" | "kuaishou" => "快手直播",
+            "SOOP" | "soop" => "SOOP",
+            other => other,
+        }
+    }
+
+    fn sanitize_path_component(raw: &str) -> String {
+        let mut s = raw
+            .chars()
+            .map(|c| match c {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                c if c.is_control() => '_',
+                c => c,
+            })
+            .collect::<String>();
+
+        s = s.trim().trim_matches('.').to_string();
+
+        if s.is_empty() {
+            "_".to_string()
+        } else {
+            s
         }
     }
 
@@ -153,6 +356,7 @@ impl RecordingPage {
             is_loading: false,
             monitoring_enabled: true,
             last_add_error: None,
+            pending_toasts: Vec::new(),
             check_task_running: Arc::new(RwLock::new(false)),
         };
 
@@ -644,16 +848,19 @@ impl RecordingPage {
             .download
             .default_output_path
             .clone();
-        let record_base = download_path.join("record");
+        let record_base = download_path.join(&self.record_config.output_base_path);
 
         // 格式: {base}/record/{平台}/{主播名}/{主播名}_{时间}.ts
-        let platform_dir = record_base.join(&room.platform);
-        let anchor_dir = platform_dir.join(&room.anchor_name);
+        let platform_dir = record_base.join(Self::platform_record_dir_name(&room.platform));
+        let safe_anchor_name = Self::sanitize_path_component(&room.anchor_name);
+        let anchor_dir = platform_dir.join(&safe_anchor_name);
 
         let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S_%3f");
         let filename = format!(
             "{}_{}.{}",
-            room.anchor_name, timestamp, self.record_config.record_format
+            safe_anchor_name,
+            timestamp,
+            self.record_config.record_format
         );
 
         anchor_dir.join(filename)
@@ -804,20 +1011,6 @@ impl RecordingPage {
 
     /// 停止录制
     fn stop_recording(&mut self, room_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        // 获取录制任务信息用于转码
-        let (handle, output_path, should_transcode) =
-            if let Some(state) = self.room_states.get_mut(&room_id) {
-                state.is_recording = false;
-
-                let output_path = state.current_task.as_ref().map(|t| t.output_path.clone());
-                let should_transcode = self.record_config.auto_transcode && output_path.is_some();
-
-                state.current_task = None;
-                (state.recording_handle.take(), output_path, should_transcode)
-            } else {
-                (None, None, false)
-            };
-
         let anchor_name = self
             .monitored_rooms
             .iter()
@@ -825,14 +1018,20 @@ impl RecordingPage {
             .map(|r| r.anchor_name.clone())
             .unwrap_or_default();
 
-        // 异步停止录制并转码
+        let (handle, output_path) = if let Some(state) = self.room_states.get_mut(&room_id) {
+            state.is_recording = false;
+            let output_path = state.current_task.as_ref().map(|t| t.output_path.clone());
+            (state.recording_handle.take(), output_path)
+        } else {
+            (None, None)
+        };
+
         if let Some(handle) = handle {
             let runtime = self.app_state.runtime.clone();
-            let app_state = self.app_state.clone();
-            let anchor_name_for_log = anchor_name.clone();
+            let anchor_name_for_toast = anchor_name.clone();
+            let output_path_for_toast = output_path.clone();
 
-            cx.spawn(async move |_this, _cx| {
-                // 先停止录制
+            cx.spawn(async move |this, cx| {
                 let stop_result = runtime
                     .spawn(async move {
                         let mut h = handle.lock().await;
@@ -842,73 +1041,67 @@ impl RecordingPage {
 
                 match stop_result {
                     Ok(Ok(_)) => {
-                        tracing::info!("✅ 录制已停止: {}", anchor_name_for_log);
+                        let _ = this.update(cx, move |page, cx| {
+                            page.push_toast(
+                                ToastLevel::Success,
+                                format!("录制已停止：{}", anchor_name_for_toast),
+                            );
 
-                        // 如果需要转码
-                        if should_transcode {
-                            if let Some(input_path) = output_path {
-                                // 生成 MP4 输出路径
-                                let mp4_path = input_path.with_extension("mp4");
-
-                                tracing::info!("🔄 开始转码: {:?} -> {:?}", input_path, mp4_path);
-
-                                // 获取 ffmpeg 路径
-                                let ffmpeg_path = app_state
-                                    .tool_manager
-                                    .storage
-                                    .get_tool_path(magekit_shared::ToolType::Ffmpeg);
-
-                                // 检查 ffmpeg 是否存在
-                                let ffmpeg = if ffmpeg_path.exists() {
-                                    Some(ffmpeg_path)
-                                } else {
-                                    which::which("ffmpeg").ok()
-                                };
-
-                                if let Some(ffmpeg) = ffmpeg {
-                                    // 使用 ffmpeg 转码（无窗口模式）
-                                    let transcode_result = magekit_shared::create_command(&ffmpeg)
-                                        .arg("-i")
-                                        .arg(&input_path)
-                                        .arg("-c")
-                                        .arg("copy")
-                                        .arg("-y")
-                                        .arg(&mp4_path)
-                                        .output();
-
-                                    match transcode_result {
-                                        Ok(output) => {
-                                            if output.status.success() {
-                                                tracing::info!("✅ 转码完成: {:?}", mp4_path);
-                                                // 可选：删除原文件
-                                                // let _ = std::fs::remove_file(&input_path);
-                                            } else {
-                                                let stderr =
-                                                    String::from_utf8_lossy(&output.stderr);
-                                                tracing::error!("❌ 转码失败: {}", stderr);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("❌ 启动 ffmpeg 失败: {}", e);
-                                        }
+                            if let Some(input_path) = output_path_for_toast {
+                                if page.transcode_target_path(&input_path).is_some() {
+                                    page.start_transcode_in_background(room_id, input_path, cx);
+                                } else if let Some(state) = page.room_states.get_mut(&room_id) {
+                                    state.last_error = None;
+                                    if let Some(ref mut task) = state.current_task {
+                                        task.status =
+                                            magekit_shared::types::RecordingTaskStatus::Completed;
                                     }
-                                } else {
-                                    tracing::warn!("⚠️ 未找到 ffmpeg，跳过转码");
                                 }
                             }
-                        }
+
+                            cx.notify();
+                        });
                     }
-                    Ok(Err(e)) => tracing::error!("❌ 停止录制失败: {}", e),
-                    Err(e) => tracing::error!("❌ 停止录制任务失败: {}", e),
+                    Ok(Err(e)) => {
+                        let err = e.to_string();
+                        let _ = this.update(cx, move |page, cx| {
+                            page.push_toast(
+                                ToastLevel::Error,
+                                format!("停止录制失败：{}（{}）", anchor_name_for_toast, err),
+                            );
+                            if let Some(state) = page.room_states.get_mut(&room_id) {
+                                state.last_error = Some(err.clone());
+                                if let Some(ref mut task) = state.current_task {
+                                    task.status =
+                                        magekit_shared::types::RecordingTaskStatus::Failed(err);
+                                }
+                            }
+                            cx.notify();
+                        });
+                    }
+                    Err(e) => {
+                        let err = e.to_string();
+                        let _ = this.update(cx, move |page, cx| {
+                            page.push_toast(
+                                ToastLevel::Error,
+                                format!("停止录制任务失败：{}（{}）", anchor_name_for_toast, err),
+                            );
+                            if let Some(state) = page.room_states.get_mut(&room_id) {
+                                state.last_error = Some(err.clone());
+                                if let Some(ref mut task) = state.current_task {
+                                    task.status =
+                                        magekit_shared::types::RecordingTaskStatus::Failed(err);
+                                }
+                            }
+                            cx.notify();
+                        });
+                    }
                 }
             })
             .detach();
         }
 
-        window.push_notification(
-            Notification::success(&format!("停止录制: {}", anchor_name)),
-            cx,
-        );
+        window.push_notification(Notification::info(&format!("正在停止录制：{}", anchor_name)), cx);
         cx.notify();
     }
 
@@ -1349,7 +1542,7 @@ impl RecordingPage {
         });
         let path_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("recordings")
+                .placeholder("record")
                 .default_value(config.output_base_path.to_string_lossy().to_string())
         });
 
@@ -1375,6 +1568,7 @@ impl RecordingPage {
 
             dialog
                 .title("录制设置")
+                .overlay(true)
                 .h(px(580.0))
                 .w(px(500.0))
                 .child({
@@ -1412,9 +1606,22 @@ impl RecordingPage {
                                                 .border_color(border_color)
                                                 .child(
                                                     div()
-                                                        .text_base()
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .child("🎬 输出设置")
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            gpui_component::Icon::new(
+                                                                gpui_component::IconName::Folder,
+                                                            )
+                                                            .size(px(16.0))
+                                                            .text_color(theme.foreground),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_base()
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .child("输出设置"),
+                                                        )
                                                 )
                                         )
                                         // 录制格式
@@ -1535,9 +1742,22 @@ impl RecordingPage {
                                                 .border_color(border_color)
                                                 .child(
                                                     div()
-                                                        .text_base()
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .child("⏱️ 监控设置")
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            gpui_component::Icon::new(
+                                                                gpui_component::IconName::Search,
+                                                            )
+                                                            .size(px(16.0))
+                                                            .text_color(theme.foreground),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_base()
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .child("监控设置"),
+                                                        )
                                                 )
                                         )
                                         // 检测间隔
@@ -1700,9 +1920,22 @@ impl RecordingPage {
                                                 .border_color(border_color)
                                                 .child(
                                                     div()
-                                                        .text_base()
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .child("⚙️ 高级设置")
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            gpui_component::Icon::new(
+                                                                gpui_component::IconName::Settings2,
+                                                            )
+                                                            .size(px(16.0))
+                                                            .text_color(theme.foreground),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_base()
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .child("高级设置"),
+                                                        )
                                                 )
                                         )
                                         // 分段录制
@@ -1835,7 +2068,11 @@ impl RecordingPage {
                                         page.record_config.retry_count = retry;
                                         page.record_config.reconnect_delay = reconnect;
                                         page.record_config.output_base_path = PathBuf::from(
-                                            if path.is_empty() { "recordings".to_string() } else { path }
+                                            if path.is_empty() {
+                                                "record".to_string()
+                                            } else {
+                                                path
+                                            }
                                         );
                                         page.save_record_config();
                                         cx.notify();
@@ -1908,23 +2145,23 @@ impl RecordingPage {
 
         // 平台颜色映射
         let platform_color = match room.platform.as_str() {
-            "douyin" => gpui::rgb(0x000000),   // 黑色
-            "bilibili" => gpui::rgb(0xfb7299), // B站粉
-            "huya" => gpui::rgb(0xff9600),     // 虎牙橙
-            "douyu" => gpui::rgb(0xff5d23),    // 斗鱼橙
-            "kuaishou" => gpui::rgb(0xff4906), // 快手橙
+            "douyin" | "抖音直播" => gpui::rgb(0x000000), // 黑色
+            "bilibili" | "B站直播" => gpui::rgb(0xfb7299), // B站粉
+            "huya" | "虎牙直播" => gpui::rgb(0xff9600),   // 虎牙橙
+            "douyu" | "斗鱼直播" => gpui::rgb(0xff5d23),  // 斗鱼橙
+            "kuaishou" | "快手直播" => gpui::rgb(0xff4906), // 快手橙
             "soop" => gpui::rgb(0x5b6edc),     // SOOP 蓝紫
             _ => gpui::rgb(0x6366f1),          // 默认紫色
         };
 
         // 平台显示名称
         let platform_display = match room.platform.as_str() {
-            "douyin" => "抖音",
-            "bilibili" => "B站",
-            "huya" => "虎牙",
-            "douyu" => "斗鱼",
-            "kuaishou" => "快手",
-            "soop" => "SOOP",
+            "douyin" | "抖音直播" => "抖音",
+            "bilibili" | "B站直播" => "B站",
+            "huya" | "虎牙直播" => "虎牙",
+            "douyu" | "斗鱼直播" => "斗鱼",
+            "kuaishou" | "快手直播" => "快手",
+            "soop" | "SOOP" => "SOOP",
             _ => &room.platform,
         };
 
@@ -2224,6 +2461,16 @@ impl Render for RecordingPage {
         // 检查是否有错误需要显示
         if let Some(error) = self.last_add_error.take() {
             window.push_notification(Notification::error(&format!("添加失败: {}", error)), cx);
+        }
+
+        while let Some((level, message)) = self.pending_toasts.pop() {
+            let note = match level {
+                ToastLevel::Success => Notification::success(&message),
+                ToastLevel::Info => Notification::info(&message),
+                ToastLevel::Warning => Notification::warning(&message),
+                ToastLevel::Error => Notification::error(&message),
+            };
+            window.push_notification(note, cx);
         }
 
         let rooms = self.monitored_rooms.clone();

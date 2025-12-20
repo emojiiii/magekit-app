@@ -9,7 +9,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarState};
+use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
 use gpui_component::{ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
@@ -36,7 +36,6 @@ pub struct CapturePage {
     output_dir: String,
     download_status: HashMap<String, String>,
     scroll_handle: VirtualListScrollHandle,
-    scroll_state: ScrollbarState,
 }
 
 const CAPTURE_ITEM_HEIGHT: f32 = 110.0;
@@ -75,7 +74,6 @@ impl CapturePage {
             output_dir,
             download_status: HashMap::new(),
             scroll_handle: VirtualListScrollHandle::new(),
-            scroll_state: ScrollbarState::default(),
         }
     }
 
@@ -472,8 +470,7 @@ impl Render for CapturePage {
                         .bottom_0()
                         .w(px(12.0))
                         .child(
-                            Scrollbar::both(&self.scroll_state, &self.scroll_handle)
-                                .axis(ScrollbarAxis::Vertical),
+                            Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical),
                         ),
                 )
                 .into_any_element()
@@ -636,7 +633,6 @@ impl Render for CapturePage {
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.captured.clear();
                                         this.scroll_handle = VirtualListScrollHandle::new();
-                                        this.scroll_state = ScrollbarState::default();
                                         cx.notify();
                                     })),
                             ),

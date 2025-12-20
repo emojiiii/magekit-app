@@ -4,7 +4,7 @@
 //! 本模块提供便捷的同步包装方法，供 UI 层调用
 
 use anyhow::Result;
-use magekit_shared::{DownloadOptions, TaskId, VideoInfo};
+use magekit_shared::{DownloadOptions, TaskId, TaskState, VideoInfo};
 use std::path::PathBuf;
 
 use super::state::AppState;
@@ -114,6 +114,16 @@ impl AppState {
         let runtime = self.runtime.clone();
         let tool_manager = self.tool_manager.clone();
 
+        // UI 侧需要立即响应：先乐观更新本地缓存，避免“已暂停但按钮未切换”的体验问题
+        {
+            let mut tasks = self.tasks.blocking_write();
+            if let Some(task) = tasks.get_mut(&task_id) {
+                if matches!(task.state, TaskState::Downloading) {
+                    task.state = TaskState::Paused;
+                }
+            }
+        }
+
         tracing::info!("⏸️ 暂停下载任务: {}", task_id);
 
         runtime.spawn(async move {
@@ -128,6 +138,16 @@ impl AppState {
         let runtime = self.runtime.clone();
         let tool_manager = self.tool_manager.clone();
 
+        // 同上：先更新本地缓存，保证按钮即时切换
+        {
+            let mut tasks = self.tasks.blocking_write();
+            if let Some(task) = tasks.get_mut(&task_id) {
+                if matches!(task.state, TaskState::Paused | TaskState::Failed(_)) {
+                    task.state = TaskState::Downloading;
+                }
+            }
+        }
+
         tracing::info!("▶️ 恢复下载任务: {}", task_id);
 
         runtime.spawn(async move {
@@ -141,6 +161,14 @@ impl AppState {
     pub fn cancel_download_sync(&self, task_id: TaskId) {
         let runtime = self.runtime.clone();
         let tool_manager = self.tool_manager.clone();
+
+        // 先本地标记，避免 UI 延迟
+        {
+            let mut tasks = self.tasks.blocking_write();
+            if let Some(task) = tasks.get_mut(&task_id) {
+                task.state = TaskState::Cancelled;
+            }
+        }
 
         tracing::info!("🛑 取消下载任务: {}", task_id);
 

@@ -243,7 +243,7 @@ AppState 通过 `GlobalAppState` 在 GPUI 中全局共享。
 5. `ToolManager` 内部调用 `magekit-download` 执行下载（按策略选择 yt-dlp/ffmpeg/直链/HLS-DASH 等）
 6. `ToolManagerEvent`（broadcast）驱动 AppState 更新 `tasks` 缓存，UI 侧订阅刷新展示（TasksPage 已改为事件驱动）
 
-补充：ToolManager 内部使用 `Semaphore` 做下载并发控制，避免多任务同时启动时造成广播/锁竞争拥塞，表现为“任务面板状态更新不及时”。
+补充：ToolManager 内部有明确的队列/并发控制（见 `crates/tool_manager/src/task_queue.rs`、`crates/tool_manager/src/task_manager.rs`）。UI 侧通过订阅 broadcast + 低频 tick 兜底刷新，避免 `Lagged` 或瞬时拥塞导致列表不更新。
 
 ### 任务控制
 
@@ -284,8 +284,12 @@ AppState 通过 `GlobalAppState` 在 GPUI 中全局共享。
 
 ### RecordingPage（录制页）
 
-- 直播录制入口（依赖 `live_recorder`）
-- 展示录制状态/时长/输出路径等信息
+- 直播录制入口（依赖 `live_recorder`），与下载链路分离：直播流走录制；非直播内容走下载
+- 输出路径规则：`<download.default_output_path>/<live_record.output_base_path>/<平台>/<主播名>/<主播名>_<时间>.<record_format>`
+  - 平台目录名：`douyin`→`抖音直播`、`douyu`→`斗鱼直播`、`bilibili`→`B站直播`、`huya`→`虎牙直播`、`kuaishou`→`快手直播`
+- 监听（监控）与自动录制分离：监控开关控制是否检查开播；自动录制由“全局开关 + 房间开关”共同决定；手动录制不受全局开关影响
+- 录制进度：`live_recorder` 基于“elapsed + 输出文件大小”定期推送；UI 每秒拉取并更新录制时长
+- 停止录制：优先停止 ffmpeg 子进程；如开启 `LiveRecordConfig.auto_transcode`，停止后自动用 ffmpeg remux（`-c copy`）输出 `mp4`（不重新编码）
 
 ### CapturePage（嗅探页）
 

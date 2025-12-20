@@ -5,7 +5,7 @@ use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use m3u8_rs::{KeyMethod, MasterPlaylist, Playlist, VariantStream};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -405,7 +405,8 @@ async fn merge_with_ffmpeg(
     let mut cmd = Command::new(ffmpeg_path);
     cmd.arg("-hide_banner")
         .arg("-loglevel")
-        .arg("warning")
+        .arg("error")
+        .arg("-nostats")
         .arg("-y")
         .arg("-f")
         .arg("concat")
@@ -435,15 +436,32 @@ async fn merge_with_ffmpeg(
         .spawn()
         .map_err(|e| DownloadError::Internal(format!("spawn ffmpeg failed: {}", e)))?;
 
+    let stderr_handle = {
+        let stderr = child.stderr.take();
+        tokio::spawn(async move {
+            let mut buf = String::new();
+            if let Some(stderr) = stderr {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+            }
+            buf
+        })
+    };
+
     tokio::select! {
         _ = cancel.cancelled() => {
             let _ = child.kill().await;
+            stderr_handle.abort();
             return Err(DownloadError::Canceled);
         }
         status = child.wait() => {
             let status = status.map_err(|e| DownloadError::Internal(format!("wait ffmpeg failed: {}", e)))?;
             if !status.success() {
-                return Err(DownloadError::ProcessExit { code: status.code(), stderr: String::new() });
+                let stderr_buf = stderr_handle.await.unwrap_or_default();
+                return Err(DownloadError::ProcessExit { code: status.code(), stderr: stderr_buf });
             }
         }
     }

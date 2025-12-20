@@ -734,7 +734,11 @@ impl ToolManager {
                 match &update {
                     TaskUpdate::Progress(id, progress, downloaded, total, speed, eta) => {
                         // 更新任务状态
-                        let _ = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                        let status = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                            // 避免 pause/cancel 后仍被“余震进度”拉回 Downloading，导致 UI 状态错乱
+                            if matches!(status.state, TaskState::Paused | TaskState::Cancelled) {
+                                return;
+                            }
                             status.state = TaskState::Downloading;
                             status.progress = *progress;
                             status.downloaded_bytes = *downloaded;
@@ -743,6 +747,14 @@ impl ToolManager {
                             status.eta = *eta;
                         })
                         .await;
+
+                        // 若任务已暂停/取消，则不再广播进度，减少事件风暴与 UI 抖动
+                        if matches!(
+                            status.as_ref().map(|s| &s.state),
+                            Some(TaskState::Paused | TaskState::Cancelled)
+                        ) {
+                            continue;
+                        }
 
                         // 广播进度更新
                         let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));

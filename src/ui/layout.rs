@@ -8,6 +8,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::TitleBar;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::*;
 use gpui_router::{IntoLayout, NavLink, Outlet, use_location};
 
@@ -689,7 +690,7 @@ pub fn tools_page() -> impl IntoElement {
             .flex()
             .flex_col()
             .size_full()
-            .scrollable(Axis::Vertical)
+            .overflow_y_scrollbar()
             .child(
                 div()
                     .flex()
@@ -877,7 +878,7 @@ pub fn settings_page() -> impl IntoElement {
             .flex()
             .flex_col()
             .size_full()
-            .scrollable(Axis::Vertical)
+            .overflow_y_scrollbar()
             .child(
                 div()
                     .flex()

@@ -78,9 +78,16 @@ impl AppState {
         let tool_manager_rx = tool_manager.subscribe();
         let event_tx_clone = event_tx.clone();
         let tasks_clone = tasks.clone();
+        let tool_manager_for_listener = tool_manager.clone();
 
         runtime.spawn(async move {
-            Self::event_listener_loop(tool_manager_rx, event_tx_clone, tasks_clone).await;
+            Self::event_listener_loop(
+                tool_manager_for_listener,
+                tool_manager_rx,
+                event_tx_clone,
+                tasks_clone,
+            )
+            .await;
         });
 
         // 加载持久化的任务
@@ -139,6 +146,7 @@ impl AppState {
     ///
     /// 监听 ToolManager 的事件，更新本地任务缓存，并转发到应用事件
     async fn event_listener_loop(
+        tool_manager: Arc<ToolManager>,
         mut tool_manager_rx: broadcast::Receiver<ToolManagerEvent>,
         event_tx: mpsc::Sender<AppEvent>,
         tasks: Arc<RwLock<HashMap<TaskId, TaskStatus>>>,
@@ -172,7 +180,13 @@ impl AppState {
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("事件监听器落后 {} 条消息", n);
+                    tracing::warn!("事件监听器落后 {} 条消息，执行一次全量同步", n);
+                    let snapshot = tool_manager.get_all_tasks().await;
+                    let mut tasks_guard = tasks.write().await;
+                    tasks_guard.clear();
+                    for status in snapshot {
+                        tasks_guard.insert(status.id, status);
+                    }
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     tracing::info!("ToolManager 事件通道已关闭");
