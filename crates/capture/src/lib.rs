@@ -15,7 +15,7 @@
 //! ## 使用示例
 //!
 //! ```rust,no_run
-//! use magekit_capture::{CaptureRequest, ResourceFilter, start_capture};
+//! use magekit_capture::{CaptureEvent, CaptureRequest, ResourceFilter, start_capture};
 //! use std::time::Duration;
 //!
 //! # async fn example() -> anyhow::Result<()> {
@@ -25,11 +25,13 @@
 //!     headless: true,
 //!     timeout: Duration::from_secs(30),
 //!     filter: ResourceFilter::all(), // 捕捉所有资源
+//!     auto_speedup_ads: false,
+//!     speedup_rate: 2.0,
 //! };
 //!
 //! let mut session = start_capture(request).await?;
 //!
-//! while let Some(event) = session.rx.recv().await {
+//! while let Some(event) = session.rx_mut().recv().await {
 //!     match event {
 //!         CaptureEvent::Found(resource) => {
 //!             println!("发现资源: {} ({:?})", resource.url, resource.resource_type);

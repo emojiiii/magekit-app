@@ -53,18 +53,26 @@ impl TasksPage {
             filter: TaskFilter::All,
         };
 
-        // 启动定时刷新任务（200ms 刷新一次）
-        // 注意：这里仍然使用轮询方式读取缓存，但任务状态已经由事件驱动更新到 AppState.tasks
-        // 未来可以改为完全事件驱动，但目前这种方式更简单且性能足够
-        let app_state_for_timer = app_state.clone();
+        // 事件驱动刷新：订阅 ToolManager 事件，收到更新后从 AppState 缓存读取最新任务列表
+        // 额外加一个低频 tick，确保页面销毁后能及时退出循环（避免永久等待 recv）。
+        let mut tool_manager_rx = app_state.tool_manager.subscribe();
+        let app_state_for_events = app_state.clone();
         cx.spawn(async move |this, cx| {
             loop {
-                // 等待 200ms
-                Timer::after(std::time::Duration::from_millis(200)).await;
+                tokio::select! {
+                    evt = tool_manager_rx.recv() => {
+                        match evt {
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    _ = Timer::after(std::time::Duration::from_secs(1)) => {}
+                }
 
                 // 从 AppState 缓存读取最新任务
                 let tasks: Vec<TaskStatus> = smol::unblock({
-                    let app_state = app_state_for_timer.clone();
+                    let app_state = app_state_for_events.clone();
                     move || app_state.get_all_tasks_sync()
                 })
                 .await;

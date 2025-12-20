@@ -22,6 +22,35 @@ impl Default for ToolManagerConfig {
     }
 }
 
+impl ToolManagerConfig {
+    /// 验证配置（纯函数：不依赖磁盘与运行时）
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        // 验证并发下载数
+        if self.download_defaults.max_concurrent_downloads == 0 {
+            errors.push("Max concurrent downloads must be greater than 0".to_string());
+        }
+
+        // 验证超时时间
+        if self.download_defaults.download_timeout_secs == 0 {
+            errors.push("Download timeout must be greater than 0".to_string());
+        }
+
+        // 验证重试次数
+        if self.download_defaults.retry_times > 10 {
+            errors.push("Retry times should not exceed 10".to_string());
+        }
+
+        // 验证默认格式
+        if self.download_defaults.default_format.is_empty() {
+            errors.push("Default format cannot be empty".to_string());
+        }
+
+        errors
+    }
+}
+
 /// 下载默认配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadDefaultsConfig {
@@ -260,29 +289,7 @@ impl ConfigManager {
 
     /// 验证配置
     pub fn validate(&self) -> Vec<String> {
-        let mut errors = Vec::new();
-
-        // 验证并发下载数
-        if self.config.download_defaults.max_concurrent_downloads == 0 {
-            errors.push("Max concurrent downloads must be greater than 0".to_string());
-        }
-
-        // 验证超时时间
-        if self.config.download_defaults.download_timeout_secs == 0 {
-            errors.push("Download timeout must be greater than 0".to_string());
-        }
-
-        // 验证重试次数
-        if self.config.download_defaults.retry_times > 10 {
-            errors.push("Retry times should not exceed 10".to_string());
-        }
-
-        // 验证默认格式
-        if self.config.download_defaults.default_format.is_empty() {
-            errors.push("Default format cannot be empty".to_string());
-        }
-
-        errors
+        self.config.validate()
     }
 }
 
@@ -327,7 +334,7 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let config = ToolManagerConfig::default();
-        let errors = ConfigManager::validate(&config);
+        let errors = config.validate();
         assert!(errors.is_empty());
 
         let invalid_config = ToolManagerConfig {
@@ -338,7 +345,7 @@ mod tests {
             ..Default::default()
         };
 
-        let errors = ConfigManager::validate(&invalid_config);
+        let errors = invalid_config.validate();
         assert!(!errors.is_empty());
     }
 }

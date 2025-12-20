@@ -67,6 +67,7 @@ mod tests {
         let output = DownloadOutput {
             directory: dir.clone(),
             template: Some("video.%(ext)s".to_string()),
+            full_path: None,
         };
 
         let url = url::Url::parse("https://example.com/video.m3u8?auth=123").unwrap();
@@ -82,6 +83,7 @@ mod tests {
         let output = DownloadOutput {
             directory: dir.clone(),
             template: Some("my_video.mp4".to_string()),
+            full_path: None,
         };
 
         let url = url::Url::parse("https://example.com/stream.m3u8").unwrap();

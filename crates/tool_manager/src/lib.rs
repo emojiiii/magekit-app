@@ -29,12 +29,16 @@
 //!     tool_manager.ensure_tools(magekit_shared::UpdateChannel::Stable).await?;
 //!
 //!     // 获取视频信息
-//!     let info = tool_manager.get_video_info("https://www.youtube.com/watch?v=...").await?;
+//!     let info = tool_manager
+//!         .get_video_info("https://www.youtube.com/watch?v=...", None)
+//!         .await?;
 //!     println!("Video: {}", info.title);
 //!
 //!     // 开始下载
 //!     let options = DownloadOptions::default();
-//!     let task_id = tool_manager.start_download("https://www.youtube.com/watch?v=...", options).await?;
+//!     let task_id = tool_manager
+//!         .start_download("https://www.youtube.com/watch?v=...", options, None)
+//!         .await?;
 //!     println!("Download started with task ID: {}", task_id);
 //!
 //!     Ok(())

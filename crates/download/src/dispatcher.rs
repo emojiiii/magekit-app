@@ -7,7 +7,7 @@ use crate::downloader::{
     hls_dash::HlsDashDownloader, ytdlp::YtDlpDownloader,
 };
 use crate::error::{DownloadError, DownloadResult};
-use crate::progress::DownloadCallback;
+use crate::progress::{DownloadCallback, LogLine, LogSource};
 
 /// 下载客户端，负责根据策略选择下载器并执行
 pub struct DownloadClient {
@@ -56,17 +56,15 @@ impl DownloadClient {
     }
 
     /// 选择下载器名称
-    fn resolve_downloader(&self, request: &DownloadRequest) -> Option<&'static str> {
+    fn resolve_downloader_name<'a>(&self, request: &'a DownloadRequest) -> Option<&'a str> {
         match &request.strategy {
             DownloadStrategy::Direct => Some("direct"),
             DownloadStrategy::YtDlp => Some("ytdlp"),
             DownloadStrategy::Ffmpeg => Some("ffmpeg"),
             DownloadStrategy::HlsDash => Some("hls_dash"),
-            DownloadStrategy::Custom(name) => Some(Box::leak(name.clone().into_boxed_str())),
-            DownloadStrategy::Auto => {
-                // 简单自动策略：先 ytdlp，失败再 direct
-                Some("ytdlp")
-            }
+            DownloadStrategy::Custom(name) => Some(name.as_str()),
+            // Auto 的 fallback 逻辑在 `download()` 内处理
+            DownloadStrategy::Auto => Some("ytdlp"),
         }
     }
 
@@ -81,13 +79,44 @@ impl DownloadClient {
         tracing::info!("  ├─ URL: {}", request.url);
         tracing::info!("  └─ 策略: {:?}", request.strategy);
 
+        if matches!(request.strategy, DownloadStrategy::Auto) {
+            // 简单自动策略：先 ytdlp，失败再尝试 direct（仅对直链场景有效）。
+            let mut primary = request.clone();
+            primary.strategy = DownloadStrategy::YtDlp;
+
+            let ytdlp = self
+                .registry
+                .get("ytdlp")
+                .ok_or_else(|| DownloadError::Unsupported("Downloader `ytdlp` not found".into()))?;
+
+            match ytdlp.download(primary, callback, cancel.clone()).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(primary_err) => {
+                    callback.on_log(LogLine {
+                        source: LogSource::System,
+                        line: format!("Auto fallback: ytdlp failed, try direct: {}", primary_err),
+                    });
+
+                    let mut fallback = request;
+                    fallback.strategy = DownloadStrategy::Direct;
+
+                    let direct = self.registry.get("direct").ok_or_else(|| {
+                        DownloadError::Unsupported("Downloader `direct` not found".into())
+                    })?;
+
+                    return direct.download(fallback, callback, cancel).await;
+                }
+            }
+        }
+
         let name = self
-            .resolve_downloader(&request)
-            .ok_or_else(|| DownloadError::Unsupported("No downloader matched".into()))?;
+            .resolve_downloader_name(&request)
+            .ok_or_else(|| DownloadError::Unsupported("No downloader matched".into()))?
+            .to_string();
 
         tracing::info!("✅ 选择下载器: {}", name);
 
-        let downloader = self.registry.get(name).ok_or_else(|| {
+        let downloader = self.registry.get(&name).ok_or_else(|| {
             DownloadError::Unsupported(format!("Downloader `{}` not found", name))
         })?;
 

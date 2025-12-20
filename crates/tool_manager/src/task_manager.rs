@@ -12,7 +12,7 @@ use magekit_shared::{
 use magekit_shared::{UpdateChannel, generate_output_path, normalize_url};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, Semaphore, broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -29,7 +29,9 @@ pub struct ToolManager {
     /// 事件广播发送器（用于向所有订阅者广播事件）
     event_tx: broadcast::Sender<ToolManagerEvent>,
     /// 任务队列
-    task_queue: Arc<Mutex<TaskQueue>>,
+    task_queue: Arc<TaskQueue>,
+    /// 下载并发控制（避免同时启动过多下载导致 UI 卡顿/状态延迟）
+    download_semaphore: Arc<Semaphore>,
     /// 任务持久化
     persistence: Arc<Mutex<TaskPersistence>>,
     /// 默认最大重试次数
@@ -87,9 +89,13 @@ impl ToolManager {
         let downloader = VideoDownloader::new(yt_dlp_path.clone(), ffmpeg_path.clone());
 
         // 创建新的下载客户端（用于实际下载）
+        // 工具路径优先级：应用内 tools 目录 / ToolStorage → 系统 PATH。
+        // 注意：不要把“尚未安装”的 storage 路径强行传给 DownloadClient，否则会导致 spawn 直接失败。
         // 🔧 使用 resolve_*_path() 获取工具路径，确保优先使用应用内工具
-        let ytdlp_for_client =
-            magekit_shared::resolve_yt_dlp_path().or_else(|| Some(yt_dlp_path.clone()));
+        let ytdlp_for_client = magekit_shared::resolve_yt_dlp_path().or_else(|| {
+            let p = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
+            if p.exists() { Some(p) } else { None }
+        });
         let ffmpeg_for_client =
             magekit_shared::resolve_ffmpeg_path().or_else(|| ffmpeg_path.clone());
 
@@ -113,6 +119,7 @@ impl ToolManager {
             .download_defaults
             .max_concurrent_downloads;
         let (task_queue, _queue_rx) = TaskQueue::new(max_concurrent);
+        let download_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         // 创建任务持久化
         let persistence = TaskPersistence::new().unwrap_or_default();
@@ -127,7 +134,8 @@ impl ToolManager {
             config_manager,
             tasks: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
-            task_queue: Arc::new(Mutex::new(task_queue)),
+            task_queue: Arc::new(task_queue),
+            download_semaphore,
             persistence: Arc::new(Mutex::new(persistence)),
             max_retries,
             speed_limit: Arc::new(RwLock::new(None)),
@@ -290,14 +298,31 @@ impl ToolManager {
             task_status,
         )));
 
-        // 启动下载任务（使用新架构）
+        // 启动下载任务（使用新架构 + 并发控制）
         let download_client = self.download_client.clone();
+        let download_semaphore = self.download_semaphore.clone();
         let tasks = self.tasks.clone();
         let event_tx = self.event_tx.clone();
         let persistence = self.persistence.clone();
         let url_clone = url.to_string();
 
         tokio::spawn(async move {
+            let _permit = match download_semaphore.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+
+            // 如果任务在排队期间已被取消，则不再启动下载
+            let cancelled = {
+                let guard = tasks.read().await;
+                matches!(
+                    guard.get(&task_id).map(|t| &t.status.state),
+                    Some(TaskState::Cancelled)
+                )
+            };
+            if cancelled {
+                return;
+            }
             Self::run_download_task_new(
                 task_id,
                 url_clone,
@@ -446,19 +471,35 @@ impl ToolManager {
             TaskState::Downloading,
         )));
 
-        // 重新启动下载任务
-        let downloader = self.downloader.clone();
+        // 重新启动下载任务（使用新架构 + 并发控制）
+        let download_client = self.download_client.clone();
+        let download_semaphore = self.download_semaphore.clone();
         let tasks = self.tasks.clone();
         let event_tx = self.event_tx.clone();
         let persistence = self.persistence.clone();
         let url = status.url.clone();
 
         tokio::spawn(async move {
-            Self::run_download_task(
+            let _permit = match download_semaphore.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+
+            let cancelled = {
+                let guard = tasks.read().await;
+                matches!(
+                    guard.get(&task_id).map(|t| &t.status.state),
+                    Some(TaskState::Cancelled)
+                )
+            };
+            if cancelled {
+                return;
+            }
+            Self::run_download_task_new(
                 task_id,
                 url,
                 options,
-                downloader,
+                download_client,
                 tasks,
                 event_tx,
                 persistence,
@@ -623,7 +664,7 @@ impl ToolManager {
         event_tx: broadcast::Sender<ToolManagerEvent>,
         persistence: Arc<Mutex<TaskPersistence>>,
         mut cancel_rx: mpsc::Receiver<()>,
-        _cookies: Option<Vec<PlatformCookie>>,
+        cookies: Option<Vec<PlatformCookie>>,
     ) {
         tracing::info!("🚀 启动新下载任务 {} - {}", task_id, url);
 
@@ -805,7 +846,10 @@ impl ToolManager {
             },
             extra: download::DownloadExtra {
                 headers: headers_map, // ✅ 传递解析后的 headers
-                cookie: None,
+                cookie: magekit_extractor::cookies::build_cookie_header(
+                    platform_hint_from_url(&url),
+                    cookies.as_deref(),
+                ),
                 query: Vec::new(),
                 tool_args, // ✅ 传递其他 ffmpeg 参数
             },
@@ -1086,10 +1130,7 @@ impl ToolManager {
         let task_status = TaskStatus::new(task_id, url.to_string(), None);
 
         // 添加到队列
-        {
-            let queue = self.task_queue.lock().await;
-            queue.enqueue(queued_task).await;
-        }
+        self.task_queue.enqueue(queued_task).await;
 
         // 持久化任务（包含下载选项，以便恢复）
         {
@@ -1113,32 +1154,27 @@ impl ToolManager {
 
     /// 获取队列统计信息
     pub async fn get_queue_stats(&self) -> QueueStats {
-        let queue = self.task_queue.lock().await;
-        queue.stats().await
+        self.task_queue.stats().await
     }
 
     /// 暂停任务队列
     pub async fn pause_queue(&self) {
-        let queue = self.task_queue.lock().await;
-        queue.pause().await;
+        self.task_queue.pause().await;
     }
 
     /// 恢复任务队列
     pub async fn resume_queue(&self) {
-        let queue = self.task_queue.lock().await;
-        queue.resume().await;
+        self.task_queue.resume().await;
     }
 
     /// 清空任务队列
     pub async fn clear_queue(&self) {
-        let queue = self.task_queue.lock().await;
-        queue.clear().await;
+        self.task_queue.clear().await;
     }
 
     /// 设置任务优先级
     pub async fn set_task_priority(&self, task_id: TaskId, priority: TaskPriority) -> bool {
-        let queue = self.task_queue.lock().await;
-        queue.set_priority(task_id, priority).await
+        self.task_queue.set_priority(task_id, priority).await
     }
 
     // ==================== 新增：重试机制 ====================
@@ -1202,8 +1238,7 @@ impl ToolManager {
             };
 
             {
-                let queue = self.task_queue.lock().await;
-                queue.enqueue(queued_task).await;
+                self.task_queue.enqueue(queued_task).await;
             }
 
             // 广播状态变更
@@ -1413,42 +1448,65 @@ impl ToolManager {
         // 从 URL 提取标题
         let title = extract_title_from_url(url);
 
+        // 检测资源类型（用于直链/流媒体的自动策略）
+        let is_direct = is_direct_resource(url);
+        let is_streaming = is_streaming_resource(url);
+
+        // 自动设置 download_url 或 ffmpeg_url（如果用户没有手动设置）
+        if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+            if is_streaming {
+                options.ffmpeg_url = Some(url.to_string());
+                tracing::debug!(
+                    "🎞️ 自动设置 ffmpeg_url 用于流媒体，ffmpeg_args长度={}",
+                    options.ffmpeg_args.len()
+                );
+            } else if is_direct {
+                options.download_url = Some(url.to_string());
+                tracing::debug!("📦 自动设置 download_url 用于直接资源");
+            }
+        }
+
         // 创建任务状态
         let mut task_status = TaskStatus::new(task_id, url.to_string(), Some(title.clone()));
         task_status.state = TaskState::Queued;
 
-        // 生成初步输出路径（使用 URL 文件名）
-        // 🔧 关键：从URL提取扩展名，但流媒体格式强制转换为mp4
-        let ext = url::Url::parse(url)
-            .ok()
-            .and_then(|u| {
-                u.path_segments().and_then(|s| s.last()).and_then(|name| {
-                    // 去除查询参数
-                    let name_without_query = name.split('?').next().unwrap_or(name);
-                    name_without_query
-                        .rsplit_once('.')
-                        .map(|(_, e)| e.to_string())
+        // 直链/流媒体：生成固定输出路径；yt-dlp：交给模板生成（保证 ext/容器匹配）
+        if options.download_url.is_some() || options.ffmpeg_url.is_some() {
+            // 生成初步输出路径（使用 URL 文件名）
+            // 🔧 关键：从 URL 提取扩展名，但流媒体格式强制转换为 mp4
+            let ext = url::Url::parse(url)
+                .ok()
+                .and_then(|u| {
+                    u.path_segments().and_then(|s| s.last()).and_then(|name| {
+                        // 去除查询参数
+                        let name_without_query = name.split('?').next().unwrap_or(name);
+                        name_without_query
+                            .rsplit_once('.')
+                            .map(|(_, e)| e.to_string())
+                    })
                 })
-            })
-            .map(|e| {
-                // 🔧 流媒体格式转换为mp4
-                let e_lower = e.to_lowercase();
-                if e_lower == "m3u8" || e_lower == "m3u" || e_lower == "mpd" || e_lower == "ts" {
-                    "mp4".to_string()
-                } else {
-                    e
-                }
-            })
-            .unwrap_or_else(|| "mp4".to_string());
+                .map(|e| {
+                    // 🔧 流媒体格式转换为 mp4
+                    let e_lower = e.to_lowercase();
+                    if e_lower == "m3u8" || e_lower == "m3u" || e_lower == "mpd" || e_lower == "ts"
+                    {
+                        "mp4".to_string()
+                    } else {
+                        e
+                    }
+                })
+                .unwrap_or_else(|| "mp4".to_string());
 
-        let output_path = generate_output_path(&options.output_path, &title, &ext)
-            .map_err(|e| DownloadError::internal(e.to_string()))?;
+            let output_path = generate_output_path(&options.output_path, &title, &ext)
+                .map_err(|e| DownloadError::internal(e.to_string()))?;
+            task_status.output_path = Some(output_path);
 
-        task_status.output_path = Some(output_path.clone());
+            // 🔧 直链/流媒体使用固定路径，避免库层二次改名
+            options.output_template = None;
+        } else if options.output_template.is_none() {
+            options.output_template = Some("%(title)s.%(ext)s".to_string());
+        }
 
-        // 🔧 不再设置 output_template，而是直接传递完整路径
-        // 这样 download 库不会根据 URL 修改文件名
-        options.output_template = None;
         options.task_title = Some(title.clone());
 
         // 创建任务句柄
@@ -1489,13 +1547,28 @@ impl ToolManager {
 
         // 在后台异步启动下载
         let download_client = self.download_client.clone();
-        let downloader = self.downloader.clone();
+        let download_semaphore = self.download_semaphore.clone();
         let tasks = self.tasks.clone();
         let event_tx = self.event_tx.clone();
         let persistence = self.persistence.clone();
         let url_clone = url.to_string();
 
         tokio::spawn(async move {
+            let _permit = match download_semaphore.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+
+            let cancelled = {
+                let guard = tasks.read().await;
+                matches!(
+                    guard.get(&task_id).map(|t| &t.status.state),
+                    Some(TaskState::Cancelled)
+                )
+            };
+            if cancelled {
+                return;
+            }
             // 检测资源类型和下载策略
             let is_direct = is_direct_resource(&url_clone);
             let is_streaming = is_streaming_resource(&url_clone);
@@ -1574,13 +1647,13 @@ impl ToolManager {
                 )
                 .await;
             } else {
-                // 需要提取的资源（YouTube、Bilibili 等），使用旧架构（调用 yt-dlp）
-                tracing::info!("🎬 使用 extractor 提取: {}", url_clone);
-                Self::run_download_task(
+                // 需要 yt-dlp 的资源（YouTube、Bilibili 等），统一走 download 库
+                tracing::info!("🎬 使用 yt-dlp（download 库）: {}", url_clone);
+                Self::run_download_task_new(
                     task_id,
                     url_clone,
                     options,
-                    downloader,
+                    download_client,
                     tasks,
                     event_tx,
                     persistence,
@@ -1635,6 +1708,32 @@ fn extract_title_from_url(url: &str) -> String {
 
     // 降级方案：使用 URL 的 hash
     format!("download_{}", &url.chars().take(20).collect::<String>())
+}
+
+/// 从 URL 猜测平台名（用于 cookie 选择）
+///
+/// 注意：这里仅用于“启用 cookies 时的粗粒度匹配”，不追求 100% 精确。
+fn platform_hint_from_url(url: &str) -> Option<&'static str> {
+    let url = url.to_lowercase();
+    if url.contains("bilibili.com") || url.contains("b23.tv") {
+        Some("bilibili")
+    } else if url.contains("youtube.com") || url.contains("youtu.be") {
+        Some("youtube")
+    } else if url.contains("twitter.com") || url.contains("x.com") {
+        Some("twitter")
+    } else if url.contains("instagram.com") {
+        Some("instagram")
+    } else if url.contains("tiktok.com") {
+        Some("tiktok")
+    } else if url.contains("douyin.com") {
+        Some("douyin")
+    } else if url.contains("weibo.com") {
+        Some("weibo")
+    } else if url.contains("xiaohongshu.com") || url.contains("xhs.link") {
+        Some("xiaohongshu")
+    } else {
+        None
+    }
 }
 
 /// 检测是否为直接下载资源（图片、视频文件等）

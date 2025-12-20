@@ -273,8 +273,8 @@ pub enum CaptureEvent {
 
 /// 抓取会话句柄
 pub struct CaptureSession {
-    /// 事件接收器（使用 ManuallyDrop 以支持 split）
-    rx: std::mem::ManuallyDrop<tokio::sync::mpsc::Receiver<CaptureEvent>>,
+    /// 事件接收器（split 时 move 出）
+    rx: Option<tokio::sync::mpsc::Receiver<CaptureEvent>>,
     /// 取消发送器（内部使用，使用 Arc 以支持 Drop）
     cancel_tx: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
@@ -286,14 +286,16 @@ impl CaptureSession {
         cancel_tx: tokio::sync::oneshot::Sender<()>,
     ) -> Self {
         Self {
-            rx: std::mem::ManuallyDrop::new(rx),
+            rx: Some(rx),
             cancel_tx: std::sync::Arc::new(std::sync::Mutex::new(Some(cancel_tx))),
         }
     }
 
     /// 获取事件接收器的可变引用
     pub fn rx_mut(&mut self) -> &mut tokio::sync::mpsc::Receiver<CaptureEvent> {
-        &mut self.rx
+        self.rx
+            .as_mut()
+            .expect("CaptureSession rx already taken (split called)")
     }
     /// 取消抓取任务
     pub fn cancel(&mut self) {
@@ -316,10 +318,10 @@ impl CaptureSession {
         } else {
             None
         };
-        // 安全地 move 出 ManuallyDrop 的值
-        let rx = unsafe { std::mem::ManuallyDrop::take(&mut self.rx) };
-        // 阻止 Drop 被调用（因为我们已经手动处理了）
-        std::mem::forget(self);
+        let rx = self
+            .rx
+            .take()
+            .expect("CaptureSession rx already taken (split called)");
         (rx, cancel_tx)
     }
 }

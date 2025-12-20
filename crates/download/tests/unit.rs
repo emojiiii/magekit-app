@@ -83,6 +83,7 @@ fn test_resolve_output_path_with_ext() {
         download::config::DownloadOutput {
             directory: std::path::PathBuf::from("/tmp"),
             template: Some("%(ext)s".into()),
+            full_path: None,
         },
     );
     let path = resolve_output_path(&req, &url).unwrap();
@@ -97,6 +98,7 @@ fn test_resolve_output_path_default_bin() {
         download::config::DownloadOutput {
             directory: std::path::PathBuf::from("/tmp"),
             template: Some("file.%(ext)s".into()),
+            full_path: None,
         },
     );
     let path = resolve_output_path(&req, &url).unwrap();
@@ -111,6 +113,7 @@ fn test_resolve_output_path_default_template() {
         download::config::DownloadOutput {
             directory: std::path::PathBuf::from("/tmp"),
             template: None,
+            full_path: None,
         },
     );
     let path = resolve_output_path(&req, &url).unwrap();

@@ -56,7 +56,9 @@ impl AppState {
         let runtime = Arc::new(runtime);
 
         // 创建应用事件通道
-        let (event_tx, event_rx) = mpsc::channel(1000);
+        // 事件通道目前仅用于“可选的 UI 通知/配置变更”场景；任务更新主要通过 `tasks` 缓存读取。
+        // 注意：任务进度事件频率很高，因此这里只保留小容量并在转发处使用 try_send。
+        let (event_tx, event_rx) = mpsc::channel(32);
 
         // 从文件加载配置
         let config = load_app_config_or_default();
@@ -151,11 +153,15 @@ impl AppState {
                             // 更新本地任务缓存
                             Self::apply_task_update(&tasks, update).await;
 
-                            // 转发到应用事件
-                            let _ = event_tx.send(AppEvent::TaskUpdate(update.clone())).await;
+                            // 转发到应用事件（非阻塞：避免 UI 未消费导致监听循环卡死）
+                            // 说明：当前仓库里没有消费 `AppState::recv_event()` 的地方，
+                            // 如果这里使用 `send().await`，在高频进度更新下会把 channel 填满并阻塞，
+                            // 进而导致任务缓存停止更新，表现为“任务面板状态不及时”。
+                            let _ = event_tx.try_send(AppEvent::TaskUpdate(update.clone()));
                         }
                         ToolManagerEvent::ToolUpdate(info) => {
-                            let _ = event_tx.send(AppEvent::ToolUpdate(info.clone())).await;
+                            // 同上，非阻塞转发
+                            let _ = event_tx.try_send(AppEvent::ToolUpdate(info.clone()));
                         }
                         ToolManagerEvent::Error(msg) => {
                             tracing::error!("ToolManager 错误: {}", msg);
@@ -194,6 +200,18 @@ impl AppState {
             }
             TaskUpdate::Progress(task_id, progress, downloaded, total, speed, eta) => {
                 if let Some(task) = tasks.get_mut(task_id) {
+                    // ToolManager 的新下载架构会高频广播 Progress，但不一定单独广播 StateChanged。
+                    // 为了保证 UI “状态”与“进度”一致，这里在收到 Progress 时将任务视为下载中。
+                    if !matches!(
+                        task.state,
+                        TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
+                    ) && !matches!(task.state, TaskState::Downloading)
+                    {
+                        task.state = TaskState::Downloading;
+                    }
+                    if task.started_at.is_none() {
+                        task.started_at = Some(std::time::SystemTime::now());
+                    }
                     task.progress = *progress;
                     task.downloaded_bytes = *downloaded;
                     task.total_bytes = *total;

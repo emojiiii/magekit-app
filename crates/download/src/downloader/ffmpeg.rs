@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::DownloadRequest;
 use crate::error::{DownloadError, DownloadResult};
-use crate::progress::{DownloadCallback, DownloadOutcome, DownloadProgress, LogLine, LogSource};
+use crate::progress::{DownloadCallback, DownloadOutcome, DownloadProgress};
 use crate::utils::resolve_output_path;
 
 /// ffmpeg 下载器（拉流/封装场景）

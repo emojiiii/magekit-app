@@ -20,6 +20,7 @@ async fn direct_resume_range() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("file.bin".into()),
+        full_path: None,
     };
     let url = format!("{}/file.bin", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -53,6 +54,7 @@ async fn direct_no_range_fallback() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("norange.bin".into()),
+        full_path: None,
     };
     let url = format!("{}/norange.bin", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -85,6 +87,7 @@ async fn hls_concurrent_download() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("out.ts".into()),
+        full_path: None,
     };
     let url = format!("{}/master.m3u8", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -116,6 +119,7 @@ async fn direct_headers_cookie() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("echo.bin".into()),
+        full_path: None,
     };
     let url = format!("{}/echo-headers", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -147,6 +151,7 @@ async fn hls_aes_decrypt_and_order() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("aes.ts".into()),
+        full_path: None,
     };
     let url = format!("{}/media_aes.m3u8", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -175,6 +180,7 @@ async fn direct_should_fail_on_bad_host() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("bad.bin".into()),
+        full_path: None,
     };
     let url = "http://invalid.example.invalid/404.bin".parse().unwrap();
     let mut req = DownloadRequest::new(url, output);
@@ -196,6 +202,7 @@ async fn direct_timeout() {
     let output = DownloadOutput {
         directory: dir.path().into(),
         template: Some("slow.bin".into()),
+        full_path: None,
     };
     let url = format!("{}/slow.bin", base).parse().unwrap();
     let mut req = DownloadRequest::new(url, output);

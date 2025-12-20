@@ -241,7 +241,9 @@ AppState 通过 `GlobalAppState` 在 GPUI 中全局共享。
 3. 用户选择格式/输出目录/附加选项
 4. `AppState::start_download_in_background_with_info(...)` → `ToolManager::start_download_with_info(...)`
 5. `ToolManager` 内部调用 `magekit-download` 执行下载（按策略选择 yt-dlp/ffmpeg/直链/HLS-DASH 等）
-6. `ToolManagerEvent`（broadcast）驱动 AppState 更新 `tasks` 缓存，UI 侧轮询/订阅刷新展示
+6. `ToolManagerEvent`（broadcast）驱动 AppState 更新 `tasks` 缓存，UI 侧订阅刷新展示（TasksPage 已改为事件驱动）
+
+补充：ToolManager 内部使用 `Semaphore` 做下载并发控制，避免多任务同时启动时造成广播/锁竞争拥塞，表现为“任务面板状态更新不及时”。
 
 ### 任务控制
 

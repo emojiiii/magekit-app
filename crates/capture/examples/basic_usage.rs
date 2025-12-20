@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let mut session = start_capture(request).await?;
     let mut count = 0;
 
-    while let Some(event) = session.rx.recv().await {
+    while let Some(event) = session.rx_mut().recv().await {
         match event {
             CaptureEvent::Found(resource) => {
                 count += 1;
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let mut session = start_capture(request).await?;
     let mut count = 0;
 
-    while let Some(event) = session.rx.recv().await {
+    while let Some(event) = session.rx_mut().recv().await {
         match event {
             CaptureEvent::Found(resource) => {
                 count += 1;
