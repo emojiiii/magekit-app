@@ -172,15 +172,6 @@ impl RecordingPage {
                 task.status = magekit_shared::types::RecordingTaskStatus::Transcoding;
             }
         }
-
-        self.push_toast(
-            ToastLevel::Info,
-            format!(
-                "开始转码：{} -> {}",
-                input_path.display(),
-                output_path.display()
-            ),
-        );
         cx.notify();
 
         let runtime = self.app_state.runtime.clone();
@@ -230,10 +221,6 @@ impl RecordingPage {
                 match result {
                     Ok(Ok((output, delete_error))) => {
                         if output.status.success() {
-                            page.push_toast(
-                                ToastLevel::Success,
-                                format!("转码完成：{}", output_path.display()),
-                            );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 if let Some(ref mut task) = state.current_task {
                                     task.status =
@@ -1065,13 +1052,15 @@ impl RecordingPage {
                 match stop_result {
                     Ok(Ok(_)) => {
                         let _ = this.update(cx, move |page, cx| {
-                            page.push_toast(
-                                ToastLevel::Success,
-                                format!("录制已停止：{}", anchor_name_for_toast),
-                            );
-
                             if let Some(input_path) = output_path_for_toast {
                                 if page.transcode_target_path(&input_path).is_some() {
+                                    page.push_toast(
+                                        ToastLevel::Info,
+                                        format!(
+                                            "录制已停止，后台转码中：{}",
+                                            anchor_name_for_toast
+                                        ),
+                                    );
                                     page.start_transcode_in_background(room_id, input_path, cx);
                                 } else if let Some(state) = page.room_states.get_mut(&room_id) {
                                     state.last_error = None;
@@ -1079,6 +1068,10 @@ impl RecordingPage {
                                         task.status =
                                             magekit_shared::types::RecordingTaskStatus::Completed;
                                     }
+                                    page.push_toast(
+                                        ToastLevel::Success,
+                                        format!("录制已停止：{}", anchor_name_for_toast),
+                                    );
                                 }
                             }
 
