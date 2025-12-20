@@ -9,8 +9,13 @@ use gpui::*;
 use gpui_component::TitleBar;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem};
 use gpui_component::*;
-use gpui_router::{IntoLayout, NavLink, Outlet, use_location};
+use gpui_router::{IntoLayout, NavLink, Outlet, use_location, use_navigate};
+use magekit_shared::types::{Theme as AppTheme, ThemeConfig, ThemeMode};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SIDEBAR_MANUALLY_COLLAPSED: AtomicBool = AtomicBool::new(false);
 
 // ============================================================================
 // 页面包装器组件
@@ -97,19 +102,153 @@ impl AppLayout {
 }
 
 impl RenderOnce for AppLayout {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // 从主题获取颜色
         let title_color = cx.theme().foreground;
         let content_bg = cx.theme().background;
-        let sidebar_bg = cx.theme().sidebar;
-        let sidebar_text = cx.theme().sidebar_foreground;
-        let sidebar_hover = cx.theme().sidebar_accent;
-        let sidebar_hover_text = cx.theme().sidebar_accent_foreground;
-        let border_color = cx.theme().border;
 
         // 获取当前路由用于高亮激活状态
         let location = use_location(cx);
         let current_path = location.pathname.clone();
+
+        // 参考 gpui-component 文档的 Responsive Sidebar：窗口变窄时自动进入“紧凑”状态
+        let window_width = window.bounds().size.width;
+        let is_mobile = window_width < px(768.0);
+        let manually_collapsed = SIDEBAR_MANUALLY_COLLAPSED.load(Ordering::Relaxed);
+        let collapsed = is_mobile || manually_collapsed;
+
+        let sidebar = {
+            let app_state = cx.global::<GlobalAppState>().0.clone();
+
+            let item = |path: &'static str, label: &'static str, icon: IconName| {
+                let is_active = current_path == path;
+                SidebarMenuItem::new(label)
+                    .icon(icon)
+                    .active(is_active)
+                    .on_click(move |_, window, cx| {
+                        let mut navigate = use_navigate(cx);
+                        navigate(path.into());
+                        window.refresh();
+                    })
+            };
+
+            let theme_toggle_icon = if cx.theme().mode.is_dark() {
+                IconName::Sun
+            } else {
+                IconName::Moon
+            };
+
+            let footer_nav_item = |path: &'static str, label: &'static str, icon: IconName| {
+                let is_active = current_path == path;
+                SidebarMenuItem::new(label)
+                    .icon(icon)
+                    .active(is_active)
+                    .on_click(move |_, window, cx| {
+                        let mut navigate = use_navigate(cx);
+                        navigate(path.into());
+                        window.refresh();
+                    })
+            };
+
+            Sidebar::new(Side::Left)
+                .collapsed(collapsed)
+                .collapsible(true)
+                .w(px(200.0))
+                .header(
+                    SidebarHeader::new().child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(Icon::new(IconName::Star))
+                            .when(!collapsed, |this| this.child("MageKit")),
+                    ),
+                )
+                .child(
+                    SidebarGroup::new("导航").child(
+                        SidebarMenu::new()
+                            .child(item("/", "首页", IconName::LayoutDashboard))
+                            .child(item("/record", "录制", IconName::Frame))
+                            .child(item("/capture", "嗅探", IconName::Globe))
+                            .child(item("/channel", "频道", IconName::User))
+                            .child(item("/tasks", "任务", IconName::Inbox))
+                            .child(item("/tools", "工具", IconName::SquareTerminal)),
+                    ),
+                )
+                .footer(
+                    SidebarMenu::new()
+                        .collapsed(collapsed)
+                        .child(footer_nav_item("/settings", "设置", IconName::Settings))
+                        .child(
+                            SidebarMenuItem::new(if cx.theme().mode.is_dark() {
+                                "浅色模式"
+                            } else {
+                                "深色模式"
+                            })
+                            .icon(theme_toggle_icon)
+                            .on_click({
+                                let app_state = app_state.clone();
+                                move |_, window, cx| {
+                                    // 仅在“亮/暗”两态间切换
+                                    let target_is_dark = !cx.theme().mode.is_dark();
+                                    let target_name: SharedString = if target_is_dark {
+                                        "Default Dark".into()
+                                    } else {
+                                        "Default Light".into()
+                                    };
+
+                                    if let Some(theme_config) = ThemeRegistry::global(cx)
+                                        .themes()
+                                        .get(&target_name)
+                                        .cloned()
+                                    {
+                                        Theme::global_mut(cx).apply_config(&theme_config);
+                                        cx.refresh_windows();
+                                    }
+
+                                    // 异步持久化（避免阻塞 UI）
+                                    let theme_name = target_name.to_string();
+                                    let mode = if target_is_dark {
+                                        ThemeMode::Dark
+                                    } else {
+                                        ThemeMode::Light
+                                    };
+                                    let app_state_for_thread = app_state.clone();
+                                    std::thread::spawn(move || {
+                                        let mut config = app_state_for_thread.config();
+                                        config.ui.theme = AppTheme::Custom(ThemeConfig {
+                                            name: theme_name,
+                                            mode,
+                                        });
+                                        let _ = app_state_for_thread.runtime.block_on(async {
+                                            let _ =
+                                                app_state_for_thread.update_config(config).await;
+                                        });
+                                    });
+
+                                    window.refresh();
+                                }
+                            }),
+                        )
+                        .when(!is_mobile, |this| {
+                            this.child(
+                                SidebarMenuItem::new(if collapsed { "" } else { "收起侧栏" })
+                                    .icon(if collapsed {
+                                        IconName::PanelLeftOpen
+                                    } else {
+                                        IconName::PanelLeftClose
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        let current =
+                                            SIDEBAR_MANUALLY_COLLAPSED.load(Ordering::Relaxed);
+                                        SIDEBAR_MANUALLY_COLLAPSED
+                                            .store(!current, Ordering::Relaxed);
+                                        window.refresh();
+                                        cx.refresh_windows();
+                                    }),
+                            )
+                        }),
+                )
+        };
 
         div()
             .flex()
@@ -145,116 +284,7 @@ impl RenderOnce for AppLayout {
                     .flex_1()
                     .flex()
                     .overflow_hidden()
-                    .child(
-                        // 自定义侧边栏
-                        div()
-                            .w(px(200.0))
-                            .flex()
-                            .flex_col()
-                            .bg(sidebar_bg)
-                            .border_r_1()
-                            .border_color(border_color)
-                            .child(
-                                // 顶部 Header
-                                div().p(px(16.0)).child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(sidebar_text)
-                                        .child("导航"),
-                                ),
-                            )
-                            .child(
-                                // 导航列表
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    .flex_col()
-                                    .p(px(8.0))
-                                    .gap(px(4.0))
-                                    .child(create_nav_item(
-                                        "/",
-                                        "🏠",
-                                        "首页",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(create_nav_item(
-                                        "/record",
-                                        "🎥",
-                                        "录制",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(create_nav_item(
-                                        "/capture",
-                                        "🌐",
-                                        "嗅探",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(create_nav_item(
-                                        "/channel",
-                                        "👥",
-                                        "频道",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(create_nav_item(
-                                        "/tasks",
-                                        "📋",
-                                        "任务",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(create_nav_item(
-                                        "/tools",
-                                        "🔧",
-                                        "工具",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    )),
-                            )
-                            .child(
-                                // Footer - 设置和主题
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .p(px(12.0))
-                                    .gap(px(8.0))
-                                    .border_t_1()
-                                    .border_color(border_color)
-                                    .child(create_nav_item(
-                                        "/settings",
-                                        "⚙️",
-                                        "设置",
-                                        &current_path,
-                                        sidebar_text,
-                                        sidebar_hover,
-                                        sidebar_hover_text,
-                                    ))
-                                    .child(
-                                        Button::new("theme-toggle")
-                                            .ghost()
-                                            .label("💡 切换主题")
-                                            .on_click(|_, _, _| {
-                                                // TODO: 实现主题切换逻辑
-                                            }),
-                                    ),
-                            ),
-                    )
+                    .child(sidebar)
                     .child(
                         // 内容区域 - Outlet 用于渲染子路由
                         div()
@@ -268,34 +298,6 @@ impl RenderOnce for AppLayout {
                     ),
             )
     }
-}
-
-// 创建导航项辅助函数
-fn create_nav_item(
-    path: &'static str,
-    icon: &'static str,
-    label: &'static str,
-    current_path: &str,
-    text_color: Hsla,
-    hover_bg: Hsla,
-    hover_text: Hsla,
-) -> impl IntoElement {
-    let is_active = current_path == path;
-
-    NavLink::new().to(path).child(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(6.0))
-            .when(is_active, |this| this.bg(hover_bg).text_color(hover_text))
-            .when(!is_active, |this| this.text_color(text_color))
-            .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-            .child(div().text_base().child(icon))
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label)),
-    )
 }
 
 /// 首页 - 下载面板 + 快速操作
