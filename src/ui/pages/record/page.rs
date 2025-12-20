@@ -210,13 +210,25 @@ impl RecordingPage {
                         cmd.arg("-movflags").arg("+faststart");
                     }
 
-                    cmd.arg(&output_path_clone).output().await
+                    let output = cmd.arg(&output_path_clone).output().await?;
+
+                    let mut delete_error = None;
+                    if output.status.success() && input_path_clone != output_path_clone {
+                        if let Err(e) = tokio::fs::remove_file(&input_path_clone).await {
+                            delete_error = Some(e.to_string());
+                        }
+                    }
+
+                    Ok::<(std::process::Output, Option<String>), std::io::Error>((
+                        output,
+                        delete_error,
+                    ))
                 })
                 .await;
 
             let _ = this.update(cx, |page, cx| {
                 match result {
-                    Ok(Ok(output)) => {
+                    Ok(Ok((output, delete_error))) => {
                         if output.status.success() {
                             page.push_toast(
                                 ToastLevel::Success,
@@ -228,6 +240,12 @@ impl RecordingPage {
                                         magekit_shared::types::RecordingTaskStatus::Completed;
                                     task.output_path = output_path.clone();
                                 }
+                            }
+                            if let Some(err) = delete_error {
+                                page.push_toast(
+                                    ToastLevel::Warning,
+                                    format!("已转码但清理源文件失败：{}", err),
+                                );
                             }
                         } else {
                             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1169,9 +1187,25 @@ impl RecordingPage {
                         // 进度通道关闭，录制可能已结束
                         tracing::info!("📊 进度通道关闭，录制可能已结束: room_id={}", room_id);
                         let _ = this.update(cx, |this, cx| {
+                            let input_path = this.room_states.get(&room_id).and_then(|s| {
+                                s.current_task.as_ref().map(|task| task.output_path.clone())
+                            });
+
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 state.is_recording = false;
                                 state.recording_handle = None;
+                                state.last_error = None;
+                            }
+
+                            if let Some(input_path) = input_path {
+                                if this.transcode_target_path(&input_path).is_some() {
+                                    this.start_transcode_in_background(room_id, input_path, cx);
+                                } else if let Some(state) = this.room_states.get_mut(&room_id) {
+                                    if let Some(ref mut task) = state.current_task {
+                                        task.status =
+                                            magekit_shared::types::RecordingTaskStatus::Completed;
+                                    }
+                                }
                             }
                             cx.notify();
                         });
