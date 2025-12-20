@@ -43,14 +43,20 @@ fn normalize_url(url: &str) -> String {
                 if url_trimmed.starts_with("bilibili.com") || url_trimmed.starts_with("b23.tv") {
                     format!("https://{}", url_trimmed)
                 } else {
-                    format!("https://www.bilibili.com/{}", url_trimmed.trim_start_matches('/'))
+                    format!(
+                        "https://www.bilibili.com/{}",
+                        url_trimmed.trim_start_matches('/')
+                    )
                 }
             }
             Platform::Youtube => {
                 if url_trimmed.starts_with("youtube.com") || url_trimmed.starts_with("youtu.be") {
                     format!("https://{}", url_trimmed)
                 } else {
-                    format!("https://www.youtube.com/{}", url_trimmed.trim_start_matches('/'))
+                    format!(
+                        "https://www.youtube.com/{}",
+                        url_trimmed.trim_start_matches('/')
+                    )
                 }
             }
             _ => {
@@ -70,10 +76,15 @@ pub async fn extract_video_info(
     let normalized_url = normalize_url(url);
     tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
 
-    let cookie_header = build_cookie_header(extract_platform_from_url(&normalized_url).as_deref(), cookies);
+    let cookie_header = build_cookie_header(
+        extract_platform_from_url(&normalized_url).as_deref(),
+        cookies,
+    );
 
     let mut cmd = create_tokio_command(yt_dlp_path);
-    cmd.arg("--dump-json").arg("--no-download").arg(&normalized_url);
+    cmd.arg("--dump-json")
+        .arg("--no-download")
+        .arg(&normalized_url);
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
@@ -105,7 +116,10 @@ pub async fn extract_channel_info(
     let normalized_url = normalize_url(url);
     tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
 
-    let cookie_header = build_cookie_header(extract_platform_from_url(&normalized_url).as_deref(), cookies);
+    let cookie_header = build_cookie_header(
+        extract_platform_from_url(&normalized_url).as_deref(),
+        cookies,
+    );
 
     let mut cmd = create_tokio_command(yt_dlp_path);
     cmd.arg("--flat-playlist")

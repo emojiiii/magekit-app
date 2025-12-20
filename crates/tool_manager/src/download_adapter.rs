@@ -2,7 +2,10 @@
 //!
 //! 将 download 库的回调接口适配到 tool_manager 的任务系统
 
-use download::{DownloadCallback, DownloadError as DlError, DownloadOutcome, DownloadProgress as DlProgress, LogLine};
+use download::{
+    DownloadCallback, DownloadError as DlError, DownloadOutcome, DownloadProgress as DlProgress,
+    LogLine,
+};
 use magekit_shared::{TaskId, TaskUpdate};
 use tokio::sync::mpsc;
 
@@ -14,10 +17,7 @@ pub struct TaskProgressCallback {
 
 impl TaskProgressCallback {
     pub fn new(task_id: TaskId, update_tx: mpsc::Sender<TaskUpdate>) -> Self {
-        Self {
-            task_id,
-            update_tx,
-        }
+        Self { task_id, update_tx }
     }
 
     /// 发送任务更新（内部辅助方法）
@@ -68,12 +68,18 @@ impl DownloadCallback for TaskProgressCallback {
             stage_str,
             percent * 100.0,
             format_bytes(progress.bytes_downloaded),
-            progress.total_bytes.map_or("未知".to_string(), |t| format_bytes(t))
+            progress
+                .total_bytes
+                .map_or("未知".to_string(), |t| format_bytes(t))
         );
     }
 
     fn on_complete(&self, outcome: DownloadOutcome) {
-        tracing::info!("✅ 任务 {} 下载完成: {:?}", self.task_id, outcome.output_path);
+        tracing::info!(
+            "✅ 任务 {} 下载完成: {:?}",
+            self.task_id,
+            outcome.output_path
+        );
 
         // 使用 TaskUpdate::Completed 枚举变体
         let update = TaskUpdate::Completed(self.task_id, outcome.output_path);

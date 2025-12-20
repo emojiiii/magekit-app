@@ -13,15 +13,14 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time;
 
-const CAPTURE_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const CAPTURE_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const CAPTURE_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
 const BROWSER_PROFILE_DIR_NAME: &str = "browser_profile";
 const DEVTOOLS_HOST: &str = "127.0.0.1";
@@ -216,8 +215,7 @@ async fn spawn_browser(
     let mut cmd = Command::new(path);
 
     // 禁用浏览器日志输出（隐藏 GPU/TensorFlow 等错误）
-    cmd.stdout(Stdio::null())
-        .stderr(Stdio::null());
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
     // 基础配置
     cmd.arg(format!("--user-data-dir={}", profile_dir.display()))
@@ -254,10 +252,7 @@ async fn spawn_browser(
         .arg("--disable-plugins")
         .arg("--disable-plugins-discovery")
         // 设置正常的用户代理（与 CAPTURE_USER_AGENT 保持一致）
-        .arg(format!(
-            "--user-agent={}",
-            CAPTURE_USER_AGENT
-        ))
+        .arg(format!("--user-agent={}", CAPTURE_USER_AGENT))
         // 禁用一些可能暴露自动化的特征
         .arg("--disable-background-timer-throttling")
         .arg("--disable-backgrounding-occluded-windows")

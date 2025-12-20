@@ -45,8 +45,8 @@
 //! ```
 
 pub mod ad_detector;
-pub mod core;
 pub mod cdp;
+pub mod core;
 pub mod filter;
 pub mod scanner;
 pub mod types;

@@ -38,7 +38,8 @@ impl ResourceType {
         if mime_lower.contains("mpegurl") // m3u8 streams
             || mime_lower.contains("vnd.apple.mpegurl") // HLS
             || mime_lower.contains("x-mpegurl") // HLS alternative
-            || mime_lower == "application/dash+xml" // DASH
+            || mime_lower == "application/dash+xml"
+        // DASH
         {
             return Self::Video;
         }
@@ -74,13 +75,9 @@ impl ResourceType {
             "mp4" | "m4v" | "mov" | "avi" | "mkv" | "webm" | "flv" | "f4v" | "m3u8" | "m3u"
             | "ts" | "mpd" => Self::Video,
             // 音频
-            "mp3" | "m4a" | "aac" | "ogg" | "oga" | "opus" | "wav" | "flac" | "mka" => {
-                Self::Audio
-            }
+            "mp3" | "m4a" | "aac" | "ogg" | "oga" | "opus" | "wav" | "flac" | "mka" => Self::Audio,
             // 图片
-            "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => {
-                Self::Image
-            }
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => Self::Image,
             // 文档
             "pdf" | "doc" | "docx" | "txt" | "rtf" | "odt" => Self::Document,
             // 字体

@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         timeout: Duration::from_secs(10),
         filter: ResourceFilter::video_only(),
         auto_speedup_ads: true, // 启用自动加速广告
-        speedup_rate: 2.0, // 2倍速播放
+        speedup_rate: 2.0,      // 2倍速播放
     };
 
     let mut session = start_capture(request).await?;
@@ -65,10 +65,7 @@ async fn main() -> anyhow::Result<()> {
         match event {
             CaptureEvent::Found(resource) => {
                 count += 1;
-                println!(
-                    "  [{}] 发现视频: {}",
-                    count, resource.url
-                );
+                println!("  [{}] 发现视频: {}", count, resource.url);
                 if count >= 3 {
                     session.cancel();
                     break;

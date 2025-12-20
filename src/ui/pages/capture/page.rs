@@ -1,6 +1,8 @@
 //! M3U8 嗅探页面
 
-use crate::app::{AppState, CaptureEvent, CaptureFilterType, CaptureRequest, CaptureResourceType, M3u8Stream};
+use crate::app::{
+    AppState, CaptureEvent, CaptureFilterType, CaptureRequest, CaptureResourceType, M3u8Stream,
+};
 use crate::ui::pages::capture::widgets::{CaptureRowTheme, capture_row};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -181,11 +183,7 @@ impl CapturePage {
                         item.mime_type
                     );
 
-                    self.append_log(format!(
-                        "✅ 捕获到 {:?}: {}",
-                        item.resource_type,
-                        item.url
-                    ));
+                    self.append_log(format!("✅ 捕获到 {:?}: {}", item.resource_type, item.url));
                     self.captured.push(item);
                 }
             }
@@ -227,15 +225,9 @@ impl CapturePage {
                 // 然后根据用户选择的筛选器过滤
                 match self.filter_type {
                     CaptureFilterType::All => true,
-                    CaptureFilterType::Video => {
-                        item.resource_type == CaptureResourceType::Video
-                    }
-                    CaptureFilterType::Audio => {
-                        item.resource_type == CaptureResourceType::Audio
-                    }
-                    CaptureFilterType::Image => {
-                        item.resource_type == CaptureResourceType::Image
-                    }
+                    CaptureFilterType::Video => item.resource_type == CaptureResourceType::Video,
+                    CaptureFilterType::Audio => item.resource_type == CaptureResourceType::Audio,
+                    CaptureFilterType::Image => item.resource_type == CaptureResourceType::Image,
                     CaptureFilterType::Media => {
                         matches!(
                             item.resource_type,
@@ -279,7 +271,10 @@ impl CapturePage {
                 let mut header_lines = Vec::new();
                 let mut seen = HashSet::new();
 
-                tracing::debug!("🔧 开始构造 headers，captured_item 存在: {}", captured_item.is_some());
+                tracing::debug!(
+                    "🔧 开始构造 headers，captured_item 存在: {}",
+                    captured_item.is_some()
+                );
 
                 if let Some(item) = captured_item.clone() {
                     if let Some(headers) = item.headers {
@@ -344,7 +339,10 @@ impl CapturePage {
                 );
                 options.ffmpeg_args.push("-headers".to_string());
                 options.ffmpeg_args.push(header_block);
-                tracing::info!("✅ ffmpeg_args 已设置，总长度: {}", options.ffmpeg_args.len());
+                tracing::info!(
+                    "✅ ffmpeg_args 已设置，总长度: {}",
+                    options.ffmpeg_args.len()
+                );
 
                 runtime.block_on(async { app_state.start_download(&url_clone, options).await })
             })
@@ -663,8 +661,12 @@ impl Render for CapturePage {
                             )
                             .child(
                                 Button::new("filter-media")
-                                    .when(self.filter_type == CaptureFilterType::Media, |btn| btn.primary())
-                                    .when(self.filter_type != CaptureFilterType::Media, |btn| btn.ghost())
+                                    .when(self.filter_type == CaptureFilterType::Media, |btn| {
+                                        btn.primary()
+                                    })
+                                    .when(self.filter_type != CaptureFilterType::Media, |btn| {
+                                        btn.ghost()
+                                    })
                                     .xsmall()
                                     .label("媒体")
                                     .on_click(cx.listener(|this, _event, _window, cx| {
@@ -674,8 +676,12 @@ impl Render for CapturePage {
                             )
                             .child(
                                 Button::new("filter-video")
-                                    .when(self.filter_type == CaptureFilterType::Video, |btn| btn.primary())
-                                    .when(self.filter_type != CaptureFilterType::Video, |btn| btn.ghost())
+                                    .when(self.filter_type == CaptureFilterType::Video, |btn| {
+                                        btn.primary()
+                                    })
+                                    .when(self.filter_type != CaptureFilterType::Video, |btn| {
+                                        btn.ghost()
+                                    })
                                     .xsmall()
                                     .label("视频")
                                     .on_click(cx.listener(|this, _event, _window, cx| {
@@ -685,8 +691,12 @@ impl Render for CapturePage {
                             )
                             .child(
                                 Button::new("filter-audio")
-                                    .when(self.filter_type == CaptureFilterType::Audio, |btn| btn.primary())
-                                    .when(self.filter_type != CaptureFilterType::Audio, |btn| btn.ghost())
+                                    .when(self.filter_type == CaptureFilterType::Audio, |btn| {
+                                        btn.primary()
+                                    })
+                                    .when(self.filter_type != CaptureFilterType::Audio, |btn| {
+                                        btn.ghost()
+                                    })
                                     .xsmall()
                                     .label("音频")
                                     .on_click(cx.listener(|this, _event, _window, cx| {
@@ -696,8 +706,12 @@ impl Render for CapturePage {
                             )
                             .child(
                                 Button::new("filter-image")
-                                    .when(self.filter_type == CaptureFilterType::Image, |btn| btn.primary())
-                                    .when(self.filter_type != CaptureFilterType::Image, |btn| btn.ghost())
+                                    .when(self.filter_type == CaptureFilterType::Image, |btn| {
+                                        btn.primary()
+                                    })
+                                    .when(self.filter_type != CaptureFilterType::Image, |btn| {
+                                        btn.ghost()
+                                    })
                                     .xsmall()
                                     .label("图片")
                                     .on_click(cx.listener(|this, _event, _window, cx| {
@@ -707,8 +721,12 @@ impl Render for CapturePage {
                             )
                             .child(
                                 Button::new("filter-all")
-                                    .when(self.filter_type == CaptureFilterType::All, |btn| btn.primary())
-                                    .when(self.filter_type != CaptureFilterType::All, |btn| btn.ghost())
+                                    .when(self.filter_type == CaptureFilterType::All, |btn| {
+                                        btn.primary()
+                                    })
+                                    .when(self.filter_type != CaptureFilterType::All, |btn| {
+                                        btn.ghost()
+                                    })
                                     .xsmall()
                                     .label("全部")
                                     .on_click(cx.listener(|this, _event, _window, cx| {

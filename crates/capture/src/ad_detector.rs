@@ -15,11 +15,25 @@ impl AdDetector {
     pub fn new() -> Self {
         Self {
             ad_keywords: vec![
-                "ad", "ads", "advertisement", "advertising", "advert",
-                "banner", "sponsor", "promo", "promotion",
-                "doubleclick", "googleadservices", "googlesyndication",
-                "adserver", "adtech", "advertising.com",
-                "/ad/", "/ads/", "/advertisement/", "/advertising/",
+                "ad",
+                "ads",
+                "advertisement",
+                "advertising",
+                "advert",
+                "banner",
+                "sponsor",
+                "promo",
+                "promotion",
+                "doubleclick",
+                "googleadservices",
+                "googlesyndication",
+                "adserver",
+                "adtech",
+                "advertising.com",
+                "/ad/",
+                "/ads/",
+                "/advertisement/",
+                "/advertising/",
             ],
             ad_domains: vec![
                 "doubleclick.net",
@@ -63,7 +77,10 @@ impl AdDetector {
         if let Some(size) = resource.size_bytes {
             if size < 100 * 1024 {
                 // 小文件 + 视频/音频类型可能是广告
-                if matches!(resource.resource_type, crate::types::ResourceType::Video | crate::types::ResourceType::Audio) {
+                if matches!(
+                    resource.resource_type,
+                    crate::types::ResourceType::Video | crate::types::ResourceType::Audio
+                ) {
                     // 进一步检查：如果时长很短（小于 30 秒），更可能是广告
                     if let Some(duration) = resource.duration_seconds {
                         if duration < 30.0 {
@@ -113,7 +130,7 @@ mod tests {
             referer: None,
             title: None,
             size_bytes: Some(10 * 1024 * 1024), // 10MB
-            duration_seconds: Some(300.0), // 5 分钟
+            duration_seconds: Some(300.0),      // 5 分钟
             headers: None,
         };
         assert!(!detector.is_ad(&normal_resource));

@@ -8,8 +8,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::Duration;
@@ -105,7 +105,9 @@ impl CdpListener {
         })
         .to_string();
         write
-            .send(tokio_tungstenite::tungstenite::Message::Text(title_eval_msg))
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                title_eval_msg,
+            ))
             .await?;
 
         // 隐藏 webdriver 特征（绕过 Cloudflare 检测）
@@ -165,7 +167,9 @@ impl CdpListener {
         })
         .to_string();
         write
-            .send(tokio_tungstenite::tungstenite::Message::Text(hide_webdriver_msg))
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                hide_webdriver_msg,
+            ))
             .await?;
 
         let mut request_id_url: HashMap<String, String> = HashMap::new();
@@ -240,9 +244,7 @@ impl CdpListener {
                                 .and_then(|r| r.get("url"))
                                 .and_then(|u| u.as_str())
                                 .map(|u| u.to_string())
-                                .or_else(|| {
-                                    request_id.and_then(|id| request_id_url.remove(id))
-                                });
+                                .or_else(|| request_id.and_then(|id| request_id_url.remove(id)));
                             let mime = params
                                 .get("response")
                                 .and_then(|r| r.get("mimeType"))
@@ -278,7 +280,11 @@ impl CdpListener {
                                     if from_url == ResourceType::Other {
                                         if let Some(mime) = mime {
                                             let from_mime = ResourceType::from_mime_type(mime);
-                                            tracing::debug!("🔍 MIME 类型检测: {} -> {:?}", mime, from_mime);
+                                            tracing::debug!(
+                                                "🔍 MIME 类型检测: {} -> {:?}",
+                                                mime,
+                                                from_mime
+                                            );
                                             from_mime
                                         } else {
                                             ResourceType::Other
@@ -323,7 +329,9 @@ impl CdpListener {
                                     if is_ad && self.auto_speedup {
                                         // 通过 CDP 加速播放视频
                                         let speedup_rate = self.speedup_rate;
-                                        if let Err(e) = set_video_playback_speed(&mut write, speedup_rate).await {
+                                        if let Err(e) =
+                                            set_video_playback_speed(&mut write, speedup_rate).await
+                                        {
                                             let _ = event_tx
                                                 .send(crate::types::CaptureEvent::Log(format!(
                                                     "⚠️ 设置播放速度失败: {}",
@@ -340,12 +348,7 @@ impl CdpListener {
                                         }
                                     }
 
-                                    push_found(
-                                        resource,
-                                        sent_urls.clone(),
-                                        event_tx.clone(),
-                                    )
-                                    .await;
+                                    push_found(resource, sent_urls.clone(), event_tx.clone()).await;
                                 }
                             }
                         }
@@ -372,11 +375,7 @@ fn extract_headers(v: Option<&Value>) -> Option<Vec<(String, String)>> {
             }
         }
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn canonical_header_name(key_lower: &str) -> String {
@@ -407,8 +406,7 @@ fn build_headers(
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    const CAPTURE_USER_AGENT: &str =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    const CAPTURE_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     const CAPTURE_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
 
     for key in HEADER_WHITELIST {
@@ -451,11 +449,7 @@ fn build_headers(
         }
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 async fn push_found(
@@ -466,7 +460,9 @@ async fn push_found(
     let mut guard = sent_urls.lock().await;
     if guard.insert(resource.url.clone()) {
         drop(guard);
-        let _ = event_tx.send(crate::types::CaptureEvent::Found(resource)).await;
+        let _ = event_tx
+            .send(crate::types::CaptureEvent::Found(resource))
+            .await;
     }
 }
 

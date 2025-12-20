@@ -91,12 +91,10 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         cmd.stderr(Stdio::piped());
 
         tracing::info!("🚀 启动 yt-dlp 进程");
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| {
-                tracing::error!("❌ 启动 yt-dlp 失败: {}", e);
-                DownloadError::Internal(format!("spawn yt-dlp failed: {}", e))
-            })?;
+        let mut child = cmd.spawn().map_err(|e| {
+            tracing::error!("❌ 启动 yt-dlp 失败: {}", e);
+            DownloadError::Internal(format!("spawn yt-dlp failed: {}", e))
+        })?;
 
         tracing::info!("✅ yt-dlp 进程已启动，PID: {:?}", child.id());
 
@@ -217,7 +215,11 @@ impl crate::downloader::Downloader for YtDlpDownloader {
 
         let final_output = detected_output.unwrap_or(output_template.clone());
         tracing::info!("✅ 下载完成，输出文件: {:?}", final_output);
-        tracing::info!("📊 最终统计: downloaded={}, total={:?}", last_downloaded, last_total);
+        tracing::info!(
+            "📊 最终统计: downloaded={}, total={:?}",
+            last_downloaded,
+            last_total
+        );
 
         callback.on_progress(DownloadProgress::completed(last_downloaded, last_total));
         callback.on_complete(DownloadOutcome {

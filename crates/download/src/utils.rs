@@ -35,7 +35,8 @@ pub fn resolve_output_path(request: &DownloadRequest, url: &url::Url) -> Downloa
         .map(|ext| {
             // 🔧 流媒体格式转换为mp4（向后兼容）
             let ext_lower = ext.to_lowercase();
-            if ext_lower == "m3u8" || ext_lower == "m3u" || ext_lower == "mpd" || ext_lower == "ts" {
+            if ext_lower == "m3u8" || ext_lower == "m3u" || ext_lower == "mpd" || ext_lower == "ts"
+            {
                 "mp4"
             } else {
                 ext

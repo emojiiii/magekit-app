@@ -43,10 +43,10 @@
 
 /// 配置管理模块
 pub mod config;
-/// 视频下载器模块
-pub mod downloader;
 /// Download 库适配器
 mod download_adapter;
+/// 视频下载器模块
+pub mod downloader;
 /// 错误处理模块
 pub mod error;
 /// 下载历史记录模块

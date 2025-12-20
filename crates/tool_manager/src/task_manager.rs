@@ -1,5 +1,5 @@
-use crate::downloader::{DownloadProgress, VideoDownloader};
 use crate::download_adapter::TaskProgressCallback;
+use crate::downloader::{DownloadProgress, VideoDownloader};
 use crate::error::{DownloadError, DownloadResult, ToolManagerResult};
 use crate::storage::ToolStorage;
 use crate::task_persistence::TaskPersistence;
@@ -88,10 +88,10 @@ impl ToolManager {
 
         // 创建新的下载客户端（用于实际下载）
         // 🔧 使用 resolve_*_path() 获取工具路径，确保优先使用应用内工具
-        let ytdlp_for_client = magekit_shared::resolve_yt_dlp_path()
-            .or_else(|| Some(yt_dlp_path.clone()));
-        let ffmpeg_for_client = magekit_shared::resolve_ffmpeg_path()
-            .or_else(|| ffmpeg_path.clone());
+        let ytdlp_for_client =
+            magekit_shared::resolve_yt_dlp_path().or_else(|| Some(yt_dlp_path.clone()));
+        let ffmpeg_for_client =
+            magekit_shared::resolve_ffmpeg_path().or_else(|| ffmpeg_path.clone());
 
         tracing::info!("🔧 下载客户端工具路径:");
         tracing::info!("  ├─ yt-dlp: {:?}", ytdlp_for_client);
@@ -225,7 +225,8 @@ impl ToolManager {
         let task_id = Uuid::new_v4();
 
         // 创建任务状态（标题优先使用 options.task_title）
-        let mut task_status = TaskStatus::new(task_id, normalized_url.clone(), options.task_title.clone());
+        let mut task_status =
+            TaskStatus::new(task_id, normalized_url.clone(), options.task_title.clone());
         task_status.state = TaskState::Queued;
 
         // 获取视频信息（如果未提供）
@@ -803,10 +804,10 @@ impl ToolManager {
                 DownloadStrategy::Auto
             },
             extra: download::DownloadExtra {
-                headers: headers_map,  // ✅ 传递解析后的 headers
+                headers: headers_map, // ✅ 传递解析后的 headers
                 cookie: None,
                 query: Vec::new(),
-                tool_args,  // ✅ 传递其他 ffmpeg 参数
+                tool_args, // ✅ 传递其他 ffmpeg 参数
             },
             timeout: None,
             bandwidth_limit: None,
@@ -1281,8 +1282,8 @@ impl ToolManager {
                     cancel_tx: None,
                     retry_count: task.retry_count,
                     max_retries: task.max_retries,
-                    options: task.options.clone(),  // ✅ 恢复 options
-                    cookies: task.cookies.clone(),  // ✅ 恢复 cookies
+                    options: task.options.clone(), // ✅ 恢复 options
+                    cookies: task.cookies.clone(), // ✅ 恢复 cookies
                 },
             );
         }
@@ -1421,13 +1422,13 @@ impl ToolManager {
         let ext = url::Url::parse(url)
             .ok()
             .and_then(|u| {
-                u.path_segments()
-                    .and_then(|s| s.last())
-                    .and_then(|name| {
-                        // 去除查询参数
-                        let name_without_query = name.split('?').next().unwrap_or(name);
-                        name_without_query.rsplit_once('.').map(|(_, e)| e.to_string())
-                    })
+                u.path_segments().and_then(|s| s.last()).and_then(|name| {
+                    // 去除查询参数
+                    let name_without_query = name.split('?').next().unwrap_or(name);
+                    name_without_query
+                        .rsplit_once('.')
+                        .map(|(_, e)| e.to_string())
+                })
             })
             .map(|e| {
                 // 🔧 流媒体格式转换为mp4
@@ -1515,7 +1516,10 @@ impl ToolManager {
                 if is_streaming {
                     // 流媒体自动设置 ffmpeg_url
                     options.ffmpeg_url = Some(url_clone.clone());
-                    tracing::debug!("🔧 自动设置 ffmpeg_url 用于流媒体，ffmpeg_args长度={}", options.ffmpeg_args.len());
+                    tracing::debug!(
+                        "🔧 自动设置 ffmpeg_url 用于流媒体，ffmpeg_args长度={}",
+                        options.ffmpeg_args.len()
+                    );
                 } else if is_direct {
                     // 直接资源自动设置 download_url
                     options.download_url = Some(url_clone.clone());
@@ -1640,9 +1644,9 @@ fn is_direct_resource(url: &str) -> bool {
         // 图片
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico",
         // 视频文件（非流媒体）
-        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v",
-        // 音频
-        "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma",
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", // 音频
+        "mp3", "wav", "flac", "aac", "ogg", "m4a",
+        "wma",
         // 注意：m3u8, m3u, ts, mpd 等流媒体需要 ffmpeg，不在这里
     ];
 
@@ -1725,9 +1729,18 @@ mod tests {
 
         // 验证结果
         assert_eq!(headers_map.len(), 3);
-        assert_eq!(headers_map.get("User-Agent"), Some(&"Mozilla/5.0".to_string()));
-        assert_eq!(headers_map.get("Referer"), Some(&"https://example.com/".to_string()));
-        assert_eq!(headers_map.get("Origin"), Some(&"https://example.com".to_string()));
+        assert_eq!(
+            headers_map.get("User-Agent"),
+            Some(&"Mozilla/5.0".to_string())
+        );
+        assert_eq!(
+            headers_map.get("Referer"),
+            Some(&"https://example.com/".to_string())
+        );
+        assert_eq!(
+            headers_map.get("Origin"),
+            Some(&"https://example.com".to_string())
+        );
         assert_eq!(other_args, vec!["-c".to_string(), "copy".to_string()]);
     }
 

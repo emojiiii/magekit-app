@@ -44,13 +44,25 @@ impl StaticScanner {
         // 扫描各种资源模式
         let patterns = vec![
             // 视频
-            (r#"(?:src|href|data-src|data-url)=["']([^"']*\.(?:mp4|m4v|mov|avi|mkv|webm|flv|f4v|m3u8|m3u|ts|mpd)[^"']*)["']"#, ResourceType::Video),
+            (
+                r#"(?:src|href|data-src|data-url)=["']([^"']*\.(?:mp4|m4v|mov|avi|mkv|webm|flv|f4v|m3u8|m3u|ts|mpd)[^"']*)["']"#,
+                ResourceType::Video,
+            ),
             // 音频
-            (r#"(?:src|href|data-src|data-url)=["']([^"']*\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|mka)[^"']*)["']"#, ResourceType::Audio),
+            (
+                r#"(?:src|href|data-src|data-url)=["']([^"']*\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|mka)[^"']*)["']"#,
+                ResourceType::Audio,
+            ),
             // 图片
-            (r#"(?:src|href|data-src|data-url|data-original)=["']([^"']*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico|avif)[^"']*)["']"#, ResourceType::Image),
+            (
+                r#"(?:src|href|data-src|data-url|data-original)=["']([^"']*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|ico|avif)[^"']*)["']"#,
+                ResourceType::Image,
+            ),
             // 通用 URL 模式（在引号内）
-            (r#"(?:src|href|data-src|data-url)=["']([^"']+://[^"']+)["']"#, ResourceType::Other),
+            (
+                r#"(?:src|href|data-src|data-url)=["']([^"']+://[^"']+)["']"#,
+                ResourceType::Other,
+            ),
         ];
 
         for (pattern, default_type) in patterns {

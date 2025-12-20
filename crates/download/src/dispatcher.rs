@@ -1,5 +1,5 @@
-use tokio_util::sync::CancellationToken;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::{DownloadRequest, DownloadStrategy};
 use crate::downloader::{
@@ -25,10 +25,7 @@ impl DownloadClient {
     }
 
     /// 使用指定的工具路径创建下载客户端
-    pub fn with_tools(
-        ytdlp_path: Option<PathBuf>,
-        ffmpeg_path: Option<PathBuf>,
-    ) -> Self {
+    pub fn with_tools(ytdlp_path: Option<PathBuf>, ffmpeg_path: Option<PathBuf>) -> Self {
         let mut registry = DownloaderRegistry::new();
         registry.register(DirectDownloader::default());
 

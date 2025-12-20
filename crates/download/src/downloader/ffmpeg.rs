@@ -63,7 +63,10 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         }
         let header_blob = header_lines.join("\r\n");
 
-        tracing::info!("🔧 构建 ffmpeg 命令，headers数量: {}", request.extra.headers.len());
+        tracing::info!(
+            "🔧 构建 ffmpeg 命令，headers数量: {}",
+            request.extra.headers.len()
+        );
         tracing::info!("📁 ffmpeg 路径: {:?}", self.ffmpeg_path);
 
         let mut cmd = Command::new(&self.ffmpeg_path);
@@ -99,13 +102,13 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         }
 
         // 🔧 关键：添加进度输出参数
-        cmd.arg("-progress").arg("pipe:1");  // 进度输出到stdout
-        cmd.arg("-nostats");                  // 禁用默认统计信息
+        cmd.arg("-progress").arg("pipe:1"); // 进度输出到stdout
+        cmd.arg("-nostats"); // 禁用默认统计信息
 
         cmd.arg(output_path.to_string_lossy().to_string());
 
         cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::piped());  // 🔧 改为piped以读取进度
+        cmd.stdout(Stdio::piped()); // 🔧 改为piped以读取进度
         cmd.stderr(Stdio::piped());
 
         // 🔧 构建完整的命令字符串用于日志
@@ -119,8 +122,13 @@ impl crate::downloader::Downloader for FfmpegDownloader {
             String::new()
         };
 
-        tracing::info!("🚀 启动 ffmpeg: ffmpeg -y {} -i {} -c copy {}-progress pipe:1 -nostats {}",
-            if header_blob.is_empty() { "" } else { "-headers <...> " },
+        tracing::info!(
+            "🚀 启动 ffmpeg: ffmpeg -y {} -i {} -c copy {}-progress pipe:1 -nostats {}",
+            if header_blob.is_empty() {
+                ""
+            } else {
+                "-headers <...> "
+            },
             request.url,
             format_arg,
             output_path.display()
@@ -155,7 +163,10 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                         buf.push_str(&line);
                         buf.push('\n');
                         // 🔧 改为info级别，让用户能看到错误
-                        if line.contains("error") || line.contains("Error") || line.contains("failed") {
+                        if line.contains("error")
+                            || line.contains("Error")
+                            || line.contains("failed")
+                        {
                             tracing::error!("[ffmpeg stderr] {}", line);
                         } else {
                             tracing::info!("[ffmpeg stderr] {}", line);
