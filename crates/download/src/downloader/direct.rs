@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::DownloadRequest;
 use crate::error::{DownloadError, DownloadResult};
 use crate::progress::{DownloadCallback, DownloadOutcome, DownloadProgress};
-use crate::utils::resolve_output_path;
+use crate::utils::{part_path_for_output, resolve_output_path};
 
 /// 直链 HTTP 下载
 pub struct DirectDownloader;
@@ -61,13 +61,14 @@ impl crate::downloader::Downloader for DirectDownloader {
 
         // 输出路径与临时文件
         let output_path = resolve_output_path(&request, &url)?;
-        let temp_path = output_path.with_extension("part");
+        let temp_path = part_path_for_output(&output_path);
         if let Some(dir) = output_path.parent() {
             tokio::fs::create_dir_all(dir).await?;
         }
 
         // 断点续传：检测已有临时文件
         let mut downloaded: u64 = 0;
+        let mut created_new = false;
         let mut file = if request.resume {
             match tokio::fs::metadata(&temp_path).await {
                 Ok(meta) => {
@@ -78,6 +79,7 @@ impl crate::downloader::Downloader for DirectDownloader {
                         .await?
                 }
                 Err(_) => {
+                    created_new = true;
                     tokio::fs::OpenOptions::new()
                         .create(true)
                         .write(true)
@@ -87,6 +89,7 @@ impl crate::downloader::Downloader for DirectDownloader {
             }
         } else {
             let _ = tokio::fs::remove_file(&temp_path).await;
+            created_new = true;
             tokio::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -99,8 +102,20 @@ impl crate::downloader::Downloader for DirectDownloader {
             req = req.header(reqwest::header::RANGE, format!("bytes={}-", downloaded));
         }
 
-        let resp = req.send().await.map_err(DownloadError::from)?;
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                // 超时/网络错误：若本次新建的 .part 仍为空，清理避免堆积垃圾文件
+                if created_new && downloaded == 0 {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                }
+                return Err(DownloadError::from(e));
+            }
+        };
         if !resp.status().is_success() {
+            if created_new && downloaded == 0 {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+            }
             return Err(DownloadError::Network(format!("HTTP {}", resp.status())));
         }
 
@@ -133,7 +148,6 @@ impl crate::downloader::Downloader for DirectDownloader {
 
         while let Some(chunk) = stream.next().await {
             if cancel.is_cancelled() {
-                let _ = tokio::fs::remove_file(&temp_path).await;
                 return Err(DownloadError::Canceled);
             }
 

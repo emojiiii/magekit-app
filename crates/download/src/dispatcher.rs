@@ -36,13 +36,17 @@ impl DownloadClient {
             registry.register(YtDlpDownloader::default());
         }
 
-        if let Some(path) = ffmpeg_path {
+        if let Some(path) = ffmpeg_path.clone() {
             registry.register(FfmpegDownloader::new(path));
         } else {
             registry.register(FfmpegDownloader::default());
         }
 
-        registry.register(HlsDashDownloader::default());
+        if let Some(path) = ffmpeg_path {
+            registry.register(HlsDashDownloader::new(path));
+        } else {
+            registry.register(HlsDashDownloader::default());
+        }
         Self { registry }
     }
 
@@ -80,7 +84,32 @@ impl DownloadClient {
         tracing::info!("  └─ 策略: {:?}", request.strategy);
 
         if matches!(request.strategy, DownloadStrategy::Auto) {
-            // 简单自动策略：先 ytdlp，失败再尝试 direct（仅对直链场景有效）。
+            // 简单自动策略：
+            // - m3u8/mpd 优先走 hls_dash（支持分段与 AES-128）
+            // - 其余先 ytdlp，失败再尝试 direct（仅对直链场景有效）。
+            if looks_like_manifest(&request.url) {
+                let mut primary = request.clone();
+                primary.strategy = DownloadStrategy::HlsDash;
+
+                let hls = self.registry.get("hls_dash").ok_or_else(|| {
+                    DownloadError::Unsupported("Downloader `hls_dash` not found".into())
+                })?;
+
+                return hls.download(primary, callback, cancel).await;
+            }
+
+            // 无后缀/被隐藏的 manifest：做一次轻量探测，避免误走 ytdlp
+            if probe_manifest_kind(&request, &cancel).await.is_some() {
+                let mut primary = request.clone();
+                primary.strategy = DownloadStrategy::HlsDash;
+
+                let hls = self.registry.get("hls_dash").ok_or_else(|| {
+                    DownloadError::Unsupported("Downloader `hls_dash` not found".into())
+                })?;
+
+                return hls.download(primary, callback, cancel).await;
+            }
+
             let mut primary = request.clone();
             primary.strategy = DownloadStrategy::YtDlp;
 
@@ -126,4 +155,73 @@ impl DownloadClient {
 
         result
     }
+}
+
+fn looks_like_manifest(url: &url::Url) -> bool {
+    let p = url.path().to_ascii_lowercase();
+    p.ends_with(".m3u8")
+        || p.ends_with(".mpd")
+        || url.as_str().to_ascii_lowercase().contains(".m3u8")
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ManifestKind {
+    Hls,
+    Dash,
+}
+
+async fn probe_manifest_kind(
+    request: &DownloadRequest,
+    cancel: &CancellationToken,
+) -> Option<ManifestKind> {
+    if cancel.is_cancelled() {
+        return None;
+    }
+
+    let mut url = request.url.clone();
+    if !request.extra.query.is_empty() {
+        let mut pairs = url.query_pairs().into_owned().collect::<Vec<_>>();
+        pairs.extend(request.extra.query.clone());
+        url.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+
+    let timeout = request
+        .timeout
+        .unwrap_or_else(|| std::time::Duration::from_secs(5));
+    let client = reqwest::Client::builder().timeout(timeout).build().ok()?;
+
+    let mut req = client.get(url);
+    for (k, v) in &request.extra.headers {
+        req = req.header(k, v);
+    }
+    if let Some(cookie) = &request.extra.cookie {
+        req = req.header(reqwest::header::COOKIE, cookie);
+    }
+    req = req.header(reqwest::header::RANGE, "bytes=0-2047");
+
+    let resp = tokio::select! {
+        _ = cancel.cancelled() => return None,
+        r = req.send() => r.ok()?,
+    };
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let bytes = tokio::select! {
+        _ = cancel.cancelled() => return None,
+        b = resp.bytes() => b.ok()?,
+    };
+
+    let s = String::from_utf8_lossy(&bytes);
+    let trimmed = s
+        .trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+        .to_ascii_uppercase();
+
+    if trimmed.starts_with("#EXTM3U") {
+        return Some(ManifestKind::Hls);
+    }
+    if trimmed.contains("<MPD") {
+        return Some(ManifestKind::Dash);
+    }
+    None
 }

@@ -162,6 +162,9 @@ pub struct LiveRecordConfig {
     /// 检测间隔（秒）。
     #[serde(default = "default_check_interval")]
     pub check_interval: u64,
+    /// 全局自动录制开关（仅影响“检测到开播后自动开始录制”行为，不影响手动录制）。
+    #[serde(default = "default_true")]
+    pub auto_record: bool,
 }
 
 fn default_record_path() -> PathBuf {
@@ -201,6 +204,7 @@ impl Default for LiveRecordConfig {
             retry_count: default_retry_count(),
             reconnect_delay: default_reconnect_delay(),
             check_interval: default_check_interval(),
+            auto_record: default_true(),
         }
     }
 }

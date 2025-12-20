@@ -202,11 +202,20 @@ impl AppState {
                 if let Some(task) = tasks.get_mut(task_id) {
                     // ToolManager 的新下载架构会高频广播 Progress，但不一定单独广播 StateChanged。
                     // 为了保证 UI “状态”与“进度”一致，这里在收到 Progress 时将任务视为下载中。
-                    if !matches!(
+                    if matches!(
                         task.state,
                         TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
-                    ) && !matches!(task.state, TaskState::Downloading)
-                    {
+                    ) {
+                        return;
+                    }
+
+                    // 避免 pause 后的“余震 Progress”把状态从 Paused 拉回 Downloading，导致 UI 仍显示“暂停”按钮
+                    if matches!(task.state, TaskState::Paused) {
+                        return;
+                    }
+
+                    // 兼容部分下载器只推 Progress 不推 StateChanged 的情况：Queued 收到进度即视为开始下载
+                    if matches!(task.state, TaskState::Queued) {
                         task.state = TaskState::Downloading;
                     }
                     if task.started_at.is_none() {

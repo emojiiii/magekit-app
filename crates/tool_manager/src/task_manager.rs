@@ -633,6 +633,44 @@ impl ToolManager {
 
     /// 从持久化存储删除任务
     pub async fn delete_task_status(&self, task_id: TaskId) -> DownloadResult<()> {
+        // 尝试清理临时文件/缓存（不删除最终输出文件）
+        let mut task_url = String::new();
+        let mut output_path = None;
+
+        {
+            let tasks = self.tasks.read().await;
+            if let Some(t) = tasks.get(&task_id) {
+                task_url = t.status.url.clone();
+                output_path = t.status.output_path.clone();
+            }
+        }
+
+        if output_path.is_none() {
+            let persistence = self.persistence.lock().await;
+            if let Some(t) = persistence.get_task(task_id) {
+                task_url = t.status.url.clone();
+                output_path = t.status.output_path.clone();
+            }
+        }
+
+        if let Some(output_path) = output_path {
+            // 直链/合并临时文件：<filename>.part
+            let part_path = download::utils::part_path_for_output(&output_path);
+            let _ = tokio::fs::remove_file(&part_path).await;
+
+            // HLS 缓存目录（新路径）
+            if let Ok(url) = task_url.parse::<url::Url>() {
+                let cache_dir = download::utils::hls_cache_dir(&output_path, &url);
+                let _ = tokio::fs::remove_dir_all(&cache_dir).await;
+            }
+
+            // 向后兼容：历史版本可能使用 `<filename>.parts/`
+            if let Some(file_name) = output_path.file_name().and_then(|s| s.to_str()) {
+                let legacy = output_path.with_file_name(format!("{}.parts", file_name));
+                let _ = tokio::fs::remove_dir_all(&legacy).await;
+            }
+        }
+
         // 从内存中移除
         {
             let mut tasks = self.tasks.write().await;
@@ -837,8 +875,13 @@ impl ToolManager {
                         .and_then(|handle| handle.status.output_path.clone())
                 },
             },
-            strategy: if options.ffmpeg_url.is_some() {
-                DownloadStrategy::Ffmpeg
+            strategy: if let Some(stream_url) = options.ffmpeg_url.as_deref() {
+                // m3u8/mpd 默认走 hls_dash（分段缓存 + 断点续传），其它仍走 ffmpeg
+                if is_streaming_resource(stream_url) {
+                    DownloadStrategy::HlsDash
+                } else {
+                    DownloadStrategy::Ffmpeg
+                }
             } else if options.download_url.is_some() {
                 DownloadStrategy::Direct
             } else {
@@ -885,6 +928,21 @@ impl ToolManager {
                 tracing::info!("✅ 任务 {} 下载成功: {:?}", task_id, outcome.output_path);
             }
             Err(e) => {
+                // 取消（暂停/取消按钮）属于“控制流”，不应被视为失败。
+                if matches!(e, download::DownloadError::Canceled) {
+                    let should_ignore = {
+                        let guard = tasks.read().await;
+                        matches!(
+                            guard.get(&task_id).map(|t| &t.status.state),
+                            Some(TaskState::Paused | TaskState::Cancelled)
+                        )
+                    };
+                    if should_ignore {
+                        tracing::info!("⏸️ 任务 {} 已暂停/取消，忽略取消错误", task_id);
+                        return;
+                    }
+                }
+
                 tracing::error!("❌ 任务 {} 下载失败: {}", task_id, e);
 
                 // 更新任务状态为失败

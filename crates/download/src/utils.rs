@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::{collections::hash_map::DefaultHasher, hash::Hasher, path::Path};
 
 use crate::config::DownloadRequest;
 use crate::error::DownloadResult;
@@ -54,6 +55,31 @@ pub fn resolve_output_path(request: &DownloadRequest, url: &url::Url) -> Downloa
     };
 
     Ok(dir.join(filename))
+}
+
+/// 直链/合并临时文件路径（`<filename>.part`）
+pub fn part_path_for_output(output_path: &Path) -> PathBuf {
+    let file_name = output_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("download.bin");
+    output_path.with_file_name(format!("{}.part", file_name))
+}
+
+/// HLS 分段缓存目录（稳定且尽量避免冲突）
+///
+/// 位置：`<output_dir>/.magekit-hls-cache/<hash>/`
+/// hash 输入包含 url 与 output_path，确保不同输出/不同资源不会互相覆盖。
+pub fn hls_cache_dir(output_path: &Path, url: &url::Url) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(url.as_str().as_bytes());
+    hasher.write(output_path.to_string_lossy().as_bytes());
+    let hash = hasher.finish();
+
+    let output_dir = output_path.parent().unwrap_or_else(|| Path::new("."));
+    output_dir
+        .join(".magekit-hls-cache")
+        .join(format!("{:016x}", hash))
 }
 
 #[cfg(test)]

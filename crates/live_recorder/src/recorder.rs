@@ -245,12 +245,20 @@ impl RecordingSession {
         let mut cmd = create_tokio_command("ffmpeg");
 
         // 添加输入选项
+        cmd.arg("-hide_banner");
+        cmd.arg("-loglevel").arg("warning"); // 降噪，避免 HLS "Opening ..." 刷屏
+        cmd.arg("-nostats");
         cmd.arg("-y"); // 覆盖输出文件
 
         // 重连选项 - 对于直播流很重要
         cmd.arg("-reconnect").arg("1");
+        cmd.arg("-reconnect_at_eof").arg("1");
         cmd.arg("-reconnect_streamed").arg("1");
         cmd.arg("-reconnect_delay_max").arg("5");
+
+        // IO 超时（microseconds），避免断流后长时间卡住
+        let rw_timeout_us = self.config.timeout.saturating_mul(1_000_000).max(5_000_000);
+        cmd.arg("-rw_timeout").arg(rw_timeout_us.to_string());
 
         // 添加请求头（必须在 -i 之前）
         // 注意：每个 header 后面都需要 \r\n，包括最后一个
@@ -302,6 +310,9 @@ impl RecordingSession {
         match output_ext {
             "mp4" => {
                 cmd.arg("-f").arg("mp4");
+                // mp4 长时间录制：使用 fragmented mp4，避免异常退出导致文件不可用
+                cmd.arg("-movflags")
+                    .arg("+frag_keyframe+empty_moov+default_base_moof");
             }
             "ts" => {
                 cmd.arg("-f").arg("mpegts");
@@ -315,8 +326,9 @@ impl RecordingSession {
         }
 
         cmd.arg(&self.output_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            // 不要 pipe stdout/stderr：如果不消费 pipe，ffmpeg 会因为缓冲区写满而卡住（进程还在，但文件不再增长）
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true); // 当任务被 drop 时自动杀死进程
 
         info!("🎬 FFmpeg 命令已构建，开始录制...");

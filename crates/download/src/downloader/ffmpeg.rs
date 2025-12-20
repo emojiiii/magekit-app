@@ -10,6 +10,7 @@ use crate::config::DownloadRequest;
 use crate::error::{DownloadError, DownloadResult};
 use crate::progress::{DownloadCallback, DownloadOutcome, DownloadProgress};
 use crate::utils::resolve_output_path;
+use m3u8_rs::{MasterPlaylist, Playlist, VariantStream};
 
 /// ffmpeg 下载器（拉流/封装场景）
 pub struct FfmpegDownloader {
@@ -45,6 +46,8 @@ impl crate::downloader::Downloader for FfmpegDownloader {
     ) -> DownloadResult<DownloadOutcome> {
         callback.on_progress(DownloadProgress::preparing());
 
+        let total_duration_secs = probe_m3u8_total_duration_secs(&request, &cancel).await;
+
         let output_path = resolve_output_path(&request, &request.url)?;
         tracing::info!("📁 解析输出路径: {:?}", output_path);
         tracing::info!("📝 输出文件扩展名: {:?}", output_path.extension());
@@ -70,6 +73,9 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         tracing::info!("📁 ffmpeg 路径: {:?}", self.ffmpeg_path);
 
         let mut cmd = Command::new(&self.ffmpeg_path);
+        cmd.arg("-hide_banner");
+        // 降噪：避免刷屏的 hls “Opening ... for reading” 日志
+        cmd.arg("-loglevel").arg("warning");
         cmd.arg("-y");
         if !header_blob.is_empty() {
             cmd.arg("-headers").arg(&header_blob);
@@ -151,6 +157,7 @@ impl crate::downloader::Downloader for FfmpegDownloader {
 
         let mut last_size: u64 = 0;
         let mut last_time_secs: f64 = 0.0;
+        let mut estimated_total_bytes: Option<u64> = None;
 
         // 🔧 同时处理stderr（错误日志）
         let stderr_handle = {
@@ -169,7 +176,7 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                         {
                             tracing::error!("[ffmpeg stderr] {}", line);
                         } else {
-                            tracing::info!("[ffmpeg stderr] {}", line);
+                            tracing::debug!("[ffmpeg stderr] {}", line);
                         }
                     }
                 }
@@ -185,7 +192,6 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                 _ = cancel.cancelled() => {
                     tracing::warn!("⚠️ 下载被取消");
                     let _ = child.kill().await;
-                    let _ = tokio::fs::remove_file(&output_path).await;
                     return Err(DownloadError::Canceled);
                 }
                 line = stdout.next_line() => {
@@ -222,9 +228,26 @@ impl crate::downloader::Downloader for FfmpegDownloader {
 
                             // 发送进度
                             if last_size > 0 {
+                                // ffmpeg 不会提供总大小：如果是 VOD m3u8，可用 out_time / total_duration 估算 total_bytes
+                                let total_bytes = total_duration_secs.and_then(|total_secs| {
+                                    if total_secs <= 0.0 || last_time_secs <= 0.0 {
+                                        return None;
+                                    }
+                                    let ratio = (last_time_secs / total_secs).clamp(0.0, 1.0);
+                                    if ratio <= 0.0 {
+                                        return None;
+                                    }
+                                    let estimate = ((last_size as f64) / ratio).ceil() as u64;
+                                    let estimate = estimate.max(last_size);
+                                    let prev = estimated_total_bytes.unwrap_or(0);
+                                    let merged = prev.max(estimate);
+                                    estimated_total_bytes = Some(merged);
+                                    Some(merged)
+                                });
+
                                 callback.on_progress(DownloadProgress::downloading(
                                     last_size,
-                                    None,
+                                    total_bytes,
                                     speed,
                                 ));
                             }
@@ -339,4 +362,90 @@ pub fn parse_timestamp_to_secs(ts: &str) -> Option<f64> {
     let m = parts[1].parse::<f64>().ok()?;
     let s = parts[2].parse::<f64>().ok()?;
     Some(h * 3600.0 + m * 60.0 + s)
+}
+
+async fn probe_m3u8_total_duration_secs(
+    request: &DownloadRequest,
+    cancel: &CancellationToken,
+) -> Option<f64> {
+    let url_str = request.url.as_str();
+    if !request.url.path().ends_with(".m3u8") && !url_str.contains(".m3u8") {
+        return None;
+    }
+
+    let manifest_text = fetch_text(&request.url, request, cancel).await.ok()?;
+    let parsed = m3u8_rs::parse_playlist_res(manifest_text.as_bytes()).ok()?;
+
+    let media = match parsed {
+        Playlist::MasterPlaylist(master) => {
+            let variant = pick_variant(&master)?;
+            let uri = request.url.join(variant.uri.as_str()).ok()?;
+            let text = fetch_text(&uri, request, cancel).await.ok()?;
+            let parsed_media = m3u8_rs::parse_playlist_res(text.as_bytes()).ok()?;
+            match parsed_media {
+                Playlist::MediaPlaylist(m) => m,
+                _ => return None,
+            }
+        }
+        Playlist::MediaPlaylist(m) => m,
+    };
+
+    let total_secs: f64 = media.segments.iter().map(|s| s.duration as f64).sum();
+    if total_secs > 0.0 {
+        Some(total_secs)
+    } else {
+        None
+    }
+}
+
+fn pick_variant(master: &MasterPlaylist) -> Option<&VariantStream> {
+    master.variants.iter().max_by_key(|v| v.bandwidth)
+}
+
+async fn fetch_text(
+    url: &url::Url,
+    request: &DownloadRequest,
+    cancel: &CancellationToken,
+) -> DownloadResult<String> {
+    let bytes = fetch_bytes(url, request, cancel).await?;
+    String::from_utf8(bytes)
+        .map_err(|e| DownloadError::Internal(format!("utf8 decode playlist: {}", e)))
+}
+
+async fn fetch_bytes(
+    url: &url::Url,
+    request: &DownloadRequest,
+    cancel: &CancellationToken,
+) -> DownloadResult<Vec<u8>> {
+    if cancel.is_cancelled() {
+        return Err(DownloadError::Canceled);
+    }
+
+    let mut client_builder = reqwest::Client::builder();
+    if let Some(timeout) = request.timeout {
+        client_builder = client_builder.timeout(timeout);
+    }
+    let client = client_builder
+        .build()
+        .map_err(|e| DownloadError::Internal(format!("HTTP client build failed: {}", e)))?;
+
+    let mut req = client.get(url.clone());
+    for (k, v) in &request.extra.headers {
+        req = req.header(k, v);
+    }
+    if let Some(cookie) = &request.extra.cookie {
+        req = req.header(reqwest::header::COOKIE, cookie);
+    }
+
+    let resp = req.send().await.map_err(DownloadError::from)?;
+    if !resp.status().is_success() {
+        return Err(DownloadError::Network(format!("HTTP {}", resp.status())));
+    }
+
+    if cancel.is_cancelled() {
+        return Err(DownloadError::Canceled);
+    }
+
+    let bytes = resp.bytes().await.map_err(DownloadError::from)?;
+    Ok(bytes.to_vec())
 }

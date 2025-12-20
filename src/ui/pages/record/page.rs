@@ -99,6 +99,18 @@ pub struct RecordingPage {
 }
 
 impl RecordingPage {
+    fn format_record_duration(seconds: u64) -> String {
+        let hours = seconds / 3600;
+        let minutes = (seconds % 3600) / 60;
+        let secs = seconds % 60;
+
+        if hours > 0 {
+            format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+        } else {
+            format!("{:02}:{:02}", minutes, secs)
+        }
+    }
+
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 创建 URL 输入框
         let url_input = cx.new(|cx| {
@@ -152,7 +164,6 @@ impl RecordingPage {
 
     /// 启动监控任务（定期检查房间状态）
     fn start_monitoring_task(&self, cx: &mut Context<Self>) {
-        let check_interval = self.record_config.check_interval;
         let check_running = self.check_task_running.clone();
 
         // 检查是否已在运行
@@ -161,10 +172,28 @@ impl RecordingPage {
         }
         *check_running.write() = true;
 
-        tracing::debug!("🚀 启动监控任务，检测间隔: {} 秒", check_interval);
+        tracing::debug!("🚀 启动监控任务");
 
-        // 立即执行一次检测
-        self.check_all_rooms(cx);
+        cx.spawn(async move |this, cx| {
+            loop {
+                // 组件被销毁时 update 会失败，用于退出后台循环
+                let result = this.update(cx, |this, cx| {
+                    this.check_all_rooms(cx);
+                    this.record_config.check_interval.max(10)
+                });
+
+                let interval_secs = match result {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+
+                smol::Timer::after(std::time::Duration::from_secs(interval_secs)).await;
+            }
+
+            *check_running.write() = false;
+            tracing::debug!("🛑 监控任务已退出");
+        })
+        .detach();
     }
 
     /// 检查所有房间状态
@@ -285,15 +314,20 @@ impl RecordingPage {
                                 this.save_config();
                             }
 
-                            // 如果开启了自动录制且变为直播状态，自动开始录制
-                            let auto_record_enabled = this
+                            // 如果开启了自动录制且变为直播状态，自动开始录制（自动录制与监控分离）
+                            let global_auto_record_enabled = this.record_config.auto_record;
+                            let room_auto_record_enabled = this
                                 .monitored_rooms
                                 .iter()
                                 .find(|r| r.id == room_id)
                                 .map(|r| r.auto_record)
                                 .unwrap_or(false);
 
-                            if is_live && auto_record_enabled && !is_recording {
+                            if is_live
+                                && global_auto_record_enabled
+                                && room_auto_record_enabled
+                                && !is_recording
+                            {
                                 tracing::info!("🎬 自动录制检测到直播，开始录制: {}", room_id);
                                 this.start_recording_background(room_id, cx);
                             }
@@ -406,30 +440,32 @@ impl RecordingPage {
 
         tracing::info!("🚀 开始添加直播间: {}", url);
 
-        // 从 URL 推断平台
+        // 从 URL 推断平台（使用稳定的 platform id，UI 再做展示映射）
         let platform = if url.contains("douyin") || url.contains("live.douyin") {
-            "抖音直播".to_string()
+            "douyin".to_string()
         } else if url.contains("bilibili") || url.contains("live.bilibili") {
-            "B站直播".to_string()
+            "bilibili".to_string()
         } else if url.contains("huya") {
-            "虎牙直播".to_string()
+            "huya".to_string()
         } else if url.contains("douyu") {
-            "斗鱼直播".to_string()
+            "douyu".to_string()
         } else if url.contains("kuaishou") || url.contains("live.kuaishou") {
-            "快手直播".to_string()
+            "kuaishou".to_string()
         } else if url.contains("soop") || url.contains("afreeca") {
-            "SOOP".to_string()
+            "soop".to_string()
         } else {
-            "未知平台".to_string()
+            "unknown".to_string()
         };
 
         // 立即创建房间并添加到列表
-        let monitored_room = MonitoredRoom::new(
+        let mut monitored_room = MonitoredRoom::new(
             url.clone(),
             platform,
             String::new(),           // room_id 稍后获取
             "获取中...".to_string(), // anchor_name 稍后获取
         );
+        // 录制策略：默认只监控，不自动录制（避免“仅想看状态却自动开录”的误触发）
+        monitored_room.auto_record = false;
 
         let room_id = monitored_room.id;
 
@@ -702,7 +738,8 @@ impl RecordingPage {
             },
             segment_duration: self.record_config.segment_duration,
             retry_count: self.record_config.retry_count,
-            timeout: self.record_config.reconnect_delay,
+            // 录制的网络 IO 超时（秒）：避免短暂抖动导致误判断流
+            timeout: self.record_config.reconnect_delay.max(30),
             max_duration: None,
             include_danmaku: false,
             proxy: None,
@@ -1011,7 +1048,8 @@ impl RecordingPage {
             },
             segment_duration: self.record_config.segment_duration,
             retry_count: self.record_config.retry_count,
-            timeout: self.record_config.reconnect_delay,
+            // 录制的网络 IO 超时（秒）：避免短暂抖动导致误判断流
+            timeout: self.record_config.reconnect_delay.max(30),
             max_duration: None,
             include_danmaku: false,
             proxy: None,
@@ -1096,6 +1134,15 @@ impl RecordingPage {
     fn toggle_monitoring(&mut self, room_id: Uuid, cx: &mut Context<Self>) {
         if let Some(room) = self.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
             room.monitoring_enabled = !room.monitoring_enabled;
+            self.save_config();
+            cx.notify();
+        }
+    }
+
+    /// 切换自动录制（仅影响“监控检测到开播后自动开始录制”，不影响手动点击录制）
+    fn toggle_auto_record(&mut self, room_id: Uuid, cx: &mut Context<Self>) {
+        if let Some(room) = self.monitored_rooms.iter_mut().find(|r| r.id == room_id) {
+            room.auto_record = !room.auto_record;
             self.save_config();
             cx.notify();
         }
@@ -1272,6 +1319,7 @@ impl RecordingPage {
         let selected_format = Arc::new(RwLock::new(format_index));
         let selected_quality = Arc::new(RwLock::new(quality_index));
         let auto_transcode = Arc::new(RwLock::new(config.auto_transcode));
+        let auto_record = Arc::new(RwLock::new(config.auto_record));
 
         // 在 open_dialog 之前创建所有 InputState
         let interval_input = cx.new(|cx| {
@@ -1314,11 +1362,13 @@ impl RecordingPage {
         let selected_format_clone = selected_format.clone();
         let selected_quality_clone = selected_quality.clone();
         let auto_transcode_clone = auto_transcode.clone();
+        let auto_record_clone = auto_record.clone();
 
         window.open_dialog(cx, move |dialog, _window, cx| {
             let selected_format = selected_format.clone();
             let selected_quality = selected_quality.clone();
             let auto_transcode = auto_transcode.clone();
+            let auto_record = auto_record.clone();
             let theme = cx.theme();
             let border_color = theme.border;
             let muted_fg = theme.muted_foreground;
@@ -1532,6 +1582,43 @@ impl RecordingPage {
                                                         )
                                                 )
                                         )
+                                        // 自动录制（全局开关）
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .child("自动录制"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(muted_fg)
+                                                                .child("检测到开播时自动开始录制（与监控分离）"),
+                                                        ),
+                                                )
+                                                .child({
+                                                    let auto_record = auto_record.clone();
+                                                    let checked = *auto_record.read();
+                                                    Switch::new("record-auto-record")
+                                                        .checked(checked)
+                                                        .on_click({
+                                                            let auto_record = auto_record.clone();
+                                                            move |checked: &bool, _window, _cx| {
+                                                                *auto_record.write() = *checked;
+                                                            }
+                                                        })
+                                                }),
+                                        )
                                         // 重试设置
                                         .child(
                                             div()
@@ -1542,7 +1629,7 @@ impl RecordingPage {
                                                     div()
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
-                                                        .child("重连设置")
+                                                        .child("重试/超时设置")
                                                 )
                                                 .child(
                                                     div()
@@ -1575,7 +1662,7 @@ impl RecordingPage {
                                                                     div()
                                                                         .text_sm()
                                                                         .text_color(muted_fg)
-                                                                        .child("间隔")
+                                                                        .child("超时")
                                                                 )
                                                                 .child(
                                                                     div()
@@ -1692,6 +1779,7 @@ impl RecordingPage {
                     let selected_format = selected_format_clone.clone();
                     let selected_quality = selected_quality_clone.clone();
                     let auto_transcode = auto_transcode_clone.clone();
+                    let auto_record = auto_record_clone.clone();
                     let this = this.clone();
 
                     move |_, _, _, _| {
@@ -1703,6 +1791,7 @@ impl RecordingPage {
                         let selected_format = selected_format.clone();
                         let selected_quality = selected_quality.clone();
                         let auto_transcode = auto_transcode.clone();
+                        let auto_record = auto_record.clone();
                         let this = this.clone();
 
                         vec![
@@ -1722,6 +1811,7 @@ impl RecordingPage {
                                     let format_idx = *selected_format.read();
                                     let quality_idx = *selected_quality.read();
                                     let transcode = *auto_transcode.read();
+                                    let global_auto_record = *auto_record.read();
                                     let format = format_options[format_idx].to_string();
                                     let quality = quality_options[quality_idx].clone();
                                     // 从输入框读取值
@@ -1739,6 +1829,7 @@ impl RecordingPage {
                                         page.record_config.record_format = format;
                                         page.record_config.quality = quality;
                                         page.record_config.auto_transcode = transcode;
+                                        page.record_config.auto_record = global_auto_record;
                                         page.record_config.check_interval = interval;
                                         page.record_config.segment_duration = segment;
                                         page.record_config.retry_count = retry;
@@ -1792,7 +1883,14 @@ impl RecordingPage {
         let is_live = state.status == LiveRoomStatus::Live;
         let is_recording = state.is_recording;
         let is_monitoring = room.monitoring_enabled;
+        let is_global_auto_record = self.record_config.auto_record;
+        let is_room_auto_record = room.auto_record;
         let cover_url = state.cover_url.clone();
+        let recording_duration_label = state
+            .current_task
+            .as_ref()
+            .map(|t| Self::format_record_duration(t.duration))
+            .unwrap_or_else(|| "00:00".to_string());
         // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
         let title = state.title.as_ref().map(|t| truncate_string(t, 50));
         let anchor_name = truncate_string(&room.anchor_name, 30);
@@ -1885,6 +1983,7 @@ impl RecordingPage {
                     })
                     // 录制中指示器
                     .when(is_recording, |el| {
+                        let recording_duration_label = recording_duration_label.clone();
                         el.child(
                             div()
                                 .absolute()
@@ -1904,7 +2003,12 @@ impl RecordingPage {
                                         .bg(gpui::rgb(0xef4444))
                                         .rounded_full(),
                                 )
-                                .child(div().text_xs().text_color(gpui::white()).child("REC")),
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::white())
+                                        .child(format!("REC {}", recording_duration_label)),
+                                ),
                         )
                     }),
             )
@@ -2064,6 +2168,24 @@ impl RecordingPage {
                             .ghost()
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.toggle_monitoring(room_id, cx);
+                            })),
+                    )
+                    // 自动录制开关（与“监控”分离：仅在检测到开播时自动触发录制）
+                    .child(
+                        Button::new(SharedString::from(format!("auto-record-{}", room_id)))
+                            .label(if is_global_auto_record {
+                                if is_room_auto_record {
+                                    "自动录制:开"
+                                } else {
+                                    "自动录制:关"
+                                }
+                            } else {
+                                "自动录制:全局关"
+                            })
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.toggle_auto_record(room_id, cx);
                             })),
                     )
                     // 刷新按钮
