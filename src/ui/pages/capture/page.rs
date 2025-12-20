@@ -469,9 +469,7 @@ impl Render for CapturePage {
                         .right_0()
                         .bottom_0()
                         .w(px(12.0))
-                        .child(
-                            Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical),
-                        ),
+                        .child(Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical)),
                 )
                 .into_any_element()
         };

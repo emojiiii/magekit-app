@@ -45,6 +45,15 @@ pub enum RecorderError {
     #[error("Recording error: {0}")]
     RecordingError(String),
 
+    #[error("录制启动超时：{timeout_secs} 秒内未写入任何数据{details}")]
+    RecordingStartupTimeout { timeout_secs: u64, details: String },
+
+    #[error("录制卡住：{reason}{details}")]
+    RecordingStalled { reason: String, details: String },
+
+    #[error("录制预检失败：{reason}{details}")]
+    RecordingPreflightFailed { reason: String, details: String },
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 

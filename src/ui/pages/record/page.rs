@@ -224,7 +224,8 @@ impl RecordingPage {
                             );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 if let Some(ref mut task) = state.current_task {
-                                    task.status = magekit_shared::types::RecordingTaskStatus::Completed;
+                                    task.status =
+                                        magekit_shared::types::RecordingTaskStatus::Completed;
                                     task.output_path = output_path.clone();
                                 }
                             }
@@ -236,9 +237,10 @@ impl RecordingPage {
                             );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 if let Some(ref mut task) = state.current_task {
-                                    task.status = magekit_shared::types::RecordingTaskStatus::Failed(
-                                        stderr.trim().to_string(),
-                                    );
+                                    task.status =
+                                        magekit_shared::types::RecordingTaskStatus::Failed(
+                                            stderr.trim().to_string(),
+                                        );
                                 }
                             }
                         }
@@ -307,11 +309,7 @@ impl RecordingPage {
 
         s = s.trim().trim_matches('.').to_string();
 
-        if s.is_empty() {
-            "_".to_string()
-        } else {
-            s
-        }
+        if s.is_empty() { "_".to_string() } else { s }
     }
 
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -858,9 +856,7 @@ impl RecordingPage {
         let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S_%3f");
         let filename = format!(
             "{}_{}.{}",
-            safe_anchor_name,
-            timestamp,
-            self.record_config.record_format
+            safe_anchor_name, timestamp, self.record_config.record_format
         );
 
         anchor_dir.join(filename)
@@ -982,9 +978,13 @@ impl RecordingPage {
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
-                            state.current_task = None;
                             state.last_error = Some(error_msg.clone());
                             state.recording_handle = None;
+                            if let Some(ref mut task) = state.current_task {
+                                task.status = magekit_shared::types::RecordingTaskStatus::Failed(
+                                    error_msg.clone(),
+                                );
+                            }
                         }
                         cx.notify();
                     });
@@ -998,8 +998,13 @@ impl RecordingPage {
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.is_recording = false;
-                            state.current_task = None;
                             state.recording_handle = None;
+                            state.last_error = Some(error_msg.clone());
+                            if let Some(ref mut task) = state.current_task {
+                                task.status = magekit_shared::types::RecordingTaskStatus::Failed(
+                                    error_msg.clone(),
+                                );
+                            }
                         }
                         cx.notify();
                     });
@@ -1101,7 +1106,10 @@ impl RecordingPage {
             .detach();
         }
 
-        window.push_notification(Notification::info(&format!("正在停止录制：{}", anchor_name)), cx);
+        window.push_notification(
+            Notification::info(&format!("正在停止录制：{}", anchor_name)),
+            cx,
+        );
         cx.notify();
     }
 
@@ -1396,8 +1404,12 @@ impl RecordingPage {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = status;
                             state.last_error = None;
-                            state.cover_url = cover_url.clone();
-                            state.title = title.clone();
+                            if title.is_some() {
+                                state.title = title.clone();
+                            }
+                            if cover_url.is_some() {
+                                state.cover_url = cover_url.clone();
+                            }
                         }
 
                         // 更新持久化的房间信息（缓存标题、封面等）
@@ -2145,13 +2157,13 @@ impl RecordingPage {
 
         // 平台颜色映射
         let platform_color = match room.platform.as_str() {
-            "douyin" | "抖音直播" => gpui::rgb(0x000000), // 黑色
-            "bilibili" | "B站直播" => gpui::rgb(0xfb7299), // B站粉
-            "huya" | "虎牙直播" => gpui::rgb(0xff9600),   // 虎牙橙
-            "douyu" | "斗鱼直播" => gpui::rgb(0xff5d23),  // 斗鱼橙
+            "douyin" | "抖音直播" => gpui::rgb(0x000000),   // 黑色
+            "bilibili" | "B站直播" => gpui::rgb(0xfb7299),  // B站粉
+            "huya" | "虎牙直播" => gpui::rgb(0xff9600),     // 虎牙橙
+            "douyu" | "斗鱼直播" => gpui::rgb(0xff5d23),    // 斗鱼橙
             "kuaishou" | "快手直播" => gpui::rgb(0xff4906), // 快手橙
-            "soop" => gpui::rgb(0x5b6edc),     // SOOP 蓝紫
-            _ => gpui::rgb(0x6366f1),          // 默认紫色
+            "soop" => gpui::rgb(0x5b6edc),                  // SOOP 蓝紫
+            _ => gpui::rgb(0x6366f1),                       // 默认紫色
         };
 
         // 平台显示名称
