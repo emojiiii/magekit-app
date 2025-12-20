@@ -1,10 +1,17 @@
-# MageKit AI 开发指南
+# MageKit AI 开发指南（重构后）
 
-本文档旨在帮助 AI 助手理解 MageKit 项目的架构、技术栈和开发规范。
+本文档用于在重构后的代码中快速定位核心入口与数据流，避免把旧的模块边界/流程带入当前实现。
+
+更详细内容请参考：
+
+- `readme.md`：产品介绍、构建/运行、面向用户的使用说明
+- `docs/gui_app.md`：GUI（根 crate）入口与关键模块
+- `crates/*/README.md`：各 crate 的职责与 API
+- `CLAUDE.md`：仓库工作流与架构说明（偏工程化、含命令）
 
 ## 项目概述
 
-MageKit 是一个基于 Rust 的跨平台视频下载器应用，使用 GPUI 框架构建原生 GUI。核心功能是通过 yt-dlp 下载各种网站的视频。
+MageKit 是一个基于 Rust 的跨平台桌面应用（GPUI），提供视频下载、任务队列、工具管理（yt-dlp/ffmpeg）、平台解析（自研 + yt-dlp 回退）、网页资源嗅探与直播录制能力。
 
 ## 技术栈
 
@@ -21,21 +28,40 @@ MageKit 是一个基于 Rust 的跨平台视频下载器应用，使用 GPUI 框
 | **tokio**          | 1.0          | 异步运行时                    |
 | **smol**           | 2            | 轻量级异步（与 GPUI 配合）    |
 
-### 外部工具路径
+### Workspace crates（内置模块）
 
-工具路径由 `crates/shared/src/utils.rs` 中的函数动态获取：
+| crate | 主要职责 |
+| --- | --- |
+| `magekit-app` | GPUI UI、路由、`AppState`；只做“调度与展示” |
+| `magekit-shared` | 共享类型/配置/常量/路径工具（`AppConfig`、`TaskStatus`、`DownloadOptions` 等） |
+| `magekit-tool-manager` | 工具与任务统一管理层：队列/并发/持久化/事件广播 |
+| `magekit-download` | 下载执行层（直链/yt-dlp/ffmpeg/HLS-DASH），提供进度事件与取消能力 |
+| `magekit-extractor` | 平台解析层：抖音/TikTok 自研优先，其余平台优先走 yt-dlp |
+| `magekit-bytedance` | 抖音 Web API 与签名（A-Bogus/X-Bogus），供解析与录制复用 |
+| `magekit-capture` | 网页资源嗅探：静态扫描 + CDP 网络监听，事件流输出资源 |
+| `live_recorder` | 直播录制：平台抽象、录制 handle、进度查询 |
+| `xbogus` | X-Bogus/AB-Sign 签名实现 |
 
-| 平台        | 路径                                             |
-| ----------- | ------------------------------------------------ |
-| **macOS**   | `~/Library/Application Support/MageKit/tools/`   |
-| **Windows** | `C:\Users\<User>\AppData\Roaming\MageKit\tools\` |
-| **Linux**   | `~/.local/share/MageKit/tools/`                  |
+### 配置与工具目录
 
-相关函数：
+跨平台目录解析位于 `crates/shared/src/utils.rs`：
 
-- `get_app_data_dir()` - 应用数据目录
-- `get_tools_dir()` - 工具目录
-- `get_app_config_dir()` - 配置目录（使用 `dirs::config_dir()`）
+- 配置目录：`get_app_config_dir()` → `dirs::config_dir()/MageKit/`（主配置：`config.toml`）
+- 数据目录：`get_app_data_dir()` → `dirs::data_dir()/MageKit/`
+- 工具目录：`get_tools_dir()` → `<data_dir>/tools/`
+
+常见路径示例（以 `dirs` 实际返回为准）：
+
+| 平台 | 工具目录 |
+| --- | --- |
+| Windows | `C:/Users/<User>/AppData/Roaming/MageKit/tools/` |
+| macOS | `~/Library/Application Support/MageKit/tools/` |
+| Linux | `~/.local/share/MageKit/tools/` |
+
+工具解析优先级（与 UI/ToolManager 的处理一致）：
+
+1. 应用内安装（`magekit_tool_manager::ToolStorage`）
+2. 应用 tools 目录 + 系统 PATH（`magekit_shared::resolve_yt_dlp_path()` / `resolve_ffmpeg_path()`）
 
 ## 项目结构
 
@@ -48,25 +74,40 @@ magekit-app/
 │   ├── ui/                 # 页面与组件
 │   └── theme/              # 主题相关
 ├── crates/                 # 其他库 crates
-│   ├── shared/             # 共享类型（VideoInfo, TaskStatus 等）
-│   ├── tool_manager/       # 工具管理/下载器
+│   ├── shared/             # 共享类型/配置/路径工具
+│   ├── tool_manager/       # 工具管理 + 任务队列/持久化/事件
+│   ├── download/           # 下载执行层（直链/yt-dlp/ffmpeg/HLS-DASH）
+│   ├── extractor/          # 平台解析层（自研 + yt-dlp 回退）
+│   ├── bytedance/          # 抖音 API + 签名
+│   ├── capture/            # CDP 嗅探库
 │   ├── live_recorder/      # 直播录制/平台适配
 │   └── xbogus/             # X-Bogus/AB-Sign 签名
-├── themes/                 # 主题文件目录
-└── docs/                   # 文档与说明
+├── themes/                 # 主题文件目录（运行时热加载，当前为 JSON）
+├── assets/                 # 图片/资源
+├── docs/                   # 文档与说明
+├── crawlers/               # Python 爬虫/原型（未与 GUI 强耦合）
+└── py_demo/                # Python demo/对照实现
 ```
+
+## 关键入口（推荐阅读顺序）
+
+- `src/main.rs`：Application 初始化（日志、主题热加载、router、打开主窗口）
+- `src/ui/main_window.rs`：路由与页面缓存（home/tasks/tools/settings/channel/record/capture）
+- `src/app/state.rs`：`AppState`（Tokio runtime、`ToolManager`、配置、任务缓存、事件通道）
+- `src/app/download.rs` / `src/app/tools.rs` / `src/app/capture.rs`：GUI 调度包装（不承载核心业务）
+- `crates/tool_manager/src/task_manager.rs`：任务队列/并发/持久化/事件广播的核心实现
 
 ## 运行项目
 
 ```bash
 # 开发模式运行
-cargo run
+cargo run --bin magekit
 
 # 编译
 cargo build
 
 # Release 编译
-cargo build --release
+cargo build --release --bin magekit
 ```
 
 ## GPUI 开发要点
@@ -164,7 +205,9 @@ cx.spawn(async move |this, cx| {
 
 ### 主题
 
-使用 gpui-component 的主题系统：
+主题文件位于 `themes/`，启动时通过 `gpui_component::ThemeRegistry::watch_dir(...)` 监听目录并热加载。
+
+UI 使用 gpui-component 的主题系统：
 
 ```rust
 let theme = cx.theme();
@@ -180,13 +223,12 @@ div()
 
 ```rust
 pub struct AppState {
-    pub tool_manager: Arc<ToolManager>,     // 工具管理器
-    pub config: Arc<RwLock<AppConfig>>,     // 应用配置
-    pub tasks: Arc<RwLock<HashMap<TaskId, TaskStatus>>>,  // 任务列表
-    pub event_tx: mpsc::Sender<AppEvent>,   // 事件发送器
-    pub event_rx: mpsc::Receiver<AppEvent>, // 事件接收器
-    pub runtime: Arc<Runtime>,              // Tokio 运行时
-    pub download_cancel_flags: Arc<Mutex<HashMap<TaskId, Arc<AtomicBool>>>>, // 取消标志
+    pub tool_manager: Arc<ToolManager>,      // 工具/任务统一入口（下载逻辑由 ToolManager 承载）
+    pub config: Arc<RwLock<AppConfig>>,      // 应用配置
+    pub tasks: Arc<RwLock<HashMap<TaskId, TaskStatus>>>, // 任务状态缓存（事件驱动更新，UI 侧主要只读）
+    pub event_tx: mpsc::Sender<AppEvent>,    // 应用事件发送器（通知 UI）
+    pub event_rx: mpsc::Receiver<AppEvent>,  // 应用事件接收器
+    pub runtime: Arc<Runtime>,               // Tokio 运行时（提供给 GUI 层做异步桥接）
 }
 ```
 
@@ -194,38 +236,17 @@ AppState 通过 `GlobalAppState` 在 GPUI 中全局共享。
 
 ### 下载流程
 
-1. 用户输入 URL
-2. 调用 `tool_manager.get_video_info(url)` 获取视频信息
-3. 用户选择格式/画质
-4. 调用 `app_state.download_video_in_background()` 开始下载
-5. 下载在后台线程执行，通过进度回调更新 UI
-6. 下载完成后更新任务状态
+1. 用户输入 URL（HomePage）
+2. `AppState::get_video_info_in_background(url)` → `ToolManager::get_video_info(...)`（解析由 `magekit-extractor` 负责）
+3. 用户选择格式/输出目录/附加选项
+4. `AppState::start_download_in_background_with_info(...)` → `ToolManager::start_download_with_info(...)`
+5. `ToolManager` 内部调用 `magekit-download` 执行下载（按策略选择 yt-dlp/ffmpeg/直链/HLS-DASH 等）
+6. `ToolManagerEvent`（broadcast）驱动 AppState 更新 `tasks` 缓存，UI 侧轮询/订阅刷新展示
 
-### yt-dlp 调用
+### 任务控制
 
-```rust
-let mut cmd = std::process::Command::new(&yt_dlp_path);
-cmd.arg(&url)
-   .arg("--format").arg(&format_id)
-   .arg("--output").arg(&output_template)
-   .arg("--newline")      // 逐行输出进度
-   .arg("--progress")
-   .arg("--no-mtime");
-
-// 获取视频信息
-cmd.arg("-j")  // JSON 输出
-   .arg("--flat-playlist");  // 不展开播放列表
-```
-
-### 进度解析
-
-yt-dlp 输出格式：
-
-```
-[download]  45.2% of ~12.34MiB at 1.23MiB/s ETA 00:05
-```
-
-使用正则/字符串解析提取进度、速度、大小。
+- 暂停/恢复/取消：通过 `AppState` 的同步包装方法委托给 `ToolManager`（`pause_download` / `resume_download` / `cancel_download`）
+- 删除：先取消，再从持久化中删除任务状态（`delete_task_status`），并从 AppState 本地缓存移除
 
 ## 页面说明
 
@@ -254,6 +275,21 @@ yt-dlp 输出格式：
 - 主题选择
 - 其他配置
 
+### ChannelPage（频道页）
+
+- 频道/用户主页信息获取（批量/订阅类场景）
+- 支持将频道内视频加入下载队列
+
+### RecordingPage（录制页）
+
+- 直播录制入口（依赖 `live_recorder`）
+- 展示录制状态/时长/输出路径等信息
+
+### CapturePage（嗅探页）
+
+- 网页资源嗅探（静态扫描 + CDP 网络监听）
+- 捕捉到的资源可用于后续下载/转存（如 m3u8、媒体直链等）
+
 ## 常见问题
 
 ### GPUI 没有 overflow_visible
@@ -267,13 +303,15 @@ GPUI 目前不支持 `overflow: visible`，如果需要元素超出父容器，�
 - 使用 `smol::unblock()` 包装阻塞操作
 - 使用 `this.update(cx, |this, cx| {...})` 更新组件状态
 
-### 取消下载
+### 取消/暂停/恢复任务
 
-下载使用子进程执行 yt-dlp，取消需要：
+统一通过 `AppState`/`ToolManager` 的任务控制 API：
 
-1. 设置取消标志
-2. 在主循环中检测标志
-3. 调用 `child.kill()` 终止进程
+- 暂停：`pause_download(...)`
+- 恢复：`resume_download(...)`
+- 取消：`cancel_download(...)`
+
+UI 层不要直接管理子进程；取消/清理由下载执行层在内部完成（CancellationToken + 资源清理，必要时终止外部进程）。
 
 ## 代码风格
 
@@ -287,10 +325,10 @@ GPUI 目前不支持 `overflow: visible`，如果需要元素超出父容器，�
 
 ```bash
 # 查看详细日志
-RUST_LOG=debug cargo run
+RUST_LOG=debug cargo run --bin magekit
 
-# 只看 magekit 相关日志
-RUST_LOG=magekit=debug cargo run
+# 只看关键模块日志
+RUST_LOG=magekit_tool_manager=debug,magekit_download=debug cargo run --bin magekit
 ```
 
 日志会输出到终端，包括：
