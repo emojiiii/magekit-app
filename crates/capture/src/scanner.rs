@@ -100,7 +100,16 @@ impl StaticScanner {
         if let Ok(resp) = self.client.head(target_url).send().await {
             if let Some(content_type) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
                 if let Ok(mime) = content_type.to_str() {
-                    let resource_type = ResourceType::from_mime_type(mime);
+                    // 优先用 URL 判断，判断不出来再用 MIME
+                    let resource_type = {
+                        let from_url = ResourceType::from_url(target_url);
+                        if from_url == ResourceType::Other {
+                            ResourceType::from_mime_type(mime)
+                        } else {
+                            from_url
+                        }
+                    };
+
                     if resource_type != ResourceType::Other {
                         let resource = CapturedResource {
                             url: target_url.to_string(),

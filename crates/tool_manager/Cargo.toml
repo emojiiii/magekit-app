@@ -9,6 +9,7 @@ license.workspace = true
 # 内部依赖
 magekit-shared = { path = "../shared" }
 magekit-extractor = { path = "../extractor" }
+download = { path = "../download" }
 
 # 外部依赖
 anyhow = { workspace = true }
@@ -22,10 +23,12 @@ url = { workspace = true }
 tracing = { workspace = true }
 toml = { workspace = true }
 tempfile = "3"
+urlencoding = "2.1"
 
 # 异步运行时和进程管理
 async-trait = "0.1"
 futures-util = "0.3"
+tokio-util = "0.7"
 
 # 系统工具查找
 which = "4.0"

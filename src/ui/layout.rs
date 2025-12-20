@@ -7,6 +7,7 @@ use crate::ui::pages::{HomePage, RecordingPage, SettingsPage, ToolsPage};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::TitleBar;
 use gpui_component::*;
 use gpui_router::{IntoLayout, NavLink, Outlet, use_location};
 
@@ -79,23 +80,6 @@ pub fn stateful_recording_page() -> impl IntoElement {
     RecordingPageWrapper
 }
 
-/// 导航项
-#[derive(Debug, Clone)]
-pub struct NavItem {
-    /// 路由路径
-    pub path: &'static str,
-    /// 显示标签
-    pub label: &'static str,
-    /// 图标
-    pub icon: &'static str,
-}
-
-impl NavItem {
-    pub fn new(path: &'static str, label: &'static str, icon: &'static str) -> Self {
-        Self { path, label, icon }
-    }
-}
-
 /// 应用布局结构体 - 必须实现 IntoLayout trait
 #[derive(IntoElement, IntoLayout)]
 pub struct AppLayout {
@@ -113,49 +97,45 @@ impl AppLayout {
 
 impl RenderOnce for AppLayout {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let nav_items = vec![
-            NavItem::new("/", "首页", "🏠"),
-            NavItem::new("/record", "录制", "🎥"),
-            NavItem::new("/capture", "嗅探", "🌐"),
-            NavItem::new("/channel", "频道", "👥"),
-            NavItem::new("/tasks", "任务", "📋"),
-            NavItem::new("/tools", "工具", "🔧"),
-            NavItem::new("/settings", "设置", "⚙️"),
-        ];
-
         // 从主题获取颜色
-        let bg_color = cx.theme().sidebar;
-        let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let content_bg = cx.theme().background;
+        let sidebar_bg = cx.theme().sidebar;
+        let sidebar_text = cx.theme().sidebar_foreground;
+        let sidebar_hover = cx.theme().sidebar_accent;
+        let sidebar_hover_text = cx.theme().sidebar_accent_foreground;
+        let border_color = cx.theme().border;
+
+        // 获取当前路由用于高亮激活状态
+        let location = use_location(cx);
+        let current_path = location.pathname.clone();
 
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(
-                // 顶部标题栏
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .h(px(48.0))
-                    .px(px(16.0))
-                    .border_b_1()
-                    .border_color(border_color)
-                    .bg(bg_color)
+                // 自定义 TitleBar
+                TitleBar::new()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .child(div().text_xl().child("🎬"))
+                            .justify_center()
+                            .size_full()
                             .child(
                                 div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(title_color)
-                                    .child("MageKit"),
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(div().text_xl().child("🎬"))
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(title_color)
+                                            .child("MageKit"),
+                                    ),
                             ),
                     ),
             )
@@ -166,8 +146,60 @@ impl RenderOnce for AppLayout {
                     .flex()
                     .overflow_hidden()
                     .child(
-                        // 侧边栏导航
-                        render_sidebar(nav_items, cx),
+                        // 自定义侧边栏
+                        div()
+                            .w(px(200.0))
+                            .flex()
+                            .flex_col()
+                            .bg(sidebar_bg)
+                            .border_r_1()
+                            .border_color(border_color)
+                            .child(
+                                // 顶部 Header
+                                div()
+                                    .p(px(16.0))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(sidebar_text)
+                                            .child("导航"),
+                                    ),
+                            )
+                            .child(
+                                // 导航列表
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .flex_col()
+                                    .p(px(8.0))
+                                    .gap(px(4.0))
+                                    .child(create_nav_item("/", "🏠", "首页", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(create_nav_item("/record", "🎥", "录制", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(create_nav_item("/capture", "🌐", "嗅探", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(create_nav_item("/channel", "👥", "频道", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(create_nav_item("/tasks", "📋", "任务", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(create_nav_item("/tools", "🔧", "工具", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text)),
+                            )
+                            .child(
+                                // Footer - 设置和主题
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .p(px(12.0))
+                                    .gap(px(8.0))
+                                    .border_t_1()
+                                    .border_color(border_color)
+                                    .child(create_nav_item("/settings", "⚙️", "设置", &current_path, sidebar_text, sidebar_hover, sidebar_hover_text))
+                                    .child(
+                                        Button::new("theme-toggle")
+                                            .ghost()
+                                            .label("💡 切换主题")
+                                            .on_click(|_, _, _| {
+                                                // TODO: 实现主题切换逻辑
+                                            }),
+                                    ),
+                            ),
                     )
                     .child(
                         // 内容区域 - Outlet 用于渲染子路由
@@ -184,48 +216,19 @@ impl RenderOnce for AppLayout {
     }
 }
 
-/// 渲染侧边栏
-fn render_sidebar(nav_items: Vec<NavItem>, cx: &mut App) -> impl IntoElement {
-    let bg_color = cx.theme().sidebar;
-    let border_color = cx.theme().border;
-    let text_color = cx.theme().sidebar_foreground;
-    let hover_bg = cx.theme().sidebar_accent;
-    let hover_text = cx.theme().sidebar_accent_foreground;
-
-    // 获取当前路由
-    let location = use_location(cx);
-    let current_path = location.pathname.clone();
-
-    div()
-        .w(px(200.0))
-        .flex()
-        .flex_col()
-        .bg(bg_color)
-        .border_r_1()
-        .border_color(border_color)
-        .child(
-            // 导航列表
-            div()
-                .flex()
-                .flex_col()
-                .p(px(8.0))
-                .gap(px(4.0))
-                .children(nav_items.into_iter().map(move |item| {
-                    let is_active = current_path == item.path;
-                    render_nav_item(item, text_color, hover_bg, hover_text, is_active)
-                })),
-        )
-}
-
-/// 渲染单个导航项
-fn render_nav_item(
-    item: NavItem,
+// 创建导航项辅助函数
+fn create_nav_item(
+    path: &'static str,
+    icon: &'static str,
+    label: &'static str,
+    current_path: &str,
     text_color: Hsla,
     hover_bg: Hsla,
     hover_text: Hsla,
-    is_active: bool,
 ) -> impl IntoElement {
-    NavLink::new().to(item.path).child(
+    let is_active = current_path == path;
+
+    NavLink::new().to(path).child(
         div()
             .flex()
             .items_center()
@@ -236,12 +239,12 @@ fn render_nav_item(
             .when(is_active, |this| this.bg(hover_bg).text_color(hover_text))
             .when(!is_active, |this| this.text_color(text_color))
             .hover(move |this| this.bg(hover_bg).text_color(hover_text))
-            .child(div().text_base().child(item.icon))
+            .child(div().text_base().child(icon))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .child(item.label),
+                    .child(label),
             ),
     )
 }

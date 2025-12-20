@@ -256,11 +256,54 @@ impl CdpListener {
                                 .and_then(|s| s.parse::<u64>().ok());
 
                             if let Some(url) = url {
-                                let resource_type = if let Some(mime) = mime {
-                                    ResourceType::from_mime_type(mime)
-                                } else {
-                                    ResourceType::from_url(&url)
+                                // 跳过 data: URL（base64 内嵌资源）
+                                if url.starts_with("data:") {
+                                    continue;
+                                }
+
+                                // 优先使用 URL/文件名判断（最可靠）
+                                let resource_type = {
+                                    let from_url = ResourceType::from_url(&url);
+                                    tracing::debug!(
+                                        "🔍 URL 类型检测: {} -> {:?}",
+                                        if url.len() > 80 {
+                                            format!("{}...", &url[..77])
+                                        } else {
+                                            url.clone()
+                                        },
+                                        from_url
+                                    );
+
+                                    // 如果 URL 识别不出来，再用 MIME 类型
+                                    if from_url == ResourceType::Other {
+                                        if let Some(mime) = mime {
+                                            let from_mime = ResourceType::from_mime_type(mime);
+                                            tracing::debug!("🔍 MIME 类型检测: {} -> {:?}", mime, from_mime);
+                                            from_mime
+                                        } else {
+                                            ResourceType::Other
+                                        }
+                                    } else {
+                                        from_url
+                                    }
                                 };
+
+                                // 添加调试日志（仅对媒体资源）
+                                if matches!(
+                                    resource_type,
+                                    ResourceType::Video | ResourceType::Audio | ResourceType::Image
+                                ) {
+                                    tracing::info!(
+                                        "🌐 网络响应: {} | MIME: {:?} | 类型: {:?}",
+                                        if url.len() > 100 {
+                                            format!("{}...", &url[..97])
+                                        } else {
+                                            url.clone()
+                                        },
+                                        mime,
+                                        resource_type
+                                    );
+                                }
 
                                 // 检查是否匹配筛选器
                                 let resource = CapturedResource {

@@ -33,7 +33,7 @@ url = "2.4"
 gpui = { version = "*" }
 gpui-component = { version = "*" }
 gpui-component-assets = { version = "*" }
-reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.4.2" }
+reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.5.0" }
 
 # Configuration
 toml = "0.9"
@@ -62,6 +62,7 @@ path = "src/main.rs"
 # 内部依赖
 magekit-shared = { path = "crates/shared" }
 magekit-tool-manager = { path = "crates/tool_manager" }
+magekit-capture = { path = "crates/capture" }
 live_recorder = { path = "crates/live_recorder" }
 
 # GPUI dependencies
@@ -114,6 +115,7 @@ reqwest_client = { workspace = true }
 # HTTP 直链下载
 reqwest = { workspace = true, features = ["blocking"] }
 url = { workspace = true }
+urlencoding = "2.1"
 
 # 临时文件（用于 Cookie）
 tempfile = "3"

@@ -297,11 +297,12 @@ impl AppState {
 
         tracing::info!("🚀 发起下载请求: {}", url);
 
+        // 使用快速入队方法，立即返回任务 ID
         let task_id = self
             .tool_manager
-            .start_download(url, options, cookies_vec.as_deref())
+            .quick_enqueue_download(url, options, cookies_vec.as_deref())
             .await
-            .map_err(|e| anyhow::anyhow!("开始下载失败: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("快速入队失败: {}", e))?;
 
         tracing::info!("✅ 下载任务已创建: {}", task_id);
         Ok(task_id)

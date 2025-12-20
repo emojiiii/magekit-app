@@ -19,7 +19,7 @@ mod types;
 mod utils;
 
 // 重新导出公共类型
-pub use capture::{CaptureEvent, CaptureRequest, M3u8Stream};
+pub use capture::{CaptureEvent, CaptureFilterType, CaptureRequest, CaptureResourceType, M3u8Stream};
 pub use state::{AppState, GlobalAppState};
 pub use types::{DownloadVideoOptions, ToolStatus};
 

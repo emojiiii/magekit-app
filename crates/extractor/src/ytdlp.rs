@@ -22,15 +22,58 @@ fn extract_platform_from_url(url: &str) -> Option<String> {
     }
 }
 
+/// 规范化 URL，确保有协议前缀
+fn normalize_url(url: &str) -> String {
+    let url_trimmed = url.trim();
+
+    // 如果已经有协议，直接返回
+    if url_trimmed.starts_with("http://") || url_trimmed.starts_with("https://") {
+        return url_trimmed.to_string();
+    }
+
+    // 如果没有协议，添加 https://
+    // 同时处理常见的输入错误，如 "www.bilibili.com" 或 "bilibili.com"
+    if url_trimmed.starts_with("www.") {
+        format!("https://{}", url_trimmed)
+    } else {
+        // 检测平台，添加合适的域名前缀
+        let platform = Platform::detect(url_trimmed);
+        match platform {
+            Platform::Bilibili => {
+                if url_trimmed.starts_with("bilibili.com") || url_trimmed.starts_with("b23.tv") {
+                    format!("https://{}", url_trimmed)
+                } else {
+                    format!("https://www.bilibili.com/{}", url_trimmed.trim_start_matches('/'))
+                }
+            }
+            Platform::Youtube => {
+                if url_trimmed.starts_with("youtube.com") || url_trimmed.starts_with("youtu.be") {
+                    format!("https://{}", url_trimmed)
+                } else {
+                    format!("https://www.youtube.com/{}", url_trimmed.trim_start_matches('/'))
+                }
+            }
+            _ => {
+                // 对于其他平台，简单地添加 https://
+                format!("https://{}", url_trimmed)
+            }
+        }
+    }
+}
+
 pub async fn extract_video_info(
     url: &str,
     cookies: Option<&[PlatformCookie]>,
     yt_dlp_path: &Path,
 ) -> ExtractResult<VideoInfo> {
-    let cookie_header = build_cookie_header(extract_platform_from_url(url).as_deref(), cookies);
+    // 🔧 规范化 URL
+    let normalized_url = normalize_url(url);
+    tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+
+    let cookie_header = build_cookie_header(extract_platform_from_url(&normalized_url).as_deref(), cookies);
 
     let mut cmd = create_tokio_command(yt_dlp_path);
-    cmd.arg("--dump-json").arg("--no-download").arg(url);
+    cmd.arg("--dump-json").arg("--no-download").arg(&normalized_url);
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
@@ -58,7 +101,11 @@ pub async fn extract_channel_info(
     cookies: Option<&[PlatformCookie]>,
     yt_dlp_path: &Path,
 ) -> ExtractResult<ChannelInfo> {
-    let cookie_header = build_cookie_header(extract_platform_from_url(url).as_deref(), cookies);
+    // 🔧 规范化 URL
+    let normalized_url = normalize_url(url);
+    tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+
+    let cookie_header = build_cookie_header(extract_platform_from_url(&normalized_url).as_deref(), cookies);
 
     let mut cmd = create_tokio_command(yt_dlp_path);
     cmd.arg("--flat-playlist")
@@ -67,7 +114,7 @@ pub async fn extract_channel_info(
         .arg("--extractor-args")
         .arg("BiliBiliSpace:metadata=true")
         .arg("-v")
-        .arg(url);
+        .arg(&normalized_url);
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));

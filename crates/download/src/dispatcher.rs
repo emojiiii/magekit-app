@@ -1,4 +1,5 @@
 use tokio_util::sync::CancellationToken;
+use std::path::PathBuf;
 
 use crate::config::{DownloadRequest, DownloadStrategy};
 use crate::downloader::{
@@ -19,6 +20,31 @@ impl DownloadClient {
         registry.register(DirectDownloader::default());
         registry.register(YtDlpDownloader::default());
         registry.register(FfmpegDownloader::default());
+        registry.register(HlsDashDownloader::default());
+        Self { registry }
+    }
+
+    /// 使用指定的工具路径创建下载客户端
+    pub fn with_tools(
+        ytdlp_path: Option<PathBuf>,
+        ffmpeg_path: Option<PathBuf>,
+    ) -> Self {
+        let mut registry = DownloaderRegistry::new();
+        registry.register(DirectDownloader::default());
+
+        // 使用提供的路径或降级到默认路径
+        if let Some(path) = ytdlp_path {
+            registry.register(YtDlpDownloader::new(path));
+        } else {
+            registry.register(YtDlpDownloader::default());
+        }
+
+        if let Some(path) = ffmpeg_path {
+            registry.register(FfmpegDownloader::new(path));
+        } else {
+            registry.register(FfmpegDownloader::default());
+        }
+
         registry.register(HlsDashDownloader::default());
         Self { registry }
     }
@@ -54,14 +80,24 @@ impl DownloadClient {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<crate::progress::DownloadOutcome> {
+        tracing::info!("🎯 DownloadClient::download() 被调用");
+        tracing::info!("  ├─ URL: {}", request.url);
+        tracing::info!("  └─ 策略: {:?}", request.strategy);
+
         let name = self
             .resolve_downloader(&request)
             .ok_or_else(|| DownloadError::Unsupported("No downloader matched".into()))?;
+
+        tracing::info!("✅ 选择下载器: {}", name);
 
         let downloader = self.registry.get(name).ok_or_else(|| {
             DownloadError::Unsupported(format!("Downloader `{}` not found", name))
         })?;
 
-        downloader.download(request, callback, cancel).await
+        tracing::info!("🚀 调用下载器 {} 的 download() 方法", name);
+        let result = downloader.download(request, callback, cancel).await;
+        tracing::info!("✅ 下载器 {} 执行完成，result: {:?}", name, result.is_ok());
+
+        result
     }
 }

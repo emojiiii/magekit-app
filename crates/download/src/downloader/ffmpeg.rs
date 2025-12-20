@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
@@ -11,11 +12,22 @@ use crate::progress::{DownloadCallback, DownloadOutcome, DownloadProgress, LogLi
 use crate::utils::resolve_output_path;
 
 /// ffmpeg 下载器（拉流/封装场景）
-pub struct FfmpegDownloader;
+pub struct FfmpegDownloader {
+    /// ffmpeg 可执行文件路径
+    ffmpeg_path: PathBuf,
+}
+
+impl FfmpegDownloader {
+    pub fn new(ffmpeg_path: PathBuf) -> Self {
+        Self { ffmpeg_path }
+    }
+}
 
 impl Default for FfmpegDownloader {
     fn default() -> Self {
-        Self
+        Self {
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+        }
     }
 }
 
@@ -34,6 +46,9 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         callback.on_progress(DownloadProgress::preparing());
 
         let output_path = resolve_output_path(&request, &request.url)?;
+        tracing::info!("📁 解析输出路径: {:?}", output_path);
+        tracing::info!("📝 输出文件扩展名: {:?}", output_path.extension());
+
         if let Some(dir) = output_path.parent() {
             tokio::fs::create_dir_all(dir).await?;
         }
@@ -48,87 +63,187 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         }
         let header_blob = header_lines.join("\r\n");
 
-        let mut cmd = Command::new("ffmpeg");
+        tracing::info!("🔧 构建 ffmpeg 命令，headers数量: {}", request.extra.headers.len());
+        tracing::info!("📁 ffmpeg 路径: {:?}", self.ffmpeg_path);
+
+        let mut cmd = Command::new(&self.ffmpeg_path);
         cmd.arg("-y");
         if !header_blob.is_empty() {
-            cmd.arg("-headers").arg(header_blob.clone());
+            cmd.arg("-headers").arg(&header_blob);
+            tracing::debug!("📝 添加 headers:\n{}", header_blob);
         }
         cmd.arg("-i").arg(request.url.to_string());
 
         // 透传自定义参数（key = "ffmpeg"）
         if let Some(args) = request.extra.tool_args.get("ffmpeg") {
             cmd.args(args);
+            tracing::debug!("📝 添加额外参数: {:?}", args);
         }
 
         // 直接拷贝封装，避免重编码
         cmd.arg("-c").arg("copy");
+
+        // 🔧 关键：强制输出为单个文件（而不是HLS分片）
+        // 当输入是m3u8但输出是mp4时，需要明确告诉ffmpeg输出格式
+        if let Some(ext) = output_path.extension() {
+            if ext == "mp4" || ext == "mkv" || ext == "avi" {
+                cmd.arg("-f").arg(ext.to_string_lossy().as_ref());
+                tracing::debug!("🔧 强制输出格式: {}", ext.to_string_lossy());
+
+                // 🔧 对于mp4，添加AAC音频流过滤器（从HLS转换时需要）
+                if ext == "mp4" {
+                    cmd.arg("-bsf:a").arg("aac_adtstoasc");
+                    tracing::debug!("🔧 添加 AAC 音频流过滤器");
+                }
+            }
+        }
+
+        // 🔧 关键：添加进度输出参数
+        cmd.arg("-progress").arg("pipe:1");  // 进度输出到stdout
+        cmd.arg("-nostats");                  // 禁用默认统计信息
+
         cmd.arg(output_path.to_string_lossy().to_string());
 
         cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
+        cmd.stdout(Stdio::piped());  // 🔧 改为piped以读取进度
         cmd.stderr(Stdio::piped());
+
+        // 🔧 构建完整的命令字符串用于日志
+        let format_arg = if let Some(ext) = output_path.extension() {
+            if ext == "mp4" || ext == "mkv" || ext == "avi" {
+                format!("-f {} -bsf:a aac_adtstoasc ", ext.to_string_lossy())
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        tracing::info!("🚀 启动 ffmpeg: ffmpeg -y {} -i {} -c copy {}-progress pipe:1 -nostats {}",
+            if header_blob.is_empty() { "" } else { "-headers <...> " },
+            request.url,
+            format_arg,
+            output_path.display()
+        );
 
         let mut child = cmd
             .spawn()
             .map_err(|e| DownloadError::Internal(format!("spawn ffmpeg failed: {}", e)))?;
 
-        let mut stderr = BufReader::new(
+        tracing::info!("✅ ffmpeg 进程已启动，PID: {:?}", child.id());
+
+        // 🔧 分别处理stdout（进度）和stderr（错误）
+        let mut stdout = BufReader::new(
             child
-                .stderr
+                .stdout
                 .take()
-                .ok_or_else(|| DownloadError::Internal("ffmpeg stderr missing".into()))?,
+                .ok_or_else(|| DownloadError::Internal("ffmpeg stdout missing".into()))?,
         )
         .lines();
 
         let mut last_size: u64 = 0;
         let mut last_time_secs: f64 = 0.0;
-        let mut stderr_buf = String::new();
 
+        // 🔧 同时处理stderr（错误日志）
+        let stderr_handle = {
+            let stderr = child.stderr.take();
+            tokio::spawn(async move {
+                let mut buf = String::new();
+                if let Some(stderr) = stderr {
+                    let mut reader = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        buf.push_str(&line);
+                        buf.push('\n');
+                        // 🔧 改为info级别，让用户能看到错误
+                        if line.contains("error") || line.contains("Error") || line.contains("failed") {
+                            tracing::error!("[ffmpeg stderr] {}", line);
+                        } else {
+                            tracing::info!("[ffmpeg stderr] {}", line);
+                        }
+                    }
+                }
+                buf
+            })
+        };
+
+        // 🔧 读取stdout的进度信息
+        tracing::info!("📊 开始读取 ffmpeg 进度输出...");
+        let mut progress_count = 0;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
+                    tracing::warn!("⚠️ 下载被取消");
                     let _ = child.kill().await;
                     let _ = tokio::fs::remove_file(&output_path).await;
                     return Err(DownloadError::Canceled);
                 }
-                line = stderr.next_line() => {
+                line = stdout.next_line() => {
                     match line {
                         Ok(Some(l)) => {
-                            stderr_buf.push_str(&l);
-                            stderr_buf.push('\n');
-                            callback.on_log(LogLine { source: LogSource::Stderr, line: l.clone() });
-                            let size_bytes = parse_ffmpeg_size(&l).unwrap_or(last_size);
-                            let time_secs = parse_ffmpeg_time(&l).unwrap_or(last_time_secs);
-                            last_size = size_bytes;
-                            last_time_secs = time_secs;
+                            progress_count += 1;
+                            if progress_count <= 5 {
+                                tracing::debug!("[ffmpeg stdout] {}", l);
+                            }
 
-                            let speed = if time_secs > 0.0 {
-                                Some((size_bytes as f64 / time_secs) as u64)
+                            // ffmpeg -progress 输出格式：
+                            // out_time_ms=1234567
+                            // total_size=123456
+                            // progress=continue/end
+
+                            if let Some(size_str) = l.strip_prefix("total_size=") {
+                                if let Ok(size) = size_str.parse::<u64>() {
+                                    last_size = size;
+                                }
+                            } else if let Some(time_str) = l.strip_prefix("out_time_us=") {
+                                if let Ok(time_us) = time_str.parse::<f64>() {
+                                    last_time_secs = time_us / 1_000_000.0;
+                                }
+                            } else if l == "progress=end" {
+                                tracing::info!("✅ ffmpeg 完成，total_size={}", last_size);
+                            }
+
+                            // 计算速度
+                            let speed = if last_time_secs > 0.0 {
+                                Some((last_size as f64 / last_time_secs) as u64)
                             } else {
                                 None
                             };
 
-                            callback.on_progress(DownloadProgress::downloading(
-                                last_size,
-                                None,
-                                speed,
-                            ));
+                            // 发送进度
+                            if last_size > 0 {
+                                callback.on_progress(DownloadProgress::downloading(
+                                    last_size,
+                                    None,
+                                    speed,
+                                ));
+                            }
                         }
-                        Ok(None) => break,
+                        Ok(None) => {
+                            tracing::info!("📊 ffmpeg stdout 结束，共读取 {} 行进度信息", progress_count);
+                            break;
+                        }
                         Err(e) => {
-                            return Err(DownloadError::Internal(format!("ffmpeg read stderr: {}", e)));
+                            tracing::error!("❌ 读取 ffmpeg stdout 失败: {}", e);
+                            return Err(DownloadError::Internal(format!("ffmpeg read stdout: {}", e)));
                         }
                     }
                 }
             }
         }
 
+        // 等待进程结束并获取stderr
+        tracing::info!("⏳ 等待 ffmpeg 进程退出...");
         let status = child
             .wait()
             .await
             .map_err(|e| DownloadError::Internal(format!("wait ffmpeg failed: {}", e)))?;
 
+        let stderr_buf = stderr_handle.await.unwrap_or_default();
+
+        tracing::info!("🏁 ffmpeg 进程已退出，状态码: {:?}", status.code());
+
         if !status.success() {
+            tracing::error!("❌ ffmpeg 失败，stderr:\n{}", stderr_buf);
             return Err(DownloadError::ProcessExit {
                 code: status.code(),
                 stderr: stderr_buf,

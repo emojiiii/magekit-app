@@ -113,6 +113,23 @@ pub fn validate_url(url_str: &str) -> Result<Url> {
     Ok(url)
 }
 
+/// 规范化 URL，确保有协议前缀
+///
+/// 处理常见的 URL 输入错误，如：
+/// - `bilibili.com/video/...` -> `https://bilibili.com/video/...`
+/// - `www.youtube.com/watch?v=...` -> `https://www.youtube.com/watch?v=...`
+pub fn normalize_url(url: &str) -> String {
+    let url_trimmed = url.trim();
+
+    // 如果已经有协议，直接返回
+    if url_trimmed.starts_with("http://") || url_trimmed.starts_with("https://") {
+        return url_trimmed.to_string();
+    }
+
+    // 如果没有协议，添加 https://
+    format!("https://{}", url_trimmed)
+}
+
 /// 获取应用的配置目录
 pub fn get_app_config_dir() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()

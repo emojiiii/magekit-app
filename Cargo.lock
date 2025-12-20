@@ -3925,6 +3925,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui-router",
  "live_recorder",
+ "magekit-capture",
  "magekit-shared",
  "magekit-tool-manager",
  "open",
@@ -3944,6 +3945,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "urlencoding",
  "uuid",
  "which 7.0.3",
 ]
@@ -4015,6 +4017,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "download",
  "encoding_rs",
  "futures-util",
  "magekit-extractor",
@@ -4025,9 +4028,11 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "toml 0.9.8",
  "tracing",
  "url",
+ "urlencoding",
  "uuid",
  "which 4.4.2",
 ]
@@ -5556,8 +5561,8 @@ dependencies = [
 
 [[package]]
 name = "reqwest_client"
-version = "0.4.2"
-source = "git+https://github.com/longbridge/gpui-component.git?tag=v0.4.2#70b413c78d9f44c0201a1324a58ccf5d45dc8456"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/gpui-component.git?tag=v0.5.0#76424dd0aec19c21f590e8fc37e5e635e61ff0cd"
 dependencies = [
  "anyhow",
  "bytes",

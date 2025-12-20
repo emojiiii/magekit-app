@@ -1,7 +1,8 @@
 //! M3U8 嗅探页面
 
-use crate::app::{AppState, CaptureEvent, CaptureRequest, M3u8Stream};
+use crate::app::{AppState, CaptureEvent, CaptureFilterType, CaptureRequest, CaptureResourceType, M3u8Stream};
 use crate::ui::pages::capture::widgets::{CaptureRowTheme, capture_row};
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
@@ -10,7 +11,6 @@ use gpui_component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarState};
 use gpui_component::{ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
-use magekit_shared::utils::sanitize_filename;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -26,6 +26,7 @@ pub struct CapturePage {
     url_input: Entity<InputState>,
     browser_input: Entity<InputState>,
     headless: bool,
+    filter_type: CaptureFilterType,
     is_running: bool,
     captured: Vec<M3u8Stream>,
     logs: Vec<String>,
@@ -64,6 +65,7 @@ impl CapturePage {
             url_input,
             browser_input,
             headless: true,
+            filter_type: CaptureFilterType::Media, // 默认视频+音频
             is_running: false,
             captured: Vec::new(),
             logs: Vec::new(),
@@ -113,6 +115,7 @@ impl CapturePage {
             custom_browser_path: browser.clone(),
             headless: self.headless,
             timeout: Duration::from_secs(45),
+            filter_type: self.filter_type,
         };
 
         let app_state = self.app_state.clone();
@@ -170,7 +173,19 @@ impl CapturePage {
             CaptureEvent::Log(msg) => self.append_log(msg),
             CaptureEvent::Found(item) => {
                 if !self.captured.contains(&item) {
-                    self.append_log(format!("✅ 捕获到 m3u8: {}", item.url));
+                    // 添加调试日志
+                    tracing::info!(
+                        "🔍 捕获资源: {} | 类型: {:?} | MIME: {:?}",
+                        item.url,
+                        item.resource_type,
+                        item.mime_type
+                    );
+
+                    self.append_log(format!(
+                        "✅ 捕获到 {:?}: {}",
+                        item.resource_type,
+                        item.url
+                    ));
                     self.captured.push(item);
                 }
             }
@@ -194,6 +209,45 @@ impl CapturePage {
         }
     }
 
+    /// 根据当前筛选器过滤资源
+    fn filter_resources(&self) -> Vec<M3u8Stream> {
+        self.captured
+            .iter()
+            .filter(|item| {
+                // 首先只保留媒体类型（视频/音频/图片）
+                if !matches!(
+                    item.resource_type,
+                    CaptureResourceType::Video
+                        | CaptureResourceType::Audio
+                        | CaptureResourceType::Image
+                ) {
+                    return false;
+                }
+
+                // 然后根据用户选择的筛选器过滤
+                match self.filter_type {
+                    CaptureFilterType::All => true,
+                    CaptureFilterType::Video => {
+                        item.resource_type == CaptureResourceType::Video
+                    }
+                    CaptureFilterType::Audio => {
+                        item.resource_type == CaptureResourceType::Audio
+                    }
+                    CaptureFilterType::Image => {
+                        item.resource_type == CaptureResourceType::Image
+                    }
+                    CaptureFilterType::Media => {
+                        matches!(
+                            item.resource_type,
+                            CaptureResourceType::Video | CaptureResourceType::Audio
+                        )
+                    }
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
     fn download_link(&mut self, url: String, cx: &mut Context<Self>) {
         // 标记提交中，避免重复点击
         self.download_status
@@ -201,7 +255,6 @@ impl CapturePage {
         cx.notify();
 
         let app_state = self.app_state.clone();
-        let title_hint = self.item_title_from_list(&url);
         let captured_item = self.captured.iter().find(|i| i.url == url).cloned();
 
         cx.spawn(async move |this, cx| {
@@ -215,36 +268,50 @@ impl CapturePage {
                 options.embed_metadata = cfg.download.embed_metadata;
                 options.embed_thumbnail = cfg.download.embed_thumbnail;
                 options.extract_audio = cfg.download.auto_extract_audio;
-                if let Some(t) = title_hint.clone() {
-                    options.output_template = Some(format!("{}.%(ext)s", sanitize_filename(&t)));
-                }
-                options.task_title = title_hint.clone();
-                // 使用 ffmpeg 拉流
-                options.ffmpeg_url = Some(url_clone.clone());
-                // 写死 headers（放在 -i 之前），优先透传嗅探到的真实请求头，再补齐常见头
+
+                // 注意：标题已在 ToolManager.quick_enqueue_download 中从 URL 提取
+                // 这里不再手动设置 output_template 和 task_title
+
+                // 不再手动设置 download_url 或 ffmpeg_url，让 quick_enqueue_download 自动判断下载策略
+                // 只需要传递 headers（用于需要认证的流媒体）
+
+                // 设置 ffmpeg headers（放在 -i 之前），优先透传嗅探到的真实请求头，再补齐常见头
                 let mut header_lines = Vec::new();
                 let mut seen = HashSet::new();
+
+                tracing::debug!("🔧 开始构造 headers，captured_item 存在: {}", captured_item.is_some());
+
                 if let Some(item) = captured_item.clone() {
                     if let Some(headers) = item.headers {
+                        tracing::debug!("📦 从 captured_item 获取到 {} 个 headers", headers.len());
                         for (k, v) in headers {
                             let key_lower = k.to_ascii_lowercase();
                             if seen.insert(key_lower) {
                                 header_lines.push(format!("{}: {}", k, v));
                             }
                         }
+                    } else {
+                        tracing::warn!("⚠️ captured_item.headers 为 None");
                     }
                     if let Some(referer) = item.referer {
+                        tracing::debug!("📍 Referer: {}", referer);
                         if seen.insert("referer".into()) {
                             header_lines.push(format!("Referer: {}", referer));
                         }
                         if seen.insert("origin".into()) {
                             if let Ok(u) = Url::parse(&referer) {
                                 if let Some(host) = u.host_str() {
-                                    header_lines.push(format!("Origin: {}://{}", u.scheme(), host));
+                                    let origin = format!("Origin: {}://{}", u.scheme(), host);
+                                    tracing::debug!("🌐 构造 Origin: {}", origin);
+                                    header_lines.push(origin);
                                 }
                             }
                         }
+                    } else {
+                        tracing::warn!("⚠️ captured_item.referer 为 None");
                     }
+                } else {
+                    tracing::warn!("⚠️ captured_item 为 None，无法获取真实 headers");
                 }
 
                 // 兜底补齐缺失的常用头（避免覆盖已抓到的）
@@ -268,9 +335,17 @@ impl CapturePage {
                     }
                 }
 
+                // 设置 headers（会被 ffmpeg 使用）
                 let header_block = format!("{}\r\n", header_lines.join("\r\n"));
+                tracing::info!(
+                    "📝 最终构造的 ffmpeg headers ({} 行):\n{}",
+                    header_lines.len(),
+                    header_block.trim()
+                );
                 options.ffmpeg_args.push("-headers".to_string());
                 options.ffmpeg_args.push(header_block);
+                tracing::info!("✅ ffmpeg_args 已设置，总长度: {}", options.ffmpeg_args.len());
+
                 runtime.block_on(async { app_state.start_download(&url_clone, options).await })
             })
             .await;
@@ -304,10 +379,10 @@ impl Render for CapturePage {
             muted: theme.muted_foreground,
         };
 
+        // 使用筛选后的资源列表
         let captured_data: Vec<(M3u8Stream, Option<String>)> = self
-            .captured
-            .iter()
-            .cloned()
+            .filter_resources()
+            .into_iter()
             .map(|item| {
                 let status = self.download_status.get(&item.url).cloned();
                 (item, status)
@@ -325,7 +400,6 @@ impl Render for CapturePage {
 
         let scroll_handle = self.scroll_handle.clone();
         let row_theme_copy = row_theme;
-        let output_dir = self.output_dir.clone();
         let entity = cx.entity().clone();
         let capture_list = v_virtual_list(
             cx.entity().clone(),
@@ -333,14 +407,12 @@ impl Render for CapturePage {
             item_sizes,
             move |_page, visible_range, _window, _cx| {
                 let row_theme = row_theme_copy;
-                let output_dir = output_dir.clone();
                 let captured_data = captured_data_rc.clone();
                 let entity = entity.clone();
                 visible_range
                     .filter_map(move |ix| {
                         let captured_data = captured_data.clone();
                         let entity = entity.clone();
-                        let output_dir = output_dir.clone();
                         captured_data.get(ix).cloned().map(move |(item, status)| {
                             let url = item.url.clone();
                             let status_clone = status.clone();
@@ -357,7 +429,7 @@ impl Render for CapturePage {
                                         });
                                     }),
                             );
-                            capture_row(item, status_clone, output_dir.clone(), row_theme, action)
+                            capture_row(item, status_clone, row_theme, action)
                         })
                     })
                     .collect::<Vec<_>>()
@@ -529,7 +601,7 @@ impl Render for CapturePage {
                                 div()
                                     .text_sm()
                                     .text_color(theme.muted_foreground)
-                                    .child("无头模式可减少资源占用，某些站点需要关闭无头"),
+                                    .child("无头模式可减少资源占用"),
                             ),
                     ),
             )
@@ -539,13 +611,14 @@ impl Render for CapturePage {
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
-                    .p(px(12.0))
+                    .gap(px(12.0))
+                    .p(px(16.0))
                     .bg(theme.background)
                     .border_1()
                     .border_color(theme.border)
                     .rounded(px(12.0))
                     .child(
+                        // 标题和操作栏
                         div()
                             .flex()
                             .items_center()
@@ -555,7 +628,7 @@ impl Render for CapturePage {
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.foreground)
-                                    .child("捕获的 m3u8"),
+                                    .child(format!("捕获的资源 ({})", self.captured.len())),
                             )
                             .child(
                                 Button::new("refresh-capture")
@@ -566,6 +639,80 @@ impl Render for CapturePage {
                                         this.captured.clear();
                                         this.scroll_handle = VirtualListScrollHandle::new();
                                         this.scroll_state = ScrollbarState::default();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        // 资源类型筛选（移到这里）
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .p(px(8.0))
+                            .bg(theme.muted.opacity(0.05))
+                            .border_1()
+                            .border_color(theme.border.opacity(0.5))
+                            .rounded(px(8.0))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.muted_foreground)
+                                    .child("筛选类型："),
+                            )
+                            .child(
+                                Button::new("filter-media")
+                                    .when(self.filter_type == CaptureFilterType::Media, |btn| btn.primary())
+                                    .when(self.filter_type != CaptureFilterType::Media, |btn| btn.ghost())
+                                    .xsmall()
+                                    .label("媒体")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.filter_type = CaptureFilterType::Media;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("filter-video")
+                                    .when(self.filter_type == CaptureFilterType::Video, |btn| btn.primary())
+                                    .when(self.filter_type != CaptureFilterType::Video, |btn| btn.ghost())
+                                    .xsmall()
+                                    .label("视频")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.filter_type = CaptureFilterType::Video;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("filter-audio")
+                                    .when(self.filter_type == CaptureFilterType::Audio, |btn| btn.primary())
+                                    .when(self.filter_type != CaptureFilterType::Audio, |btn| btn.ghost())
+                                    .xsmall()
+                                    .label("音频")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.filter_type = CaptureFilterType::Audio;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("filter-image")
+                                    .when(self.filter_type == CaptureFilterType::Image, |btn| btn.primary())
+                                    .when(self.filter_type != CaptureFilterType::Image, |btn| btn.ghost())
+                                    .xsmall()
+                                    .label("图片")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.filter_type = CaptureFilterType::Image;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("filter-all")
+                                    .when(self.filter_type == CaptureFilterType::All, |btn| btn.primary())
+                                    .when(self.filter_type != CaptureFilterType::All, |btn| btn.ghost())
+                                    .xsmall()
+                                    .label("全部")
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.filter_type = CaptureFilterType::All;
                                         cx.notify();
                                     })),
                             ),

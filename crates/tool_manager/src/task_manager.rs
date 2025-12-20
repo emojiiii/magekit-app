@@ -1,23 +1,29 @@
 use crate::downloader::{DownloadProgress, VideoDownloader};
+use crate::download_adapter::TaskProgressCallback;
 use crate::error::{DownloadError, DownloadResult, ToolManagerResult};
 use crate::storage::ToolStorage;
 use crate::task_persistence::TaskPersistence;
 use crate::task_queue::{QueueStats, QueuedTask, TaskPriority, TaskQueue};
 use crate::{config::ConfigManager, updater::UpdateInfo};
+use download::{DownloadClient, DownloadStrategy};
 use magekit_shared::{
     DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, TaskUpdate, VideoInfo,
 };
-use magekit_shared::{UpdateChannel, generate_output_path};
+use magekit_shared::{UpdateChannel, generate_output_path, normalize_url};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// 工具管理器
 pub struct ToolManager {
     /// 工具存储管理器 (公开以供外部访问)
     pub storage: ToolStorage,
+    /// 视频下载器（仅用于获取视频信息）
     downloader: VideoDownloader,
+    /// 新的下载客户端（用于实际下载）
+    download_client: Arc<DownloadClient>,
     config_manager: ConfigManager,
     tasks: Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
     /// 事件广播发送器（用于向所有订阅者广播事件）
@@ -77,7 +83,25 @@ impl ToolManager {
             if p.exists() { Some(p) } else { None }
         });
 
-        let downloader = VideoDownloader::new(yt_dlp_path, ffmpeg_path);
+        // 创建旧的下载器（仅用于获取视频信息）
+        let downloader = VideoDownloader::new(yt_dlp_path.clone(), ffmpeg_path.clone());
+
+        // 创建新的下载客户端（用于实际下载）
+        // 🔧 使用 resolve_*_path() 获取工具路径，确保优先使用应用内工具
+        let ytdlp_for_client = magekit_shared::resolve_yt_dlp_path()
+            .or_else(|| Some(yt_dlp_path.clone()));
+        let ffmpeg_for_client = magekit_shared::resolve_ffmpeg_path()
+            .or_else(|| ffmpeg_path.clone());
+
+        tracing::info!("🔧 下载客户端工具路径:");
+        tracing::info!("  ├─ yt-dlp: {:?}", ytdlp_for_client);
+        tracing::info!("  └─ ffmpeg: {:?}", ffmpeg_for_client);
+
+        let download_client = Arc::new(DownloadClient::with_tools(
+            ytdlp_for_client,
+            ffmpeg_for_client,
+        ));
+
         let config_manager = ConfigManager::new_sync()?;
 
         // 创建广播通道（容量 1000）
@@ -99,6 +123,7 @@ impl ToolManager {
         Ok(Self {
             storage,
             downloader,
+            download_client,
             config_manager,
             tasks: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
@@ -190,17 +215,23 @@ impl ToolManager {
         cookies: Option<&[PlatformCookie]>,
         video_info: Option<VideoInfo>,
     ) -> DownloadResult<TaskId> {
+        // 🔧 规范化 URL（确保有协议前缀）
+        let normalized_url = normalize_url(url);
+        if normalized_url != url {
+            tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+        }
+
         // 每次下载都创建新任务（使用新的 UUID）
         let task_id = Uuid::new_v4();
 
         // 创建任务状态（标题优先使用 options.task_title）
-        let mut task_status = TaskStatus::new(task_id, url.to_string(), options.task_title.clone());
+        let mut task_status = TaskStatus::new(task_id, normalized_url.clone(), options.task_title.clone());
         task_status.state = TaskState::Queued;
 
         // 获取视频信息（如果未提供）
         let video_info = match video_info {
             Some(info) => info,
-            None => self.get_video_info(url, cookies).await?,
+            None => self.get_video_info(&normalized_url, cookies).await?,
         };
         if task_status.title.is_none() {
             task_status.title = Some(video_info.title.clone());
@@ -258,19 +289,19 @@ impl ToolManager {
             task_status,
         )));
 
-        // 启动下载任务
-        let downloader = self.downloader.clone();
+        // 启动下载任务（使用新架构）
+        let download_client = self.download_client.clone();
         let tasks = self.tasks.clone();
         let event_tx = self.event_tx.clone();
         let persistence = self.persistence.clone();
         let url_clone = url.to_string();
 
         tokio::spawn(async move {
-            Self::run_download_task(
+            Self::run_download_task_new(
                 task_id,
                 url_clone,
                 options,
-                downloader,
+                download_client,
                 tasks,
                 event_tx,
                 persistence,
@@ -471,7 +502,16 @@ impl ToolManager {
             tracing::info!("🛑 任务已取消: {}", task_id);
             Ok(())
         } else {
-            Err(DownloadError::task_not_found(task_id))
+            drop(tasks); // 释放锁
+
+            // 任务在内存中不存在，尝试从持久化存储中删除
+            tracing::warn!("⚠️ 任务 {} 在内存中不存在，尝试从持久化存储中删除", task_id);
+            let mut persistence = self.persistence.lock().await;
+            let _ = persistence.remove_task(task_id);
+            let _ = persistence.save();
+
+            // 不返回错误，允许后续删除操作继续
+            Ok(())
         }
     }
 
@@ -572,6 +612,254 @@ impl ToolManager {
     }
 
     /// 运行下载任务
+    /// 运行下载任务（新架构 - 使用 DownloadClient）
+    async fn run_download_task_new(
+        task_id: TaskId,
+        url: String,
+        options: DownloadOptions,
+        download_client: Arc<DownloadClient>,
+        tasks: Arc<RwLock<HashMap<TaskId, TaskHandle>>>,
+        event_tx: broadcast::Sender<ToolManagerEvent>,
+        persistence: Arc<Mutex<TaskPersistence>>,
+        mut cancel_rx: mpsc::Receiver<()>,
+        _cookies: Option<Vec<PlatformCookie>>,
+    ) {
+        tracing::info!("🚀 启动新下载任务 {} - {}", task_id, url);
+
+        // 创建进度通道
+        let (progress_tx, mut progress_rx) = mpsc::channel::<TaskUpdate>(1000);
+
+        // 创建回调
+        let callback = TaskProgressCallback::new(task_id, progress_tx.clone());
+
+        // 创建取消令牌
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
+
+        // 启动取消监听
+        tokio::spawn(async move {
+            let _ = cancel_rx.recv().await;
+            tracing::info!("⏹️ 收到取消信号，任务 {}", task_id);
+            cancel_token_clone.cancel();
+        });
+
+        // 克隆用于进度监控
+        let tasks_for_progress = tasks.clone();
+        let event_tx_for_progress = event_tx.clone();
+        let persistence_for_progress = persistence.clone();
+
+        // 启动进度监控任务
+        let progress_handle = tokio::spawn(async move {
+            while let Some(update) = progress_rx.recv().await {
+                match &update {
+                    TaskUpdate::Progress(id, progress, downloaded, total, speed, eta) => {
+                        // 更新任务状态
+                        let _ = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                            status.state = TaskState::Downloading;
+                            status.progress = *progress;
+                            status.downloaded_bytes = *downloaded;
+                            status.total_bytes = *total;
+                            status.speed = *speed;
+                            status.eta = *eta;
+                        })
+                        .await;
+
+                        // 广播进度更新
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));
+                    }
+                    TaskUpdate::Completed(id, output_path) => {
+                        // 更新任务状态为完成
+                        let status = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                            status.state = TaskState::Completed;
+                            status.progress = 1.0;
+                            status.completed_at = Some(std::time::SystemTime::now());
+                            status.output_path = Some(output_path.clone());
+                        })
+                        .await;
+
+                        // 持久化
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(*id, status);
+                        }
+
+                        // 广播完成事件
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));
+                        break;
+                    }
+                    TaskUpdate::Failed(id, error) => {
+                        // 更新任务状态为失败
+                        let status = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                            status.state = TaskState::Failed(error.clone());
+                            status.completed_at = Some(std::time::SystemTime::now());
+                        })
+                        .await;
+
+                        // 持久化
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(*id, status);
+                        }
+
+                        // 广播失败事件
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // 更新任务状态为下载中
+        Self::update_task_in_map(&tasks, task_id, |status| {
+            status.state = TaskState::Downloading;
+            status.started_at = Some(std::time::SystemTime::now());
+        })
+        .await;
+
+        // 广播状态变更
+        let _ = event_tx.send(ToolManagerEvent::TaskUpdate(TaskUpdate::StateChanged(
+            task_id,
+            TaskState::Downloading,
+        )));
+
+        // 构建下载请求
+        let parsed_url = match url.parse::<url::Url>() {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::error!("❌ 无效的 URL: {}", e);
+                let _ = event_tx.send(ToolManagerEvent::TaskUpdate(TaskUpdate::Failed(
+                    task_id,
+                    format!("无效的 URL: {}", e),
+                )));
+                return;
+            }
+        };
+
+        // 解析 ffmpeg_args，提取 headers 和其他参数
+        let mut headers_map = std::collections::HashMap::new();
+        let mut other_ffmpeg_args = Vec::new();
+        let mut i = 0;
+        while i < options.ffmpeg_args.len() {
+            if options.ffmpeg_args[i] == "-headers" && i + 1 < options.ffmpeg_args.len() {
+                // 找到 -headers 参数，解析下一个参数（headers 字符串）
+                let headers_str = &options.ffmpeg_args[i + 1];
+                tracing::info!("📝 解析 ffmpeg headers: {}", headers_str);
+
+                // 解析 headers 字符串（格式：Key: Value\r\nKey2: Value2\r\n）
+                for line in headers_str.split("\r\n") {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = line.find(':') {
+                        let key = line[..pos].trim().to_string();
+                        let value = line[pos + 1..].trim().to_string();
+                        headers_map.insert(key, value);
+                    }
+                }
+                tracing::info!("✅ 解析得到 {} 个 headers", headers_map.len());
+                i += 2; // 跳过 -headers 和 headers 字符串
+            } else {
+                // 其他参数保留
+                other_ffmpeg_args.push(options.ffmpeg_args[i].clone());
+                i += 1;
+            }
+        }
+
+        // 构建 tool_args（传递非 headers 的 ffmpeg 参数）
+        let mut tool_args = std::collections::HashMap::new();
+        if !other_ffmpeg_args.is_empty() {
+            // key 必须是 "ffmpeg"（参见 crates/download/src/downloader/ffmpeg.rs:59）
+            tool_args.insert("ffmpeg".to_string(), other_ffmpeg_args.clone());
+            tracing::debug!("📝 传递其他 ffmpeg 参数: {:?}", other_ffmpeg_args);
+        }
+
+        // 🔧 传递 format_id 给 yt-dlp
+        if !options.format_id.is_empty() {
+            let ytdlp_args = vec!["-f".to_string(), options.format_id.clone()];
+            tool_args.insert("ytdlp".to_string(), ytdlp_args.clone());
+            tracing::info!("📝 传递 yt-dlp 格式参数: {:?}", ytdlp_args);
+        }
+
+        let request = download::DownloadRequest {
+            url: parsed_url,
+            output: download::DownloadOutput {
+                directory: options.output_path.clone(),
+                template: options.output_template.clone(),
+                // 🔧 从 TaskStatus 获取完整输出路径
+                full_path: {
+                    let tasks_guard = tasks.read().await;
+                    tasks_guard
+                        .get(&task_id)
+                        .and_then(|handle| handle.status.output_path.clone())
+                },
+            },
+            strategy: if options.ffmpeg_url.is_some() {
+                DownloadStrategy::Ffmpeg
+            } else if options.download_url.is_some() {
+                DownloadStrategy::Direct
+            } else {
+                DownloadStrategy::Auto
+            },
+            extra: download::DownloadExtra {
+                headers: headers_map,  // ✅ 传递解析后的 headers
+                cookie: None,
+                query: Vec::new(),
+                tool_args,  // ✅ 传递其他 ffmpeg 参数
+            },
+            timeout: None,
+            bandwidth_limit: None,
+            retries: download::RetryPolicy::default(),
+            resume: true,
+        };
+
+        // 🔧 添加详细的请求信息日志
+        tracing::info!("📦 准备执行下载:");
+        tracing::info!("  ├─ URL: {}", request.url);
+        tracing::info!("  ├─ 策略: {:?}", request.strategy);
+        tracing::info!("  ├─ full_path: {:?}", request.output.full_path);
+        tracing::info!("  ├─ directory: {:?}", request.output.directory);
+        tracing::info!("  ├─ template: {:?}", request.output.template);
+        tracing::info!("  ├─ headers 数量: {}", request.extra.headers.len());
+        tracing::info!("  └─ tool_args 数量: {}", request.extra.tool_args.len());
+
+        // 执行下载
+        tracing::info!("🚀 调用 download_client.download()...");
+        let result = download_client
+            .download(request, &callback, cancel_token)
+            .await;
+        tracing::info!("✅ download_client.download() 返回");
+
+        // 等待进度监控完成
+        let _ = progress_handle.await;
+
+        // 处理结果
+        match result {
+            Ok(outcome) => {
+                tracing::info!("✅ 任务 {} 下载成功: {:?}", task_id, outcome.output_path);
+            }
+            Err(e) => {
+                tracing::error!("❌ 任务 {} 下载失败: {}", task_id, e);
+
+                // 更新任务状态为失败
+                Self::update_task_in_map(&tasks, task_id, |status| {
+                    status.state = TaskState::Failed(e.to_string());
+                    status.completed_at = Some(std::time::SystemTime::now());
+                })
+                .await;
+
+                // 广播失败事件
+                let _ = event_tx.send(ToolManagerEvent::TaskUpdate(TaskUpdate::Failed(
+                    task_id,
+                    e.to_string(),
+                )));
+            }
+        }
+    }
+
+    /// 运行下载任务（旧架构 - 已废弃，保留用于兼容）
+    #[allow(dead_code)]
     async fn run_download_task(
         task_id: TaskId,
         url: String,
@@ -984,7 +1272,7 @@ impl ToolManager {
             let status = task.status.clone();
             restored.push(status.id);
 
-            // 将任务添加到内存中的任务列表
+            // 将任务添加到内存中的任务列表，保留 options 和 cookies
             let mut tasks = self.tasks.write().await;
             tasks.insert(
                 status.id,
@@ -993,8 +1281,8 @@ impl ToolManager {
                     cancel_tx: None,
                     retry_count: task.retry_count,
                     max_retries: task.max_retries,
-                    options: None,
-                    cookies: None,
+                    options: task.options.clone(),  // ✅ 恢复 options
+                    cookies: task.cookies.clone(),  // ✅ 恢复 cookies
                 },
             );
         }
@@ -1094,5 +1382,421 @@ impl ToolManager {
             .values()
             .filter(|t| matches!(t.status.state, TaskState::Failed(_)))
             .count()
+    }
+
+    // ==================== 新增：快速入队方法 ====================
+
+    /// 快速入队下载任务（立即返回，异步启动下载）
+    ///
+    /// 与 start_download 的区别：
+    /// - 立即创建任务并返回 ID，不等待视频信息
+    /// - 在后台异步获取信息并启动下载
+    /// - 标题优先使用 URL 文件名，而不是视频标题
+    /// - 自动识别资源类型，直接资源跳过 extractor
+    pub async fn quick_enqueue_download(
+        &self,
+        url: &str,
+        mut options: DownloadOptions,
+        cookies: Option<&[PlatformCookie]>,
+    ) -> DownloadResult<TaskId> {
+        // 添加调试日志
+        tracing::debug!(
+            "📝 quick_enqueue_download 入口: url={}, ffmpeg_args长度={}",
+            url,
+            options.ffmpeg_args.len()
+        );
+
+        // 创建任务 ID
+        let task_id = Uuid::new_v4();
+
+        // 从 URL 提取标题
+        let title = extract_title_from_url(url);
+
+        // 创建任务状态
+        let mut task_status = TaskStatus::new(task_id, url.to_string(), Some(title.clone()));
+        task_status.state = TaskState::Queued;
+
+        // 生成初步输出路径（使用 URL 文件名）
+        // 🔧 关键：从URL提取扩展名，但流媒体格式强制转换为mp4
+        let ext = url::Url::parse(url)
+            .ok()
+            .and_then(|u| {
+                u.path_segments()
+                    .and_then(|s| s.last())
+                    .and_then(|name| {
+                        // 去除查询参数
+                        let name_without_query = name.split('?').next().unwrap_or(name);
+                        name_without_query.rsplit_once('.').map(|(_, e)| e.to_string())
+                    })
+            })
+            .map(|e| {
+                // 🔧 流媒体格式转换为mp4
+                let e_lower = e.to_lowercase();
+                if e_lower == "m3u8" || e_lower == "m3u" || e_lower == "mpd" || e_lower == "ts" {
+                    "mp4".to_string()
+                } else {
+                    e
+                }
+            })
+            .unwrap_or_else(|| "mp4".to_string());
+
+        let output_path = generate_output_path(&options.output_path, &title, &ext)
+            .map_err(|e| DownloadError::internal(e.to_string()))?;
+
+        task_status.output_path = Some(output_path.clone());
+
+        // 🔧 不再设置 output_template，而是直接传递完整路径
+        // 这样 download 库不会根据 URL 修改文件名
+        options.output_template = None;
+        options.task_title = Some(title.clone());
+
+        // 创建任务句柄
+        let (cancel_tx, cancel_rx) = mpsc::channel(1);
+        let cookies_owned: Option<Vec<PlatformCookie>> = cookies.map(|c| c.to_vec());
+        let task_handle = TaskHandle {
+            status: task_status.clone(),
+            cancel_tx: Some(cancel_tx),
+            retry_count: 0,
+            max_retries: self.max_retries,
+            options: Some(options.clone()),
+            cookies: cookies_owned.clone(),
+        };
+
+        // 存储任务
+        {
+            let mut tasks = self.tasks.write().await;
+            tasks.insert(task_id, task_handle);
+        }
+
+        // 持久化任务
+        {
+            let mut persistence = self.persistence.lock().await;
+            let _ = persistence.add_task(
+                task_status.clone(),
+                self.max_retries,
+                Some(options.clone()),
+                cookies_owned.clone(),
+            );
+        }
+
+        // 发送任务创建事件
+        self.broadcast_event(ToolManagerEvent::TaskUpdate(TaskUpdate::Created(
+            task_status,
+        )));
+
+        tracing::info!("📝 快速入队任务: {} - {}", task_id, title);
+
+        // 在后台异步启动下载
+        let download_client = self.download_client.clone();
+        let downloader = self.downloader.clone();
+        let tasks = self.tasks.clone();
+        let event_tx = self.event_tx.clone();
+        let persistence = self.persistence.clone();
+        let url_clone = url.to_string();
+
+        tokio::spawn(async move {
+            // 检测资源类型和下载策略
+            let is_direct = is_direct_resource(&url_clone);
+            let is_streaming = is_streaming_resource(&url_clone);
+            let has_ffmpeg_url = options.ffmpeg_url.is_some();
+            let has_download_url = options.download_url.is_some();
+
+            // 决定使用哪种下载方式
+            // 优先级：
+            // 1. 用户明确指定了 download_url → 直接下载
+            // 2. 用户明确指定了 ffmpeg_url → ffmpeg
+            // 3. 自动检测：is_streaming → ffmpeg
+            // 4. 自动检测：is_direct → 直接下载
+            // 5. 其他 → extractor（yt-dlp）
+
+            // 自动设置 download_url 或 ffmpeg_url（如果用户没有手动设置）
+            let mut options = options;
+            if !has_download_url && !has_ffmpeg_url {
+                if is_streaming {
+                    // 流媒体自动设置 ffmpeg_url
+                    options.ffmpeg_url = Some(url_clone.clone());
+                    tracing::debug!("🔧 自动设置 ffmpeg_url 用于流媒体，ffmpeg_args长度={}", options.ffmpeg_args.len());
+                } else if is_direct {
+                    // 直接资源自动设置 download_url
+                    options.download_url = Some(url_clone.clone());
+                    tracing::debug!("🔧 自动设置 download_url 用于直接资源");
+                }
+            }
+
+            let use_direct_download = if has_download_url || options.download_url.is_some() {
+                true
+            } else if has_ffmpeg_url || options.ffmpeg_url.is_some() {
+                false
+            } else {
+                is_direct && !is_streaming
+            };
+
+            let use_ffmpeg = if has_ffmpeg_url || options.ffmpeg_url.is_some() {
+                true
+            } else if has_download_url || options.download_url.is_some() {
+                false
+            } else {
+                is_streaming
+            };
+
+            if use_direct_download {
+                // 直接下载资源，使用新架构
+                tracing::info!("🔗 使用直接下载: {}", url_clone);
+                Self::run_download_task_new(
+                    task_id,
+                    url_clone,
+                    options,
+                    download_client,
+                    tasks,
+                    event_tx,
+                    persistence,
+                    cancel_rx,
+                    cookies_owned,
+                )
+                .await;
+            } else if use_ffmpeg {
+                // 流媒体使用 ffmpeg
+                tracing::info!("📺 使用 ffmpeg 拉流: {}", url_clone);
+                Self::run_download_task_new(
+                    task_id,
+                    url_clone,
+                    options,
+                    download_client,
+                    tasks,
+                    event_tx,
+                    persistence,
+                    cancel_rx,
+                    cookies_owned,
+                )
+                .await;
+            } else {
+                // 需要提取的资源（YouTube、Bilibili 等），使用旧架构（调用 yt-dlp）
+                tracing::info!("🎬 使用 extractor 提取: {}", url_clone);
+                Self::run_download_task(
+                    task_id,
+                    url_clone,
+                    options,
+                    downloader,
+                    tasks,
+                    event_tx,
+                    persistence,
+                    cancel_rx,
+                    cookies_owned,
+                )
+                .await;
+            }
+        });
+
+        Ok(task_id)
+    }
+}
+
+// ==================== 辅助函数 ====================
+
+/// 从 URL 提取文件名作为标题
+fn extract_title_from_url(url: &str) -> String {
+    use url::Url;
+
+    if let Ok(parsed_url) = Url::parse(url) {
+        // 获取路径的最后一部分
+        if let Some(segments) = parsed_url.path_segments() {
+            if let Some(last_segment) = segments.last() {
+                if !last_segment.is_empty() {
+                    // 去除扩展名
+                    let name_without_ext = last_segment
+                        .rsplit_once('.')
+                        .map(|(name, _)| name)
+                        .unwrap_or(last_segment);
+
+                    // URL 解码
+                    if let Ok(decoded) = urlencoding::decode(name_without_ext) {
+                        let decoded_str = decoded.to_string();
+                        // 限制长度
+                        if decoded_str.len() > 100 {
+                            return format!("{}...", &decoded_str[..97]);
+                        }
+                        return decoded_str;
+                    }
+
+                    return name_without_ext.to_string();
+                }
+            }
+        }
+
+        // 如果路径为空，使用域名
+        if let Some(host) = parsed_url.host_str() {
+            return host.to_string();
+        }
+    }
+
+    // 降级方案：使用 URL 的 hash
+    format!("download_{}", &url.chars().take(20).collect::<String>())
+}
+
+/// 检测是否为直接下载资源（图片、视频文件等）
+/// 注意：m3u8 等流媒体需要用 ffmpeg，不是直接下载
+fn is_direct_resource(url: &str) -> bool {
+    let direct_exts = [
+        // 图片
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico",
+        // 视频文件（非流媒体）
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v",
+        // 音频
+        "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma",
+        // 注意：m3u8, m3u, ts, mpd 等流媒体需要 ffmpeg，不在这里
+    ];
+
+    if let Ok(parsed_url) = url::Url::parse(url) {
+        if let Some(path) = parsed_url.path_segments() {
+            if let Some(last) = path.last() {
+                if let Some(ext) = last.rsplit_once('.').map(|(_, e)| e.to_lowercase()) {
+                    return direct_exts.contains(&ext.as_str());
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// 检测是否为流媒体资源（需要 ffmpeg 下载）
+fn is_streaming_resource(url: &str) -> bool {
+    let streaming_exts = ["m3u8", "m3u", "ts", "mpd"];
+
+    // 先检查扩展名
+    if let Ok(parsed_url) = url::Url::parse(url) {
+        if let Some(path) = parsed_url.path_segments() {
+            if let Some(last) = path.last() {
+                // 去除查询参数后再检查扩展名
+                let path_without_query = last.split('?').next().unwrap_or(last);
+                if let Some(ext) = path_without_query
+                    .rsplit_once('.')
+                    .map(|(_, e)| e.to_lowercase())
+                {
+                    if streaming_exts.contains(&ext.as_str()) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 特殊处理：URL 中包含流媒体特征（处理特殊格式的 URL）
+    url.contains(".m3u8") || url.contains(".m3u") || url.contains(".mpd")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_parse_ffmpeg_headers() {
+        // 模拟 capture 页面构造的 ffmpeg_args
+        let mut ffmpeg_args = Vec::new();
+        ffmpeg_args.push("-headers".to_string());
+        ffmpeg_args.push("User-Agent: Mozilla/5.0\r\nReferer: https://example.com/\r\nOrigin: https://example.com\r\n".to_string());
+        ffmpeg_args.push("-c".to_string());
+        ffmpeg_args.push("copy".to_string());
+
+        // 解析 headers（复制自 task_manager.rs 中的逻辑）
+        let mut headers_map = HashMap::new();
+        let mut other_args = Vec::new();
+        let mut i = 0;
+        while i < ffmpeg_args.len() {
+            if ffmpeg_args[i] == "-headers" && i + 1 < ffmpeg_args.len() {
+                let headers_str = &ffmpeg_args[i + 1];
+                for line in headers_str.split("\r\n") {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = line.find(':') {
+                        let key = line[..pos].trim().to_string();
+                        let value = line[pos + 1..].trim().to_string();
+                        headers_map.insert(key, value);
+                    }
+                }
+                i += 2;
+            } else {
+                other_args.push(ffmpeg_args[i].clone());
+                i += 1;
+            }
+        }
+
+        // 验证结果
+        assert_eq!(headers_map.len(), 3);
+        assert_eq!(headers_map.get("User-Agent"), Some(&"Mozilla/5.0".to_string()));
+        assert_eq!(headers_map.get("Referer"), Some(&"https://example.com/".to_string()));
+        assert_eq!(headers_map.get("Origin"), Some(&"https://example.com".to_string()));
+        assert_eq!(other_args, vec!["-c".to_string(), "copy".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_empty_ffmpeg_args() {
+        let ffmpeg_args: Vec<String> = Vec::new();
+
+        let mut headers_map = HashMap::new();
+        let mut other_args = Vec::new();
+        let mut i = 0;
+        while i < ffmpeg_args.len() {
+            if ffmpeg_args[i] == "-headers" && i + 1 < ffmpeg_args.len() {
+                let headers_str = &ffmpeg_args[i + 1];
+                for line in headers_str.split("\r\n") {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = line.find(':') {
+                        let key = line[..pos].trim().to_string();
+                        let value = line[pos + 1..].trim().to_string();
+                        headers_map.insert(key, value);
+                    }
+                }
+                i += 2;
+            } else {
+                other_args.push(ffmpeg_args[i].clone());
+                i += 1;
+            }
+        }
+
+        assert_eq!(headers_map.len(), 0);
+        assert_eq!(other_args.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_args_without_headers() {
+        let mut ffmpeg_args = Vec::new();
+        ffmpeg_args.push("-c".to_string());
+        ffmpeg_args.push("copy".to_string());
+        ffmpeg_args.push("-f".to_string());
+        ffmpeg_args.push("mp4".to_string());
+
+        let mut headers_map = HashMap::new();
+        let mut other_args = Vec::new();
+        let mut i = 0;
+        while i < ffmpeg_args.len() {
+            if ffmpeg_args[i] == "-headers" && i + 1 < ffmpeg_args.len() {
+                let headers_str = &ffmpeg_args[i + 1];
+                for line in headers_str.split("\r\n") {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = line.find(':') {
+                        let key = line[..pos].trim().to_string();
+                        let value = line[pos + 1..].trim().to_string();
+                        headers_map.insert(key, value);
+                    }
+                }
+                i += 2;
+            } else {
+                other_args.push(ffmpeg_args[i].clone());
+                i += 1;
+            }
+        }
+
+        assert_eq!(headers_map.len(), 0);
+        assert_eq!(other_args.len(), 4);
+        assert_eq!(other_args, vec!["-c", "copy", "-f", "mp4"]);
     }
 }

@@ -67,25 +67,21 @@ fn main() -> Result<()> {
         // 设置 Global AppState，供路由页面访问
         cx.set_global(GlobalAppState(app_state.clone()));
 
-        // 打开主窗口
+        // 打开主窗口（无边框 + 自定义 TitleBar）
         if let Err(e) = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(100.0), px(100.0)),
                     size: size(px(1200.0), px(800.0)),
                 })),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("MageKit 视频下载器".into()),
-                    appears_transparent: false,
-                    traffic_light_position: Some(point(px(12.0), px(12.0))),
-                }),
+                titlebar: None, // 禁用系统标题栏
                 window_background: WindowBackgroundAppearance::Transparent,
                 focus: true,
                 show: true,
                 kind: WindowKind::Normal,
                 is_movable: true,
                 display_id: None,
-                window_decorations: None,
+                window_decorations: None, // 无边框
                 app_id: None,
                 is_minimizable: true,
                 is_resizable: true,

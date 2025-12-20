@@ -56,6 +56,9 @@ pub async fn start_capture(request: CaptureRequest) -> Result<CaptureSession> {
         .join(BROWSER_PROFILE_DIR_NAME);
     let _ = fs::create_dir_all(&profile_dir);
 
+    // 🔧 在启动新浏览器前，清理可能残留的Chrome进程
+    cleanup_stale_chrome_processes(&profile_dir).await;
+
     let scanner = StaticScanner::new(client.clone());
     let page_title = scanner.fetch_page_title(&target_url).await.ok().flatten();
     let page_title_shared = Arc::new(Mutex::new(page_title.clone()));
@@ -191,10 +194,7 @@ pub async fn start_capture(request: CaptureRequest) -> Result<CaptureSession> {
         };
     });
 
-    Ok(CaptureSession {
-        rx: event_rx,
-        cancel_tx: Some(cancel_tx),
-    })
+    Ok(CaptureSession::new(event_rx, cancel_tx))
 }
 
 fn pick_free_port() -> u16 {
@@ -211,8 +211,14 @@ async fn spawn_browser(
     target_url: &str,
     headless: bool,
 ) -> Result<Child> {
+    use std::process::Stdio;
+
     let mut cmd = Command::new(path);
-    
+
+    // 禁用浏览器日志输出（隐藏 GPU/TensorFlow 等错误）
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null());
+
     // 基础配置
     cmd.arg(format!("--user-data-dir={}", profile_dir.display()))
         .arg("--no-first-run")
@@ -222,7 +228,11 @@ async fn spawn_browser(
         .arg(format!("--remote-debugging-port={}", devtools_port))
         .arg("--lang=zh-CN")
         .arg("--window-size=1280,720")
-        .arg("--start-maximized");
+        .arg("--start-maximized")
+        // 禁用日志输出
+        .arg("--log-level=3")
+        .arg("--silent")
+        .arg("--disable-logging");
 
     // 绕过 Cloudflare 检测的关键参数
     // 禁用自动化控制特征（隐藏 webdriver 标志）
@@ -264,4 +274,88 @@ async fn spawn_browser(
     cmd.arg(target_url);
 
     cmd.spawn().context("启动浏览器失败")
+}
+
+/// 清理残留的Chrome进程
+///
+/// 这个函数会清理：
+/// 1. 使用相同user-data-dir的Chrome进程
+/// 2. 所有带--headless参数的Chrome进程
+///
+/// 这样可以避免之前未正常关闭的浏览器进程阻止新实例启动
+async fn cleanup_stale_chrome_processes(profile_dir: &Path) {
+    use tokio::process::Command as TokioCommand;
+
+    #[cfg(target_os = "windows")]
+    {
+        let profile_str = profile_dir.to_string_lossy().to_string();
+
+        tracing::info!("🧹 清理残留的Chrome进程...");
+
+        // 方法1：清理使用相同user-data-dir的进程
+        let result = TokioCommand::new("wmic")
+            .args([
+                "process",
+                "where",
+                &format!("name='chrome.exe' and commandline like '%{}%'", profile_str),
+                "delete",
+            ])
+            .output()
+            .await;
+
+        if let Ok(output) = result {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("deleted") {
+                    tracing::info!("✅ 已清理使用相同profile的Chrome进程");
+                }
+            }
+        }
+
+        // 方法2：清理所有无头Chrome进程（更彻底）
+        let result = TokioCommand::new("wmic")
+            .args([
+                "process",
+                "where",
+                "name='chrome.exe' and commandline like '%--headless%'",
+                "delete",
+            ])
+            .output()
+            .await;
+
+        if let Ok(output) = result {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("deleted") {
+                    tracing::info!("✅ 已清理无头Chrome进程");
+                }
+            }
+        }
+
+        // 给系统一点时间完成清理
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Linux/macOS: 使用pkill
+        let profile_str = profile_dir.to_string_lossy().to_string();
+
+        tracing::info!("🧹 清理残留的Chrome进程...");
+
+        // 清理使用相同user-data-dir的进程
+        let _ = TokioCommand::new("pkill")
+            .args(["-f", &format!("chrome.*{}", profile_str)])
+            .output()
+            .await;
+
+        // 清理所有无头Chrome进程
+        let _ = TokioCommand::new("pkill")
+            .args(["-f", "chrome.*--headless"])
+            .output()
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        tracing::info!("✅ Chrome进程清理完成");
+    }
 }

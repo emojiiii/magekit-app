@@ -10,7 +10,11 @@ pub struct DownloadOutput {
     /// 输出目录
     pub directory: PathBuf,
     /// 文件模板，例如 "%(title)s.%(ext)s"
+    /// 如果 full_path 已指定，则忽略此字段
     pub template: Option<String>,
+    /// 完整输出路径（包括文件名）
+    /// 如果指定，则优先使用，忽略 directory + template
+    pub full_path: Option<PathBuf>,
 }
 
 /// 断点续传/重试策略
