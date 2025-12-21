@@ -826,28 +826,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
-name = "bytedance"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "indexmap 2.12.1",
- "md5",
- "pretty_assertions",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "rquickjs",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "url",
- "urlencoding",
-]
-
-[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3773,7 +3751,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
- "bytedance",
  "bytes",
  "chrono",
  "clap",
@@ -3781,6 +3758,7 @@ dependencies = [
  "hex",
  "magekit-shared",
  "md-5",
+ "platform-api",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -3975,10 +3953,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "bytedance",
  "indexmap 2.12.1",
  "magekit-shared",
  "md5",
+ "platform-api",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -4950,6 +4928,28 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "platform-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "indexmap 2.12.1",
+ "md5",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+]
 
 [[package]]
 name = "png"

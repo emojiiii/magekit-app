@@ -37,7 +37,7 @@ MageKit 是一个基于 Rust 的跨平台桌面应用（GPUI），提供视频�
 | `magekit-tool-manager` | 工具与任务统一管理层：队列/并发/持久化/事件广播 |
 | `magekit-download` | 下载执行层（直链/yt-dlp/ffmpeg/HLS-DASH），提供进度事件与取消能力 |
 | `magekit-extractor` | 平台解析层：抖音/TikTok 自研优先，其余平台优先走 yt-dlp |
-| `magekit-bytedance` | 抖音 Web API 与签名（A-Bogus/X-Bogus），供解析与录制复用 |
+| `platform-api` | 多平台 Web API 与签名（Douyin/TikTok/Bilibili…），供解析与录制复用 |
 | `magekit-capture` | 网页资源嗅探：静态扫描 + CDP 网络监听，事件流输出资源 |
 | `live_recorder` | 直播录制：平台抽象、录制 handle、进度查询 |
 | `xbogus` | X-Bogus/AB-Sign 签名实现 |
@@ -78,7 +78,7 @@ magekit-app/
 │   ├── tool_manager/       # 工具管理 + 任务队列/持久化/事件
 │   ├── download/           # 下载执行层（直链/yt-dlp/ffmpeg/HLS-DASH）
 │   ├── extractor/          # 平台解析层（自研 + yt-dlp 回退）
-│   ├── bytedance/          # 抖音 API + 签名
+│   ├── platform_api/       # 多平台 API + 签名（Douyin/TikTok/Bilibili…）
 │   ├── capture/            # CDP 嗅探库
 │   ├── live_recorder/      # 直播录制/平台适配
 │   └── xbogus/             # X-Bogus/AB-Sign 签名

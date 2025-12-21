@@ -1,9 +1,9 @@
 //! 抖音视频解析模块
 //!
-//! 使用 bytedance 包实现抖音视频和用户主页的解析
+//! 使用 platform-api 实现抖音视频和用户主页的解析
 
 use crate::error::{ExtractError, ExtractResult};
-use bytedance::douyin::DouyinApi;
+use platform_api::douyin::DouyinApi;
 use magekit_shared::{
     ChannelInfo, ChannelPageResult, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo,
 };
@@ -62,7 +62,7 @@ pub async fn extract_video_info(
     let mut formats = Vec::new();
 
     if let Some(video) = &aweme_info.video {
-        // 使用 bytedance 返回的格式
+        // 使用 platform-api 返回的格式
         for fmt in &video.formats {
             formats.push(VideoFormat {
                 format_id: fmt.format_id.clone(),

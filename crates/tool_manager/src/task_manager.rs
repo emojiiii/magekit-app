@@ -257,7 +257,61 @@ impl ToolManager {
         };
 
         // 如果解析器提供了直链，且用户选择的格式对应直链，则优先走直链下载（避免 yt-dlp）
+        //
+        // 额外支持“视频+音频”直链合并（例如 Bilibili DASH：bili_vqn120+bili_a30280）。
+        // 需要在“单直链兜底逻辑”之前处理，否则会误触发 best direct fallback。
         if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+            if let Some((video_url, audio_url)) =
+                try_select_direct_merge_pair(&options.format_id, &video_info.formats)
+            {
+                options.ffmpeg_url = Some(video_url);
+                options.ffmpeg_args = vec![
+                    "-i".to_string(),
+                    audio_url,
+                    "-map".to_string(),
+                    "0:v:0".to_string(),
+                    "-map".to_string(),
+                    "1:a:0".to_string(),
+                    "-shortest".to_string(),
+                ];
+            }
+        }
+        if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+            // 若用户只选了“仅视频”的 DASH 直链（无音频），则自动挑选最优音频并用 ffmpeg 合并，
+            // 避免把 fMP4 分段当作 mp4 直下导致“文件无法播放”。
+            if let Some(selected) = video_info.formats.iter().find(|f| f.format_id == options.format_id) {
+                let is_video_only = selected
+                    .vcodec
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "none")
+                    .unwrap_or(false)
+                    && selected
+                        .acodec
+                        .as_ref()
+                        .map(|s| !s.is_empty() && s != "none")
+                        .unwrap_or(false)
+                        == false;
+                if is_video_only {
+                    if let (Some(video_url), Some(best_audio)) = (
+                        selected.download_url.clone(),
+                        select_best_audio_only_format(&video_info.formats),
+                    ) {
+                        if let Some(audio_url) = best_audio.download_url.clone() {
+                            options.ffmpeg_url = Some(video_url);
+                            options.ffmpeg_args = vec![
+                                "-i".to_string(),
+                                audio_url,
+                                "-map".to_string(),
+                                "0:v:0".to_string(),
+                                "-map".to_string(),
+                                "1:a:0".to_string(),
+                                "-shortest".to_string(),
+                            ];
+                        }
+                    }
+                }
+            }
+
             if let Some(url) = video_info
                 .formats
                 .iter()
@@ -268,8 +322,41 @@ impl ToolManager {
             } else if let Some(best) = select_best_direct_format(&video_info.formats) {
                 // UI 可能传入 yt-dlp 风格的 format 字符串；如果解析器已提供直链格式，
                 // 则直接选取“最高分辨率”的直链格式作为兜底，避免走 yt-dlp。
-                options.format_id = best.format_id.clone();
-                options.download_url = best.download_url.clone();
+                let best_is_video_only = best
+                    .vcodec
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "none")
+                    .unwrap_or(false)
+                    && best
+                        .acodec
+                        .as_ref()
+                        .map(|s| !s.is_empty() && s != "none")
+                        .unwrap_or(false)
+                        == false;
+
+                if best_is_video_only {
+                    if let Some(audio) = select_best_audio_only_format(&video_info.formats) {
+                        if let (Some(video_url), Some(audio_url)) =
+                            (best.download_url.clone(), audio.download_url.clone())
+                        {
+                            options.ffmpeg_url = Some(video_url);
+                            options.ffmpeg_args = vec![
+                                "-i".to_string(),
+                                audio_url,
+                                "-map".to_string(),
+                                "0:v:0".to_string(),
+                                "-map".to_string(),
+                                "1:a:0".to_string(),
+                                "-shortest".to_string(),
+                            ];
+                        }
+                    }
+                }
+
+                if options.ffmpeg_url.is_none() {
+                    options.format_id = best.format_id.clone();
+                    options.download_url = best.download_url.clone();
+                }
             }
         }
         if task_status.title.is_none() {
@@ -939,6 +1026,18 @@ impl ToolManager {
             headers_map
                 .entry("Origin".to_string())
                 .or_insert_with(|| "https://www.douyin.com".to_string());
+        }
+        // Bilibili 直链通常要求 Referer/UA，否则可能 403 或返回非媒体内容。
+        if platform_hint == Some("bilibili") {
+            headers_map.entry("User-Agent".to_string()).or_insert_with(|| {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string()
+            });
+            headers_map
+                .entry("Referer".to_string())
+                .or_insert_with(|| "https://www.bilibili.com/".to_string());
+            headers_map
+                .entry("Origin".to_string())
+                .or_insert_with(|| "https://www.bilibili.com".to_string());
         }
 
         let request = download::DownloadRequest {
@@ -1911,6 +2010,76 @@ fn select_best_direct_format(formats: &[magekit_shared::VideoFormat]) -> Option<
         })
 }
 
+fn try_select_direct_merge_pair(
+    format_id: &str,
+    formats: &[magekit_shared::VideoFormat],
+) -> Option<(String, String)> {
+    let (left, right) = format_id.split_once('+')?;
+    let left = left.trim();
+    let right = right.trim();
+    if left.is_empty() || right.is_empty() {
+        return None;
+    }
+
+    let a = formats.iter().find(|f| f.format_id == left)?;
+    let b = formats.iter().find(|f| f.format_id == right)?;
+
+    let a_url = a.download_url.as_ref()?.trim();
+    let b_url = b.download_url.as_ref()?.trim();
+    if a_url.is_empty() || b_url.is_empty() {
+        return None;
+    }
+
+    let a_is_video = a
+        .vcodec
+        .as_ref()
+        .map(|s| !s.is_empty() && s != "none")
+        .unwrap_or(false);
+    let b_is_video = b
+        .vcodec
+        .as_ref()
+        .map(|s| !s.is_empty() && s != "none")
+        .unwrap_or(false);
+    let a_is_audio = a
+        .acodec
+        .as_ref()
+        .map(|s| !s.is_empty() && s != "none")
+        .unwrap_or(false);
+    let b_is_audio = b
+        .acodec
+        .as_ref()
+        .map(|s| !s.is_empty() && s != "none")
+        .unwrap_or(false);
+
+    match (a_is_video, a_is_audio, b_is_video, b_is_audio) {
+        (true, false, false, true) => Some((a_url.to_string(), b_url.to_string())),
+        (false, true, true, false) => Some((b_url.to_string(), a_url.to_string())),
+        _ => None,
+    }
+}
+
+fn select_best_audio_only_format(
+    formats: &[magekit_shared::VideoFormat],
+) -> Option<&magekit_shared::VideoFormat> {
+    formats
+        .iter()
+        .filter(|f| f.download_url.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .filter(|f| {
+            let has_video = f
+                .vcodec
+                .as_ref()
+                .map(|s| !s.is_empty() && s != "none")
+                .unwrap_or(false);
+            let has_audio = f
+                .acodec
+                .as_ref()
+                .map(|s| !s.is_empty() && s != "none")
+                .unwrap_or(false);
+            !has_video && has_audio
+        })
+        .max_by_key(|f| f.filesize.unwrap_or(0))
+}
+
 fn codec_preference_score(format: &magekit_shared::VideoFormat) -> u8 {
     // 经验优先级：h264（通用兼容） > 未知 > h265/hevc（Windows/部分播放器可能缺 codec）
     let mut s = format.format_id.to_lowercase();
@@ -2178,5 +2347,68 @@ mod tests {
         assert_eq!(super::parse_height_from_resolution(Some("1080p")), Some(1080));
         assert_eq!(super::parse_height_from_resolution(Some("bad")), None);
         assert_eq!(super::parse_height_from_resolution(None), None);
+    }
+
+    #[test]
+    fn test_try_select_direct_merge_pair_picks_video_and_audio_urls() {
+        let formats = vec![
+            VideoFormat {
+                format_id: "bili_vqn120".to_string(),
+                ext: "m4s".to_string(),
+                resolution: Some("3840x2160".to_string()),
+                fps: Some(60.0),
+                filesize: None,
+                vcodec: Some("hev1.1.6.L150.90".to_string()),
+                acodec: None,
+                quality: Some("4K".to_string()),
+                download_url: Some("https://example.com/video.m4s".to_string()),
+            },
+            VideoFormat {
+                format_id: "bili_a30280".to_string(),
+                ext: "m4s".to_string(),
+                resolution: None,
+                fps: None,
+                filesize: None,
+                vcodec: None,
+                acodec: Some("mp4a.40.2".to_string()),
+                quality: Some("音频".to_string()),
+                download_url: Some("https://example.com/audio.m4s".to_string()),
+            },
+        ];
+
+        let pair =
+            super::try_select_direct_merge_pair("bili_vqn120+bili_a30280", &formats).expect("pair");
+        assert_eq!(pair.0, "https://example.com/video.m4s");
+        assert_eq!(pair.1, "https://example.com/audio.m4s");
+    }
+
+    #[test]
+    fn test_select_best_audio_only_format_picks_largest_filesize() {
+        let formats = vec![
+            VideoFormat {
+                format_id: "a1".to_string(),
+                ext: "m4a".to_string(),
+                resolution: None,
+                fps: None,
+                filesize: Some(10),
+                vcodec: None,
+                acodec: Some("mp4a.40.2".to_string()),
+                quality: None,
+                download_url: Some("https://example.com/a1.m4s".to_string()),
+            },
+            VideoFormat {
+                format_id: "a2".to_string(),
+                ext: "m4a".to_string(),
+                resolution: None,
+                fps: None,
+                filesize: Some(20),
+                vcodec: None,
+                acodec: Some("mp4a.40.2".to_string()),
+                quality: None,
+                download_url: Some("https://example.com/a2.m4s".to_string()),
+            },
+        ];
+        let best = super::select_best_audio_only_format(&formats).expect("best audio");
+        assert_eq!(best.format_id, "a2");
     }
 }

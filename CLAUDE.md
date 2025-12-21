@@ -95,7 +95,7 @@ magekit-app/                    # Root workspace & GUI application
 │   ├── download/              # Unified download abstraction (direct/yt-dlp/ffmpeg/HLS)
 │   ├── capture/               # Web resource capture via CDP
 │   ├── extractor/             # Custom extractors + yt-dlp bridge
-│   ├── bytedance/             # Douyin/TikTok API & signing
+│   ├── platform_api/          # Multi-platform API & signing
 │   ├── live_recorder/         # Live streaming recording
 │   └── xbogus/                # X-Bogus/AB-Sign signature
 └── themes/                    # Theme files (.toml)
@@ -111,7 +111,7 @@ magekit-app (GUI)
 │   ├─→ download (new unified download layer)
 │   └─→ extractor
 │       ├─→ shared
-│       └─→ bytedance
+│       └─→ platform-api
 ├─→ capture (web resource capture)
 │   └─→ shared
 └─→ live_recorder
@@ -235,9 +235,9 @@ magekit-app (GUI)
 
 **Features**: Room status checking, stream info extraction, recording with quality/segment config.
 
-#### `crates/bytedance/` - Douyin/TikTok API
+#### `crates/platform_api/` - Platform API (Multi-platform)
 
-**Purpose**: Douyin/TikTok Web API integration and signing.
+**Purpose**: Multi-platform Web API integration and signing (Douyin/TikTok/Bilibili).
 
 #### `crates/xbogus/` - Signature Library
 

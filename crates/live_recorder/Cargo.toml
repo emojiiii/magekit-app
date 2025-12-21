@@ -35,4 +35,4 @@ rquickjs = { version = "0.10.0", features = ["full-async", "parallel"] }
 
 # Local dependencies
 xbogus = { path = "../xbogus" }
-bytedance = { path = "../bytedance" }
+platform-api = { path = "../platform_api" }

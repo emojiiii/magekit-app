@@ -85,7 +85,9 @@ impl crate::downloader::Downloader for FfmpegDownloader {
 
         // 透传自定义参数（key = "ffmpeg"）
         if let Some(args) = request.extra.tool_args.get("ffmpeg") {
-            cmd.args(args);
+            // 对于多输入（如 DASH：video+audio），需要给每个额外输入重复 headers，
+            // 否则可能出现 403/返回 HTML 导致合并失败。
+            cmd.args(expand_ffmpeg_args_with_headers(args, &header_blob));
             tracing::debug!("📝 添加额外参数: {:?}", args);
         }
 
@@ -99,8 +101,8 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                 cmd.arg("-f").arg(ext.to_string_lossy().as_ref());
                 tracing::debug!("🔧 强制输出格式: {}", ext.to_string_lossy());
 
-                // 🔧 对于mp4，添加AAC音频流过滤器（从HLS转换时需要）
-                if ext == "mp4" {
+                // 🔧 对于 mp4，仅在 HLS(m3u8) → mp4 场景需要 aac_adtstoasc。
+                if ext == "mp4" && is_hls_input(&request.url) {
                     cmd.arg("-bsf:a").arg("aac_adtstoasc");
                     tracing::debug!("🔧 添加 AAC 音频流过滤器");
                 }
@@ -378,6 +380,40 @@ pub fn parse_timestamp_to_secs(ts: &str) -> Option<f64> {
     Some(h * 3600.0 + m * 60.0 + s)
 }
 
+fn is_hls_input(url: &url::Url) -> bool {
+    let s = url.as_str();
+    url.path().ends_with(".m3u8") || s.contains(".m3u8")
+}
+
+fn expand_ffmpeg_args_with_headers(args: &[String], header_blob: &str) -> Vec<String> {
+    if header_blob.trim().is_empty() {
+        return args.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(args.len() + 4);
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "-i" {
+            // 若调用方已显式指定 -headers，则尊重；否则为该输入补齐 headers
+            let prev_is_headers = out.last().map(|x| x == "-headers").unwrap_or(false);
+            if !prev_is_headers {
+                out.push("-headers".to_string());
+                out.push(header_blob.to_string());
+            }
+            out.push("-i".to_string());
+            if i + 1 < args.len() {
+                out.push(args[i + 1].clone());
+                i += 2;
+                continue;
+            }
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    out
+}
+
 async fn probe_m3u8_total_duration_secs(
     request: &DownloadRequest,
     cancel: &CancellationToken,
@@ -462,4 +498,38 @@ async fn fetch_bytes(
 
     let bytes = resp.bytes().await.map_err(DownloadError::from)?;
     Ok(bytes.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_ffmpeg_args_with_headers_inserts_for_extra_inputs() {
+        let header = "User-Agent: UA\r\nReferer: https://example.com/\r\n";
+        let args = vec![
+            "-i".to_string(),
+            "https://a.example.com/audio.m4s".to_string(),
+            "-map".to_string(),
+            "0:v:0".to_string(),
+        ];
+        let expanded = expand_ffmpeg_args_with_headers(&args, header);
+        assert_eq!(
+            expanded[..4],
+            [
+                "-headers".to_string(),
+                header.to_string(),
+                "-i".to_string(),
+                "https://a.example.com/audio.m4s".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_is_hls_input_only_matches_m3u8() {
+        let u1 = url::Url::parse("https://example.com/index.m3u8").unwrap();
+        let u2 = url::Url::parse("https://example.com/video.m4s").unwrap();
+        assert!(is_hls_input(&u1));
+        assert!(!is_hls_input(&u2));
+    }
 }

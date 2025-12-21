@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 magekit-shared = { path = "../shared" }
-bytedance = { path = "../bytedance" }
+platform-api = { path = "../platform_api" }
 base64 = "0.22"
 indexmap = "2"
 md5 = "0.7"

@@ -3,6 +3,7 @@
 //! 将平台解析逻辑与 UI 解耦，便于后续扩展更多平台。
 
 pub mod cookies;
+mod bilibili;
 mod douyin;
 pub mod error;
 mod platform;
@@ -45,6 +46,10 @@ impl MediaExtractor {
             return tiktok::extract_video_info(url, cookies).await;
         }
 
+        if matches!(platform, Platform::Bilibili) {
+            return bilibili::extract_video_info(url, cookies).await;
+        }
+
         // 其他平台默认交给 yt-dlp 处理，失败则视为不支持
         ytdlp::extract_video_info(url, cookies, &self.yt_dlp_path).await
     }
@@ -63,6 +68,11 @@ impl MediaExtractor {
         if matches!(platform, Platform::Douyin) && douyin::is_douyin_user_url(url) {
             tracing::info!("🚀 使用 extractor 解析抖音用户主页");
             return douyin::extract_channel_info(url, cookies).await;
+        }
+
+        if matches!(platform, Platform::Bilibili) && bilibili::is_bilibili_space_url(url) {
+            tracing::info!("🚧 使用 extractor 解析 Bilibili UP 主页");
+            return bilibili::extract_channel_info(url, cookies).await;
         }
 
         // 其他平台使用 yt-dlp
@@ -85,6 +95,10 @@ impl MediaExtractor {
         if matches!(platform, Platform::Douyin) && douyin::is_douyin_user_url(url) {
             return douyin::extract_channel_page(url, cookies, cursor.unwrap_or(0), count as i64)
                 .await;
+        }
+
+        if matches!(platform, Platform::Bilibili) && bilibili::is_bilibili_space_url(url) {
+            return bilibili::extract_channel_page(url, cookies, cursor, count).await;
         }
 
         ytdlp::extract_channel_page(url, cursor, count, cookies, &self.yt_dlp_path).await

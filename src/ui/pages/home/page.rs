@@ -146,9 +146,10 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
             .clone()
             .unwrap_or_else(|| "unknown".to_string());
 
-        // 判断帧率类别：高帧率 (> 30fps) 或普通帧率
+        // 判断帧率类别：使用“整数帧率”避免 30.001 这类浮点误差导致重复项
         let fps = fmt.fps.unwrap_or(30.0);
-        let is_high_fps = fps > 30.0;
+        let fps_int = fps.round() as u32;
+        let is_high_fps = fps_int > 30;
         let fps_category = if is_high_fps { "high" } else { "normal" };
 
         // 生成用户友好的标签
@@ -157,7 +158,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
             if let Some(height) = res.split('x').last() {
                 if let Ok(h) = height.parse::<u32>() {
                     if is_high_fps {
-                        format!("{}p{}", h, fps.round() as u32)
+                        format!("{}p{}", h, fps_int)
                     } else {
                         format!("{}p", h)
                     }

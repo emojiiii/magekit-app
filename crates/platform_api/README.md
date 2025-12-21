@@ -1,6 +1,6 @@
-# magekit-bytedance
+# platform-api
 
-字节跳动平台 API 封装，提供抖音 Web 端接口调用与签名能力（A-Bogus / X-Bogus）。适合作为上层解析器或录制/下载工具的基础依赖。
+多平台 Web API 封装（当前包含 Douyin/TikTok/Bilibili），提供站点接口调用、签名与必要的反爬参数拼装能力。适合作为上层解析器或录制/下载工具的基础依赖。
 
 ## 模块与主要 API
 
@@ -24,10 +24,16 @@
   - `ab_sign(query, user_agent, seed)` 生成 A-Bogus
   - `xbogus_sign(query, user_agent)` 生成 X-Bogus
 
+- `BilibiliApi`
+  - 构造：`new()`，支持 `set_cookie`
+  - 视频：`get_video_detail`、`get_video_playurl`（progressive 直链）
+  - UP 投稿分页：`get_user_post_videos`（WBI + dm_* 参数）
+  - WBI：自动从 `NAV` 获取 wbi_img 并缓存 mixin_key
+
 ## 快速示例
 
 ```rust
-use magekit_bytedance::{DouyinApi, ClientConfig};
+use platform_api::{DouyinApi, ClientConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

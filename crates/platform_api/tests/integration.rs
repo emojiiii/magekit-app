@@ -2,8 +2,8 @@
 //!
 //! 验证抖音 API 接口的正确性
 
-use bytedance::douyin::{DouyinApi, DouyinEndpoints, DouyinLiveApi};
-use bytedance::sign::{AbogusOptions, ab_sign, xbogus_sign};
+use platform_api::douyin::{DouyinApi, DouyinEndpoints, DouyinLiveApi};
+use platform_api::sign::{AbogusOptions, ab_sign, xbogus_sign};
 
 /// 测试签名函数
 #[test]

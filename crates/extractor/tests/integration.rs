@@ -51,12 +51,9 @@ async fn youtube_single_video_via_ytdlp() {
 
 #[tokio::test]
 #[ignore = "需要网络连接与本机 yt-dlp（部分视频/频道可能需要 Cookie）"]
-async fn bilibili_single_video_via_ytdlp() {
-    let yt_dlp = match resolve_yt_dlp_path() {
-        Some(p) => p,
-        None => return,
-    };
-    let extractor = MediaExtractor::new(yt_dlp);
+async fn bilibili_single_video_via_api() {
+    // Bilibili 自研解析不依赖 yt-dlp，这里传一个占位路径即可。
+    let extractor = MediaExtractor::new(PathBuf::from("yt-dlp"));
     let url = "https://www.bilibili.com/video/BV1fW411W7cR";
     let cookies = cookies_from_test_json("bilibili");
     let info = timeout(
@@ -68,6 +65,7 @@ async fn bilibili_single_video_via_ytdlp() {
     .expect("bilibili video parse failed");
     assert!(!info.id.is_empty());
     assert!(!info.formats.is_empty());
+    assert!(info.formats.iter().any(|f| f.download_url.is_some()));
 }
 
 #[tokio::test]
@@ -220,12 +218,9 @@ async fn youtube_channel_first_page_should_not_be_tabs_only() {
 
 #[tokio::test]
 #[ignore = "需要网络连接与本机 yt-dlp（部分频道可能需要 Cookie）"]
-async fn bilibili_space_channel() {
-    let yt_dlp = match resolve_yt_dlp_path() {
-        Some(p) => p,
-        None => return,
-    };
-    let extractor = MediaExtractor::new(yt_dlp);
+async fn bilibili_space_channel() {        
+    // Bilibili 自研解析不依赖 yt-dlp，这里传一个占位路径即可。
+    let extractor = MediaExtractor::new(PathBuf::from("yt-dlp"));
     let url = "https://space.bilibili.com/282357985";
     let cookies = cookies_from_test_json("bilibili");
     let info = timeout(

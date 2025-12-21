@@ -1,11 +1,11 @@
 [package]
-name = "bytedance"
+name = "platform-api"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "字节跳动平台 API 接口库 (抖音/TikTok)"
+description = "多平台 Web API 接口库（Douyin/TikTok/Bilibili 等）"
 
 [dependencies]
 # HTTP 客户端

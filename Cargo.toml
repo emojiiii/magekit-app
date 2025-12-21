@@ -7,7 +7,7 @@ members = [
     "crates/live_recorder",
     "crates/xbogus",
     "crates/extractor",
-    "crates/bytedance",
+    "crates/platform_api",
     "crates/capture",
 ]
 resolver = "2"
