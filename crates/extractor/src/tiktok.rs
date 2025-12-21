@@ -3,8 +3,8 @@
 //! 使用 platform-api 的 X-Bogus 签名实现 TikTok 视频解析
 
 use crate::error::{ExtractError, ExtractResult};
-use platform_api::xbogus_sign;
 use magekit_shared::{PlatformCookie, VideoFormat, VideoInfo};
+use platform_api::xbogus_sign;
 use regex::Regex;
 use std::collections::HashMap;
 use std::time::Duration;

@@ -205,9 +205,8 @@ impl crate::downloader::Downloader for DirectDownloader {
                 &head[i..]
             };
 
-            let looks_like_m3u8 = trimmed.starts_with(b"#EXTM3U")
-                || ct.contains("mpegurl")
-                || ct.contains("m3u8");
+            let looks_like_m3u8 =
+                trimmed.starts_with(b"#EXTM3U") || ct.contains("mpegurl") || ct.contains("m3u8");
             let looks_like_html = trimmed.starts_with(b"<") || ct.contains("text/html");
             let looks_like_json = trimmed.starts_with(b"{") || ct.contains("application/json");
 

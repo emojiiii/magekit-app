@@ -279,7 +279,11 @@ impl ToolManager {
         if options.download_url.is_none() && options.ffmpeg_url.is_none() {
             // 若用户只选了“仅视频”的 DASH 直链（无音频），则自动挑选最优音频并用 ffmpeg 合并，
             // 避免把 fMP4 分段当作 mp4 直下导致“文件无法播放”。
-            if let Some(selected) = video_info.formats.iter().find(|f| f.format_id == options.format_id) {
+            if let Some(selected) = video_info
+                .formats
+                .iter()
+                .find(|f| f.format_id == options.format_id)
+            {
                 let is_video_only = selected
                     .vcodec
                     .as_ref()
@@ -985,7 +989,10 @@ impl ToolManager {
         }
 
         // 🔧 仅在会走 yt-dlp（Auto）时传递 format_id，避免 Direct/ffmpeg 场景产生误导日志
-        if options.download_url.is_none() && options.ffmpeg_url.is_none() && !options.format_id.is_empty() {
+        if options.download_url.is_none()
+            && options.ffmpeg_url.is_none()
+            && !options.format_id.is_empty()
+        {
             let ytdlp_args = vec!["-f".to_string(), options.format_id.clone()];
             tool_args.insert("ytdlp".to_string(), ytdlp_args.clone());
             tracing::info!("📝 传递 yt-dlp 格式参数: {:?}", ytdlp_args);
@@ -1998,7 +2005,9 @@ fn is_direct_resource(url: &str) -> bool {
     false
 }
 
-fn select_best_direct_format(formats: &[magekit_shared::VideoFormat]) -> Option<&magekit_shared::VideoFormat> {
+fn select_best_direct_format(
+    formats: &[magekit_shared::VideoFormat],
+) -> Option<&magekit_shared::VideoFormat> {
     formats
         .iter()
         .filter(|f| f.download_url.is_some())
@@ -2063,7 +2072,12 @@ fn select_best_audio_only_format(
 ) -> Option<&magekit_shared::VideoFormat> {
     formats
         .iter()
-        .filter(|f| f.download_url.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .filter(|f| {
+            f.download_url
+                .as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        })
         .filter(|f| {
             let has_video = f
                 .vcodec
@@ -2307,7 +2321,10 @@ mod tests {
 
         let best = super::select_best_direct_format(&formats).expect("best format");
         assert_eq!(best.format_id, "1080p");
-        assert_eq!(best.download_url.as_deref(), Some("https://example.com/1080.mp4"));
+        assert_eq!(
+            best.download_url.as_deref(),
+            Some("https://example.com/1080.mp4")
+        );
     }
 
     #[test]
@@ -2338,13 +2355,22 @@ mod tests {
         ];
 
         let best = super::select_best_direct_format(&formats).expect("best format");
-        assert_eq!(best.download_url.as_deref(), Some("https://example.com/h264.mp4"));
+        assert_eq!(
+            best.download_url.as_deref(),
+            Some("https://example.com/h264.mp4")
+        );
     }
 
     #[test]
     fn test_parse_height_from_resolution_supports_common_shapes() {
-        assert_eq!(super::parse_height_from_resolution(Some("1920x1080")), Some(1080));
-        assert_eq!(super::parse_height_from_resolution(Some("1080p")), Some(1080));
+        assert_eq!(
+            super::parse_height_from_resolution(Some("1920x1080")),
+            Some(1080)
+        );
+        assert_eq!(
+            super::parse_height_from_resolution(Some("1080p")),
+            Some(1080)
+        );
         assert_eq!(super::parse_height_from_resolution(Some("bad")), None);
         assert_eq!(super::parse_height_from_resolution(None), None);
     }

@@ -451,7 +451,11 @@ fn parse_aweme_detail(detail: &Value, fallback_aweme_id: &str) -> AwemeInfo {
         .unwrap_or(fallback_aweme_id)
         .to_string();
 
-    let mut desc = detail.get("desc").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut desc = detail
+        .get("desc")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if desc.trim().is_empty() {
         // 部分作品 desc 为空，尝试使用 share_title 兜底，避免 UI 空标题
         desc = detail
@@ -467,8 +471,14 @@ fn parse_aweme_detail(detail: &Value, fallback_aweme_id: &str) -> AwemeInfo {
     let author = detail.get("author").and_then(|a| {
         Some(AuthorInfo {
             uid: a.get("uid").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            sec_uid: a.get("sec_uid").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            nickname: a.get("nickname").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            sec_uid: a
+                .get("sec_uid")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            nickname: a
+                .get("nickname")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             avatar_url: first_url_from_list(a.pointer("/avatar_thumb/url_list")),
         })
     });
@@ -489,9 +499,7 @@ fn parse_aweme_detail(detail: &Value, fallback_aweme_id: &str) -> AwemeInfo {
                 formats.push(VideoFormat {
                     format_id: "play".to_string(),
                     ext: "mp4".to_string(),
-                    resolution: width
-                        .zip(height)
-                        .map(|(w, h)| format!("{}x{}", w, h)),
+                    resolution: width.zip(height).map(|(w, h)| format!("{}x{}", w, h)),
                     filesize: None,
                     quality: Some("play_addr".to_string()),
                     download_url: Some(url),
@@ -531,7 +539,11 @@ fn parse_aweme_detail(detail: &Value, fallback_aweme_id: &str) -> AwemeInfo {
     }
 }
 
-fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Option<u32>) -> Vec<VideoFormat> {
+fn parse_video_formats(
+    video: &Value,
+    fallback_w: Option<u32>,
+    fallback_h: Option<u32>,
+) -> Vec<VideoFormat> {
     let mut out = Vec::new();
 
     // 优先使用 download_addr（通常更适合直接下载）
@@ -548,12 +560,13 @@ fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Optio
         });
     }
 
-    let bit_rate = video.get("bit_rate").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let bit_rate = video
+        .get("bit_rate")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     for item in bit_rate {
-        let gear_name = item
-            .get("gear_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let gear_name = item.get("gear_name").and_then(|v| v.as_str()).unwrap_or("");
         let codec_from_item = item
             .get("codec_type")
             .and_then(|v| v.as_str())
@@ -585,7 +598,8 @@ fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Optio
                 .or(fallback_h);
 
             let resolution = width.zip(height).map(|(w, h)| format!("{}x{}", w, h));
-            let filesize = parse_u64(item.get("size")).or_else(|| parse_u64(play_addr.get("data_size")));
+            let filesize =
+                parse_u64(item.get("size")).or_else(|| parse_u64(play_addr.get("data_size")));
 
             let format_id = make_format_id(gear_name, codec_label, height, bitrate);
             let quality = if !gear_name.trim().is_empty() {
@@ -609,11 +623,21 @@ fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Optio
 
     // 去重：同 URL 只保留第一个
     let mut seen = std::collections::HashSet::new();
-    out.retain(|f| f.download_url.as_deref().map(|u| seen.insert(u.to_string())).unwrap_or(true));
+    out.retain(|f| {
+        f.download_url
+            .as_deref()
+            .map(|u| seen.insert(u.to_string()))
+            .unwrap_or(true)
+    });
     out
 }
 
-fn make_format_id(gear_name: &str, codec: &str, height: Option<u32>, bitrate: Option<u64>) -> String {
+fn make_format_id(
+    gear_name: &str,
+    codec: &str,
+    height: Option<u32>,
+    bitrate: Option<u64>,
+) -> String {
     // format_id 用于 UI 展示/选择，尽量友好且可区分
     let mut parts: Vec<String> = Vec::new();
     if let Some(h) = height {
@@ -749,21 +773,25 @@ mod tests {
             "formats too few: {}",
             video.formats.len()
         );
-        assert!(video
-            .formats
-            .iter()
-            .any(|f| f.format_id == "download" && f.download_url.as_deref() == Some("https://example.com/dl.mp4")));
-        assert!(video
-            .formats
-            .iter()
-            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080.mp4")));
-        assert!(video
-            .formats
-            .iter()
-            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h264.mp4")));
-        assert!(video
-            .formats
-            .iter()
-            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h265.mp4")));
+        assert!(video.formats.iter().any(|f| f.format_id == "download"
+            && f.download_url.as_deref() == Some("https://example.com/dl.mp4")));
+        assert!(
+            video
+                .formats
+                .iter()
+                .any(|f| f.download_url.as_deref() == Some("https://example.com/1080.mp4"))
+        );
+        assert!(
+            video
+                .formats
+                .iter()
+                .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h264.mp4"))
+        );
+        assert!(
+            video
+                .formats
+                .iter()
+                .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h265.mp4"))
+        );
     }
 }

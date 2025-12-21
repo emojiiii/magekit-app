@@ -1,7 +1,7 @@
 use magekit_extractor::MediaExtractor;
-use magekit_shared::{resolve_yt_dlp_path, PlatformCookie};
+use magekit_shared::{PlatformCookie, resolve_yt_dlp_path};
 use std::path::PathBuf;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 fn cookie_json_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -206,19 +206,26 @@ async fn youtube_channel_first_page_should_not_be_tabs_only() {
 
     // 频道根路径（/@handle）应默认落到 /videos，否则在 flat-playlist 下可能只拿到 tabs 列表。
     let url = "https://www.youtube.com/@grijua";
-    let page = timeout(Duration::from_secs(60), extractor.get_channel_page(url, None, 20, None))
-        .await
-        .expect("timeout for youtube channel page")
-        .expect("youtube channel page parse failed");
+    let page = timeout(
+        Duration::from_secs(60),
+        extractor.get_channel_page(url, None, 20, None),
+    )
+    .await
+    .expect("timeout for youtube channel page")
+    .expect("youtube channel page parse failed");
 
     assert!(!page.info.title.trim().is_empty());
-    assert!(page.info.entries.len() >= 10, "too few entries: {}", page.info.entries.len());
+    assert!(
+        page.info.entries.len() >= 10,
+        "too few entries: {}",
+        page.info.entries.len()
+    );
     assert!(page.info.video_count >= page.info.entries.len());
 }
 
 #[tokio::test]
 #[ignore = "需要网络连接与本机 yt-dlp（部分频道可能需要 Cookie）"]
-async fn bilibili_space_channel() {        
+async fn bilibili_space_channel() {
     // Bilibili 自研解析不依赖 yt-dlp，这里传一个占位路径即可。
     let extractor = MediaExtractor::new(PathBuf::from("yt-dlp"));
     let url = "https://space.bilibili.com/282357985";

@@ -4,8 +4,10 @@
 //! - UP 主页：通过 WBI 投稿列表接口分页获取
 
 use crate::error::{ExtractError, ExtractResult};
+use magekit_shared::{
+    ChannelInfo, ChannelPageResult, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo,
+};
 use platform_api::BilibiliApi;
-use magekit_shared::{ChannelInfo, ChannelPageResult, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -49,7 +51,9 @@ fn setup_api_cookie(api: &mut BilibiliApi, cookies: Option<&[PlatformCookie]>) {
         );
         api.set_cookie(&c.cookie);
     } else {
-        tracing::warn!("🍪 Bilibili cookie: 未找到可用的 cookie（请在设置里配置 platform=bilibili 或 space.bilibili.com）");
+        tracing::warn!(
+            "🍪 Bilibili cookie: 未找到可用的 cookie（请在设置里配置 platform=bilibili 或 space.bilibili.com）"
+        );
     }
 }
 
@@ -61,7 +65,10 @@ fn normalize_space_url(mid: &str) -> String {
     format!("https://space.bilibili.com/{}", mid)
 }
 
-pub async fn extract_video_info(url: &str, cookies: Option<&[PlatformCookie]>) -> ExtractResult<VideoInfo> {
+pub async fn extract_video_info(
+    url: &str,
+    cookies: Option<&[PlatformCookie]>,
+) -> ExtractResult<VideoInfo> {
     tracing::info!("📺 开始解析 Bilibili 视频: {}", url);
 
     let mut api = BilibiliApi::new()
@@ -69,7 +76,9 @@ pub async fn extract_video_info(url: &str, cookies: Option<&[PlatformCookie]>) -
     setup_api_cookie(&mut api, cookies);
 
     let resolved = if url.to_lowercase().contains("b23.tv") {
-        api.resolve_short_url(url).await.unwrap_or_else(|_| url.to_string())
+        api.resolve_short_url(url)
+            .await
+            .unwrap_or_else(|_| url.to_string())
     } else {
         url.to_string()
     };
@@ -88,10 +97,23 @@ pub async fn extract_video_info(url: &str, cookies: Option<&[PlatformCookie]>) -
         .get("data")
         .ok_or_else(|| ExtractError::Parse("video_detail.data 缺失".to_string()))?;
 
-    let title = data.get("title").and_then(|v| v.as_str()).unwrap_or(&bvid).to_string();
-    let desc = data.get("desc").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let duration = data.get("duration").and_then(|v| v.as_u64()).map(Duration::from_secs);
-    let thumbnail = data.get("pic").and_then(|v| v.as_str()).map(normalize_url_scheme);
+    let title = data
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&bvid)
+        .to_string();
+    let desc = data
+        .get("desc")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let duration = data
+        .get("duration")
+        .and_then(|v| v.as_u64())
+        .map(Duration::from_secs);
+    let thumbnail = data
+        .get("pic")
+        .and_then(|v| v.as_str())
+        .map(normalize_url_scheme);
     let uploader = data
         .get("owner")
         .and_then(|o| o.get("name"))
@@ -131,12 +153,9 @@ pub async fn extract_video_info(url: &str, cookies: Option<&[PlatformCookie]>) -
         // progressive(durl) 兜底：逐档请求（一般最高只有 720p）
         for q in list.iter().filter_map(|v| v.as_u64()).take(6) {
             let qn = q as u32;
-            let resp = api
-                .get_video_playurl(&bvid, cid, qn)
-                .await
-                .map_err(|e| {
-                    ExtractError::Network(format!("获取播放地址失败(qn={}): {}", qn, e))
-                })?;
+            let resp = api.get_video_playurl(&bvid, cid, qn).await.map_err(|e| {
+                ExtractError::Network(format!("获取播放地址失败(qn={}): {}", qn, e))
+            })?;
             if ensure_ok(&resp, "playurl").is_err() {
                 continue;
             }
@@ -166,7 +185,10 @@ pub async fn extract_video_info(url: &str, cookies: Option<&[PlatformCookie]>) -
     })
 }
 
-pub async fn extract_channel_info(url: &str, cookies: Option<&[PlatformCookie]>) -> ExtractResult<ChannelInfo> {
+pub async fn extract_channel_info(
+    url: &str,
+    cookies: Option<&[PlatformCookie]>,
+) -> ExtractResult<ChannelInfo> {
     let page = extract_channel_page(url, cookies, None, 20).await?;
     Ok(page.info)
 }
@@ -177,14 +199,21 @@ pub async fn extract_channel_page(
     cursor: Option<i64>,
     count: usize,
 ) -> ExtractResult<ChannelPageResult> {
-    tracing::info!("📺 获取 Bilibili UP 分页: url={} cursor={:?} count={}", url, cursor, count);
+    tracing::info!(
+        "📺 获取 Bilibili UP 分页: url={} cursor={:?} count={}",
+        url,
+        cursor,
+        count
+    );
 
     let mut api = BilibiliApi::new()
         .map_err(|e| ExtractError::Network(format!("创建 BilibiliApi 失败: {}", e)))?;
     setup_api_cookie(&mut api, cookies);
 
     let resolved = if url.to_lowercase().contains("b23.tv") {
-        api.resolve_short_url(url).await.unwrap_or_else(|_| url.to_string())
+        api.resolve_short_url(url)
+            .await
+            .unwrap_or_else(|_| url.to_string())
     } else {
         url.to_string()
     };
@@ -207,8 +236,14 @@ pub async fn extract_channel_page(
         Ok(v) => {
             if ensure_ok(&v, "space_acc_info").is_ok() {
                 let data = v.get("data").unwrap_or(&Value::Null);
-                let name = data.get("name").and_then(|x| x.as_str()).map(|s| s.to_string());
-                let face = data.get("face").and_then(|x| x.as_str()).map(normalize_url_scheme);
+                let name = data
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string());
+                let face = data
+                    .get("face")
+                    .and_then(|x| x.as_str())
+                    .map(normalize_url_scheme);
                 (name, face)
             } else {
                 (None, None)
@@ -231,7 +266,8 @@ pub async fn extract_channel_page(
         .cloned()
         .unwrap_or_default();
 
-    let mut entries: Vec<ChannelVideoEntry> = vlist.iter().filter_map(parse_space_vlist_entry).collect();
+    let mut entries: Vec<ChannelVideoEntry> =
+        vlist.iter().filter_map(parse_space_vlist_entry).collect();
     for (idx, entry) in entries.iter_mut().enumerate() {
         entry.playlist_index = Some((pn as u32 - 1) * ps + idx as u32 + 1);
         entry.selected = false;
@@ -241,7 +277,9 @@ pub async fn extract_channel_page(
     let next_cursor = has_more.then_some((pn as i64) + 1);
 
     let uploader = profile_name.or_else(|| entries.first().and_then(|e| e.uploader.clone()));
-    let title = uploader.clone().unwrap_or_else(|| format!("Bilibili_{}", mid));
+    let title = uploader
+        .clone()
+        .unwrap_or_else(|| format!("Bilibili_{}", mid));
 
     Ok(ChannelPageResult {
         info: ChannelInfo {
@@ -265,11 +303,17 @@ fn ensure_ok(resp: &Value, name: &str) -> ExtractResult<()> {
     if code == 0 {
         return Ok(());
     }
-    let msg = resp.get("message").and_then(|v| v.as_str()).unwrap_or("unknown");
-    Err(ExtractError::Network(format!("{} failed: code={} msg={}", name, code, msg)))
+    let msg = resp
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    Err(ExtractError::Network(format!(
+        "{} failed: code={} msg={}",
+        name, code, msg
+    )))
 }
 
-fn parse_playurl_to_format(resp: &Value, qn: u32) -> Option<VideoFormat> {      
+fn parse_playurl_to_format(resp: &Value, qn: u32) -> Option<VideoFormat> {
     let data = resp.get("data")?;
     let durl0 = data.get("durl")?.as_array()?.first()?;
     let url = durl0.get("url")?.as_str()?.to_string();
@@ -287,9 +331,10 @@ fn parse_playurl_to_format(resp: &Value, qn: u32) -> Option<VideoFormat> {
         })
         .map(|s| s.to_string());
 
-    let resolution = qn_to_height(qn)
-        .map(|h| format!("{}p", h))
-        .or_else(|| desc.as_ref().and_then(|d| extract_height_from_text(d).map(|h| format!("{}p", h))));
+    let resolution = qn_to_height(qn).map(|h| format!("{}p", h)).or_else(|| {
+        desc.as_ref()
+            .and_then(|d| extract_height_from_text(d).map(|h| format!("{}p", h)))
+    });
 
     Some(VideoFormat {
         format_id: format!("bili_qn{}", qn),
@@ -314,7 +359,10 @@ fn parse_playurl_dash_formats(resp: &Value) -> Option<Vec<VideoFormat>> {
     let mut out = Vec::new();
 
     // 音频：只保留“最优”（按 bandwidth 最大）
-    if let Some(best_audio) = audios.iter().max_by_key(|a| a.get("bandwidth").and_then(|v| v.as_u64()).unwrap_or(0)) {
+    if let Some(best_audio) = audios
+        .iter()
+        .max_by_key(|a| a.get("bandwidth").and_then(|v| v.as_u64()).unwrap_or(0))
+    {
         let id = best_audio.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
         let base_url = best_audio
             .get("base_url")
@@ -367,7 +415,8 @@ fn parse_playurl_dash_formats(resp: &Value) -> Option<Vec<VideoFormat>> {
         }
     }
 
-    let mut best_by_qn: std::collections::BTreeMap<u32, Candidate> = std::collections::BTreeMap::new();
+    let mut best_by_qn: std::collections::BTreeMap<u32, Candidate> =
+        std::collections::BTreeMap::new();
     for v in videos {
         let qn = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         let url = match v.get("base_url").and_then(|x| x.as_str()) {
@@ -380,7 +429,10 @@ fn parse_playurl_dash_formats(resp: &Value) -> Option<Vec<VideoFormat>> {
             .get("frame_rate")
             .and_then(|x| x.as_str())
             .and_then(|s| s.parse::<f32>().ok());
-        let codecs = v.get("codecs").and_then(|x| x.as_str()).map(|s| s.to_string());
+        let codecs = v
+            .get("codecs")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
         let bandwidth = v.get("bandwidth").and_then(|x| x.as_u64()).unwrap_or(0);
 
         let cand = Candidate {
@@ -477,10 +529,23 @@ fn extract_height_from_text(s: &str) -> Option<u32> {
 
 fn parse_space_vlist_entry(v: &Value) -> Option<ChannelVideoEntry> {
     let bvid = v.get("bvid")?.as_str()?.to_string();
-    let title = v.get("title").and_then(|x| x.as_str()).unwrap_or(&bvid).to_string();
-    let pic = v.get("pic").and_then(|x| x.as_str()).map(normalize_url_scheme);
-    let author = v.get("author").and_then(|x| x.as_str()).map(|s| s.to_string());
-    let length = v.get("length").and_then(|x| x.as_str()).and_then(parse_duration_string);
+    let title = v
+        .get("title")
+        .and_then(|x| x.as_str())
+        .unwrap_or(&bvid)
+        .to_string();
+    let pic = v
+        .get("pic")
+        .and_then(|x| x.as_str())
+        .map(normalize_url_scheme);
+    let author = v
+        .get("author")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+    let length = v
+        .get("length")
+        .and_then(|x| x.as_str())
+        .and_then(parse_duration_string);
 
     Some(ChannelVideoEntry {
         id: bvid.clone(),
@@ -556,7 +621,10 @@ mod tests {
         let formats = parse_playurl_dash_formats(&resp).expect("formats");
         assert!(formats.iter().any(|f| f.format_id == "bili_vqn120"));
         assert!(formats.iter().any(|f| f.format_id == "bili_a30280"));
-        let v = formats.iter().find(|f| f.format_id == "bili_vqn120").unwrap();
+        let v = formats
+            .iter()
+            .find(|f| f.format_id == "bili_vqn120")
+            .unwrap();
         assert_eq!(v.resolution.as_deref(), Some("3840x2160"));
         assert!(v.download_url.as_deref() == Some("https://example.com/video_4k.m4s"));
     }

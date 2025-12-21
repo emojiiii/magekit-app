@@ -8,8 +8,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 // 对齐 crawlers/bilibili/web/config.yaml 中的 UA（部分风控/票据可能与 UA 指纹相关）
-const BILIBILI_WEB_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36";
+const BILIBILI_WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36";
 
 fn max_accept_quality(resp: &Value) -> Option<u32> {
     resp.get("data")
@@ -47,7 +46,13 @@ impl BilibiliApi {
     }
 
     pub async fn resolve_short_url(&self, url: &str) -> BdResult<String> {
-        let resp = self.client.inner().get(url).send().await.map_err(BdError::from)?;
+        let resp = self
+            .client
+            .inner()
+            .get(url)
+            .send()
+            .await
+            .map_err(BdError::from)?;
         Ok(resp.url().to_string())
     }
 
@@ -120,12 +125,23 @@ impl BilibiliApi {
 
     /// 综合热门（分页）
     pub async fn get_com_popular(&self, pn: u32, ps: u32) -> BdResult<Value> {
-        let url = format!("{}?pn={}&ps={}&web_location=333.934", BilibiliEndpoints::COM_POPULAR, pn, ps);
+        let url = format!(
+            "{}?pn={}&ps={}&web_location=333.934",
+            BilibiliEndpoints::COM_POPULAR,
+            pn,
+            ps
+        );
         self.get_json(&url, BiliReferer::Video(None)).await
     }
 
     /// 视频评论
-    pub async fn get_video_comments(&self, oid: &str, pn: u32, ps: u32, sort: u32) -> BdResult<Value> {
+    pub async fn get_video_comments(
+        &self,
+        oid: &str,
+        pn: u32,
+        ps: u32,
+        sort: u32,
+    ) -> BdResult<Value> {
         // type=1：视频评论；oid 传 aid（注意：不是 BV）
         let url = format!(
             "{}?type=1&oid={}&sort={}&nohot=0&ps={}&pn={}",
@@ -139,7 +155,13 @@ impl BilibiliApi {
     }
 
     /// 评论的回复
-    pub async fn get_comment_reply(&self, oid: &str, root: &str, pn: u32, ps: u32) -> BdResult<Value> {
+    pub async fn get_comment_reply(
+        &self,
+        oid: &str,
+        root: &str,
+        pn: u32,
+        ps: u32,
+    ) -> BdResult<Value> {
         let url = format!(
             "{}?type=1&oid={}&root={}&ps={}&pn={}",
             BilibiliEndpoints::COMMENT_REPLY,
@@ -169,12 +191,18 @@ impl BilibiliApi {
 
     /// 直播分区列表
     pub async fn get_live_areas(&self) -> BdResult<Value> {
-        self.get_json(BilibiliEndpoints::LIVE_AREAS, BiliReferer::Video(None)).await
+        self.get_json(BilibiliEndpoints::LIVE_AREAS, BiliReferer::Video(None))
+            .await
     }
 
     /// 直播流（quality: 1/2/3/4...）
     pub async fn get_live_playurl(&self, cid: &str, quality: u32) -> BdResult<Value> {
-        let url = format!("{}?cid={}&quality={}", BilibiliEndpoints::LIVE_VIDEOS, cid, quality);
+        let url = format!(
+            "{}?cid={}&quality={}",
+            BilibiliEndpoints::LIVE_VIDEOS,
+            cid,
+            quality
+        );
         self.get_json(&url, BiliReferer::Video(None)).await
     }
 

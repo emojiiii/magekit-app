@@ -2,8 +2,7 @@ use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
     ChannelInfo, ChannelPageResult, DownloadOptions, PlatformCookie, TaskId, VideoInfo,
-    create_tokio_command,
-    utils::generate_output_path,
+    create_tokio_command, utils::generate_output_path,
 };
 use std::path::PathBuf;
 use std::process::Stdio;

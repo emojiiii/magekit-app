@@ -53,7 +53,10 @@ impl WbiSigner {
         // 过滤 value 中的 "!'()*"
         let mut encoded_pairs = Vec::with_capacity(params.len());
         for (k, v) in params.iter() {
-            let filtered: String = v.chars().filter(|c| !matches!(c, '!' | '\'' | '(' | ')' | '*')).collect();
+            let filtered: String = v
+                .chars()
+                .filter(|c| !matches!(c, '!' | '\'' | '(' | ')' | '*'))
+                .collect();
             let encoded_v = urlencoding::encode(&filtered);
             encoded_pairs.push(format!("{}={}", k, encoded_v));
         }
@@ -71,7 +74,12 @@ impl WbiSigner {
         {
             let guard = self.cache.read().await;
             if let Some(cache) = guard.as_ref() {
-                if cache.fetched_at.elapsed().unwrap_or(TTL + Duration::from_secs(1)) < TTL {
+                if cache
+                    .fetched_at
+                    .elapsed()
+                    .unwrap_or(TTL + Duration::from_secs(1))
+                    < TTL
+                {
                     return Ok(cache.mixin_key.clone());
                 }
             }
@@ -135,9 +143,9 @@ fn file_stem(url: &str) -> Option<String> {
 fn mixin_key(img_key: &str, sub_key: &str) -> String {
     // 官方置换表（固定）
     const MIXIN_KEY_ENC_TAB: [usize; 64] = [
-        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42,
-        19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60,
-        51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
+        29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+        22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
     ];
 
     let raw = format!("{}{}", img_key, sub_key);

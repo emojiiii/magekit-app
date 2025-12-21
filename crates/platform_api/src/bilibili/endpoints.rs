@@ -43,7 +43,8 @@ impl BilibiliEndpoints {
     /// 评论回复
     pub const COMMENT_REPLY: &'static str = "https://api.bilibili.com/x/v2/reply/reply";
     /// 用户动态
-    pub const USER_DYNAMIC: &'static str = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space";
+    pub const USER_DYNAMIC: &'static str =
+        "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space";
 
     /// 直播间信息
     pub const LIVEROOM_DETAIL: &'static str = "https://api.live.bilibili.com/room/v1/Room/get_info";

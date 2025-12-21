@@ -3,23 +3,18 @@
 //! 使用 platform-api 实现抖音视频和用户主页的解析
 
 use crate::error::{ExtractError, ExtractResult};
-use platform_api::douyin::DouyinApi;
 use magekit_shared::{
     ChannelInfo, ChannelPageResult, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo,
 };
+use platform_api::douyin::DouyinApi;
 use std::time::Duration;
 
 /// 设置 Cookie 的辅助函数
 fn setup_api_cookie(api: &mut DouyinApi, cookies: Option<&[PlatformCookie]>) {
     if let Some(cookie_list) = cookies {
-        if let Some(c) = cookie_list
-            .iter()
-            .find(|c| {
-                c.enabled
-                    && c.platform.to_lowercase().contains("douyin")
-                    && !c.cookie.trim().is_empty()
-            })
-        {
+        if let Some(c) = cookie_list.iter().find(|c| {
+            c.enabled && c.platform.to_lowercase().contains("douyin") && !c.cookie.trim().is_empty()
+        }) {
             api.set_cookie(&c.cookie);
         }
     }
@@ -139,10 +134,7 @@ pub fn is_douyin_user_url(url: &str) -> bool {
     url_lower.contains("douyin.com/user/") || url_lower.contains("sec_user_id=")
 }
 
-fn parse_aweme_entries(
-    aweme_list: &[serde_json::Value],
-    uploader: &str,
-) -> Vec<ChannelVideoEntry> {
+fn parse_aweme_entries(aweme_list: &[serde_json::Value], uploader: &str) -> Vec<ChannelVideoEntry> {
     let mut entries = Vec::with_capacity(aweme_list.len());
     for aweme in aweme_list {
         let aweme_id = aweme["aweme_id"].as_str().unwrap_or("").to_string();
@@ -179,13 +171,18 @@ pub async fn extract_channel_page(
     cursor: i64,
     count: i64,
 ) -> ExtractResult<ChannelPageResult> {
-    tracing::info!("📄 获取抖音用户主页分页: url={} cursor={} count={}", url, cursor, count);
+    tracing::info!(
+        "📄 获取抖音用户主页分页: url={} cursor={} count={}",
+        url,
+        cursor,
+        count
+    );
 
     let sec_user_id = DouyinApi::extract_sec_user_id(url)
         .ok_or_else(|| ExtractError::Parse("无法从 URL 中提取 sec_user_id".to_string()))?;
 
-    let mut api =
-        DouyinApi::new().map_err(|e| ExtractError::Network(format!("创建 DouyinApi 失败: {}", e)))?;
+    let mut api = DouyinApi::new()
+        .map_err(|e| ExtractError::Network(format!("创建 DouyinApi 失败: {}", e)))?;
     setup_api_cookie(&mut api, cookies);
 
     let user_info = api

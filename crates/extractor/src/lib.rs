@@ -2,8 +2,8 @@
 //!
 //! 将平台解析逻辑与 UI 解耦，便于后续扩展更多平台。
 
-pub mod cookies;
 mod bilibili;
+pub mod cookies;
 mod douyin;
 pub mod error;
 mod platform;

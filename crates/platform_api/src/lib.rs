@@ -10,15 +10,15 @@
 //! - `bilibili` - Bilibili API 接口
 //! - `error` - 错误类型定义
 
-pub mod client;
 pub mod bilibili;
+pub mod client;
 pub mod douyin;
 pub mod error;
 pub mod sign;
 
 // 重新导出常用类型
-pub use client::BdClient;
 pub use bilibili::BilibiliApi;
+pub use client::BdClient;
 pub use douyin::DouyinApi;
 pub use error::{BdError, BdResult};
 

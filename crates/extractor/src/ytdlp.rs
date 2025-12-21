@@ -98,7 +98,9 @@ fn normalize_youtube_channel_default_tab(url: &str) -> String {
 
     for home in ["/featured", "/home"] {
         if base.to_lowercase().ends_with(home) {
-            base = base[..base.len() - home.len()].trim_end_matches('/').to_string();
+            base = base[..base.len() - home.len()]
+                .trim_end_matches('/')
+                .to_string();
             break;
         }
     }
@@ -292,7 +294,9 @@ pub async fn extract_channel_info(
         }
     }
 
-    let playlist_count = channel_data.playlist_count.and_then(|n| usize::try_from(n).ok());
+    let playlist_count = channel_data
+        .playlist_count
+        .and_then(|n| usize::try_from(n).ok());
     let video_count = playlist_count.unwrap_or_else(|| entries.len());
     Ok(ChannelInfo {
         id: channel_data.id.unwrap_or_else(|| "unknown".to_string()),
@@ -326,7 +330,10 @@ pub async fn extract_channel_page(
     // ✨ ytdlp 侧使用 `--playlist-items` 做“真分页”，避免一次性拉全量。
     let offset = cursor.unwrap_or(0);
     let items = playlist_items_spec(offset, count).ok_or_else(|| {
-        ExtractError::Parse(format!("invalid pagination params: cursor={:?} count={}", cursor, count))
+        ExtractError::Parse(format!(
+            "invalid pagination params: cursor={:?} count={}",
+            cursor, count
+        ))
     })?;
 
     let normalized_url = normalize_url(url);
@@ -340,10 +347,8 @@ pub async fn extract_channel_page(
         items
     );
 
-    let cookie_header = build_cookie_header(
-        extract_platform_from_url(&request_url).as_deref(),
-        cookies,
-    );
+    let cookie_header =
+        build_cookie_header(extract_platform_from_url(&request_url).as_deref(), cookies);
 
     let mut cmd = create_tokio_command(yt_dlp_path);
     cmd.arg("--flat-playlist")
@@ -419,7 +424,9 @@ pub async fn extract_channel_page(
         entry.selected = false;
     }
 
-    let playlist_count = channel_data.playlist_count.and_then(|n| usize::try_from(n).ok());
+    let playlist_count = channel_data
+        .playlist_count
+        .and_then(|n| usize::try_from(n).ok());
     let loaded = entries.len();
     let has_more = playlist_count
         .map(|total| (offset as usize).saturating_add(loaded) < total)
@@ -449,7 +456,11 @@ pub async fn extract_channel_page(
     let video_count = playlist_count.unwrap_or_else(|| {
         // playlist_count 缺失时，用“至少已加载数量”的下界，且若推断还有更多则 +1 以提示 UI
         let base = (offset as usize).saturating_add(loaded);
-        if has_more { base.saturating_add(1) } else { base }
+        if has_more {
+            base.saturating_add(1)
+        } else {
+            base
+        }
     });
 
     Ok(ChannelPageResult {

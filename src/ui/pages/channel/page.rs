@@ -106,7 +106,10 @@ fn is_probably_youtube_channel_url(url: &str) -> bool {
     if lower.contains("/playlist") || lower.contains("list=") {
         return false;
     }
-    lower.contains("/@") || lower.contains("/channel/") || lower.contains("/user/") || lower.contains("/c/")
+    lower.contains("/@")
+        || lower.contains("/channel/")
+        || lower.contains("/user/")
+        || lower.contains("/c/")
 }
 
 fn youtube_channel_base_url(url: &str) -> String {
@@ -131,7 +134,9 @@ fn youtube_channel_base_url(url: &str) -> String {
         let mut changed = false;
         for s in suffixes {
             if lower.ends_with(s) {
-                base = base[..base.len() - s.len()].trim_end_matches('/').to_string();
+                base = base[..base.len() - s.len()]
+                    .trim_end_matches('/')
+                    .to_string();
                 changed = true;
                 break;
             }
@@ -576,7 +581,12 @@ impl ChannelPage {
                     };
                     app_state
                         .tool_manager
-                        .get_channel_videos_page(&url_for_request, None, ITEMS_PER_PAGE, cookies_opt)
+                        .get_channel_videos_page(
+                            &url_for_request,
+                            None,
+                            ITEMS_PER_PAGE,
+                            cookies_opt,
+                        )
                         .await
                 })
             })
@@ -739,32 +749,24 @@ impl ChannelPage {
 
     /// 开始下载选中的视频
     fn download_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected_entries: Vec<ChannelVideoEntry> = if let ChannelState::Ready(ref info) =
-            self.state
-        {
-            match self.current_tab_index {
-                None => info
-                    .entries
-                    .iter()
-                    .filter(|e| e.selected)
-                    .cloned()
-                    .collect(),
-                Some(tab_index) => {
-                    info.tabs
+        let selected_entries: Vec<ChannelVideoEntry> =
+            if let ChannelState::Ready(ref info) = self.state {
+                match self.current_tab_index {
+                    None => info
+                        .entries
+                        .iter()
+                        .filter(|e| e.selected)
+                        .cloned()
+                        .collect(),
+                    Some(tab_index) => info
+                        .tabs
                         .get(tab_index)
-                        .map(|t| {
-                            t.entries
-                                .iter()
-                                .filter(|e| e.selected)
-                                .cloned()
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                        .map(|t| t.entries.iter().filter(|e| e.selected).cloned().collect())
+                        .unwrap_or_default(),
                 }
-            }
-        } else {
-            return;
-        };
+            } else {
+                return;
+            };
 
         if selected_entries.is_empty() {
             window.push_notification(Notification::error("请至少选择一个视频"), cx);
@@ -1015,7 +1017,7 @@ impl ChannelPage {
                         .when(!is_selected, |d| {
                             d.bg(btn_secondary)
                                 .text_color(btn_foreground)
-                                .hover(|s| s.bg(btn_secondary.opacity(0.8)))    
+                                .hover(|s| s.bg(btn_secondary.opacity(0.8)))
                         })
                         .child(tab_name)
                         .on_click(cx.listener(move |this, _, _, cx| {
