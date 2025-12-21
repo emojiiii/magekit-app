@@ -146,6 +146,39 @@ async fn douyin_short_url_redirect() {
 }
 
 #[tokio::test]
+#[ignore = "需要网络连接与有效 Douyin Cookie（crates/extractor/tests/cookie.json）"]
+async fn douyin_user_channel_first_page() {
+    let cookies = match cookies_from_test_json("douyin") {
+        Some(c) => c,
+        None => {
+            eprintln!(
+                "skip: missing douyin cookie at {:?} (copy from crates/extractor/tests/cookie.example.json)",
+                cookie_json_path()
+            );
+            return;
+        }
+    };
+
+    let extractor = MediaExtractor::new(PathBuf::from("yt-dlp"));
+    let url = "https://www.douyin.com/user/MS4wLjABAAAAvj9TJ3GAUdUrw5RrFJVovE0O7ch9DAbCkhV5QjhzvE8";
+
+    let page = timeout(
+        Duration::from_secs(40),
+        extractor.get_channel_page(url, None, 20, Some(cookies.as_slice())),
+    )
+    .await
+    .expect("timeout for douyin user channel page")
+    .expect("douyin user channel page failed");
+
+    assert!(!page.info.id.trim().is_empty());
+    assert!(!page.info.title.trim().is_empty());
+    assert!(!page.info.entries.is_empty());
+    assert!(page.info.entries.len() <= 20);
+    assert!(page.info.video_count >= page.info.entries.len());
+    assert!(page.info.entries.iter().all(|e| !e.selected));
+}
+
+#[tokio::test]
 #[ignore = "需要网络连接与本机 yt-dlp"]
 async fn youtube_playlist_channel() {
     let yt_dlp = match resolve_yt_dlp_path() {
@@ -162,6 +195,27 @@ async fn youtube_playlist_channel() {
     .expect("timeout for youtube playlist")
     .expect("youtube playlist parse failed");
     assert!(!info.entries.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "需要网络连接与本机 yt-dlp"]
+async fn youtube_channel_first_page_should_not_be_tabs_only() {
+    let yt_dlp = match resolve_yt_dlp_path() {
+        Some(p) => p,
+        None => return,
+    };
+    let extractor = MediaExtractor::new(yt_dlp);
+
+    // 频道根路径（/@handle）应默认落到 /videos，否则在 flat-playlist 下可能只拿到 tabs 列表。
+    let url = "https://www.youtube.com/@grijua";
+    let page = timeout(Duration::from_secs(60), extractor.get_channel_page(url, None, 20, None))
+        .await
+        .expect("timeout for youtube channel page")
+        .expect("youtube channel page parse failed");
+
+    assert!(!page.info.title.trim().is_empty());
+    assert!(page.info.entries.len() >= 10, "too few entries: {}", page.info.entries.len());
+    assert!(page.info.video_count >= page.info.entries.len());
 }
 
 #[tokio::test]

@@ -187,6 +187,13 @@ impl crate::downloader::Downloader for DirectDownloader {
             let n = f.read(&mut buf).await.unwrap_or(0);
             let head = &buf[..n];
 
+            let ct = content_type.as_deref().unwrap_or("");
+            let ext = output_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
             let trimmed = {
                 let mut i = 0usize;
                 while i < head.len() && head[i].is_ascii_whitespace() {
@@ -198,7 +205,6 @@ impl crate::downloader::Downloader for DirectDownloader {
                 &head[i..]
             };
 
-            let ct = content_type.as_deref().unwrap_or("");
             let looks_like_m3u8 = trimmed.starts_with(b"#EXTM3U")
                 || ct.contains("mpegurl")
                 || ct.contains("m3u8");
@@ -211,6 +217,18 @@ impl crate::downloader::Downloader for DirectDownloader {
                     "unexpected response for direct download (content-type={})",
                     ct
                 )));
+            }
+
+            // 对 mp4 做最小签名校验：避免把 403/拦截页等二进制内容误判为成功
+            if ext == "mp4" || ct.contains("video/mp4") {
+                let looks_like_mp4 = head.len() >= 12 && head.get(4..8) == Some(b"ftyp");
+                if !looks_like_mp4 {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return Err(DownloadError::Network(format!(
+                        "unexpected response for mp4 direct download (missing ftyp, content-type={})",
+                        ct
+                    )));
+                }
             }
         }
 

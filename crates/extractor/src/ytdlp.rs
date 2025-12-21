@@ -2,8 +2,8 @@ use crate::cookies::build_cookie_header;
 use crate::error::{ExtractError, ExtractResult};
 use crate::platform::{Platform, PlatformSupport};
 use magekit_shared::{
-    ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry, PlatformCookie, VideoFormat,
-    VideoInfo, create_tokio_command,
+    ChannelInfo, ChannelPageResult, ChannelTab, ChannelTabType, ChannelVideoEntry, PlatformCookie,
+    VideoFormat, VideoInfo, create_tokio_command,
 };
 use serde::Deserialize;
 use std::path::Path;
@@ -67,6 +67,89 @@ fn normalize_url(url: &str) -> String {
     }
 }
 
+fn normalize_youtube_channel_default_tab(url: &str) -> String {
+    // ytdlp 对 YouTube 频道根路径（/@handle、/channel/..、/user/..、/c/..）在
+    // `--flat-playlist` 模式下可能返回“tab 列表”而非视频列表（例如只拿到 Videos/Shorts/Live 三条）。
+    // 这里将根路径规范化到 `/videos` 作为默认作品列表入口。
+    let lower = url.to_lowercase();
+    if !lower.contains("youtube.com/") {
+        return url.to_string();
+    }
+    if lower.contains("/playlist") || lower.contains("list=") {
+        return url.to_string();
+    }
+    if lower.contains("/videos")
+        || lower.contains("/shorts")
+        || lower.contains("/streams")
+        || lower.contains("/playlists")
+    {
+        return url.to_string();
+    }
+
+    let mut suffix_pos = url.len();
+    if let Some(pos) = url.find('?') {
+        suffix_pos = suffix_pos.min(pos);
+    }
+    if let Some(pos) = url.find('#') {
+        suffix_pos = suffix_pos.min(pos);
+    }
+    let (base, suffix) = url.split_at(suffix_pos);
+    let mut base = base.trim_end_matches('/').to_string();
+
+    for home in ["/featured", "/home"] {
+        if base.to_lowercase().ends_with(home) {
+            base = base[..base.len() - home.len()].trim_end_matches('/').to_string();
+            break;
+        }
+    }
+
+    let lower_base = base.to_lowercase();
+    let is_root = |prefix: &str| {
+        if let Some(idx) = lower_base.find(prefix) {
+            let rest = &lower_base[(idx + prefix.len())..];
+            !rest.is_empty() && !rest.contains('/')
+        } else {
+            false
+        }
+    };
+
+    if is_root("youtube.com/@")
+        || is_root("youtube.com/channel/")
+        || is_root("youtube.com/user/")
+        || is_root("youtube.com/c/")
+    {
+        format!("{}/videos{}", base, suffix)
+    } else {
+        url.to_string()
+    }
+}
+
+fn normalize_ytdlp_channel_url(url: &str) -> String {
+    // 某些平台的“频道/作者页”会携带跟踪 query（如 bilibili spm），容易导致解析器走偏。
+    // 这里仅对明确安全的场景做清洗，避免影响 playlist 等依赖 query 的 URL。
+    let lower = url.to_lowercase();
+    if lower.contains("space.bilibili.com/") {
+        return url
+            .split(|c| c == '?' || c == '#')
+            .next()
+            .unwrap_or(url)
+            .to_string();
+    }
+    url.to_string()
+}
+
+fn fallback_channel_id(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_lowercase();
+    if host == "space.bilibili.com" {
+        let seg = parsed.path_segments()?.next()?;
+        if !seg.is_empty() {
+            return Some(seg.to_string());
+        }
+    }
+    None
+}
+
 pub async fn extract_video_info(
     url: &str,
     cookies: Option<&[PlatformCookie]>,
@@ -128,7 +211,7 @@ pub async fn extract_channel_info(
         .arg("--extractor-args")
         .arg("BiliBiliSpace:metadata=true")
         .arg("-v")
-        .arg(&normalized_url);
+        .arg(normalize_youtube_channel_default_tab(&normalized_url));
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
@@ -209,7 +292,8 @@ pub async fn extract_channel_info(
         }
     }
 
-    let video_count = entries.len();
+    let playlist_count = channel_data.playlist_count.and_then(|n| usize::try_from(n).ok());
+    let video_count = playlist_count.unwrap_or_else(|| entries.len());
     Ok(ChannelInfo {
         id: channel_data.id.unwrap_or_else(|| "unknown".to_string()),
         title: channel_data.title.unwrap_or_else(|| "未知频道".to_string()),
@@ -220,6 +304,168 @@ pub async fn extract_channel_info(
         thumbnail: channel_data.thumbnail,
         tabs,
         entries,
+    })
+}
+
+fn playlist_items_spec(offset: i64, count: usize) -> Option<String> {
+    if count == 0 || offset < 0 {
+        return None;
+    }
+    let start = offset.saturating_add(1);
+    let end = start.saturating_add(i64::try_from(count).ok()?.saturating_sub(1));
+    Some(format!("{}-{}", start, end))
+}
+
+pub async fn extract_channel_page(
+    url: &str,
+    cursor: Option<i64>,
+    count: usize,
+    cookies: Option<&[PlatformCookie]>,
+    yt_dlp_path: &Path,
+) -> ExtractResult<ChannelPageResult> {
+    // ✨ ytdlp 侧使用 `--playlist-items` 做“真分页”，避免一次性拉全量。
+    let offset = cursor.unwrap_or(0);
+    let items = playlist_items_spec(offset, count).ok_or_else(|| {
+        ExtractError::Parse(format!("invalid pagination params: cursor={:?} count={}", cursor, count))
+    })?;
+
+    let normalized_url = normalize_url(url);
+    let normalized_url = normalize_youtube_channel_default_tab(&normalized_url);
+    let request_url = normalize_ytdlp_channel_url(&normalized_url);
+    tracing::info!(
+        "📄 ytdlp 分页解析: url={} offset={} count={} items={}",
+        request_url,
+        offset,
+        count,
+        items
+    );
+
+    let cookie_header = build_cookie_header(
+        extract_platform_from_url(&request_url).as_deref(),
+        cookies,
+    );
+
+    let mut cmd = create_tokio_command(yt_dlp_path);
+    cmd.arg("--flat-playlist")
+        .arg("--dump-single-json")
+        .arg("--no-warnings")
+        .arg("--playlist-items")
+        .arg(items)
+        .arg("--extractor-args")
+        .arg("BiliBiliSpace:metadata=true")
+        .arg("-v")
+        .arg(&request_url);
+
+    if let Some(ref cookie) = cookie_header {
+        cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
+    }
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| ExtractError::CommandFailed(e.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ExtractError::CommandFailed(stderr.to_string()));
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let channel_data: ChannelInfoData =
+        serde_json::from_str(&json_str).map_err(|e| ExtractError::Parse(e.to_string()))?;
+
+    let mut entries: Vec<ChannelVideoEntry> = Vec::new();
+    let mut tabs: Vec<ChannelTab> = Vec::new();
+
+    if let Some(ref data_entries) = channel_data.entries {
+        fn collect_tab_entries(entry: &serde_json::Value, entries: &mut Vec<ChannelVideoEntry>) {
+            if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
+                for nested_entry in nested_entries {
+                    collect_tab_entries(nested_entry, entries);
+                }
+            } else if let Some(video_entry) = parse_channel_entry(entry) {
+                entries.push(video_entry);
+            }
+        }
+
+        for entry in data_entries {
+            if let Some(nested_entries) = entry.get("entries").and_then(|e| e.as_array()) {
+                let tab_title = entry
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("视频");
+                let tab_type = ChannelTabType::from_title(tab_title);
+
+                let mut tab_entries = Vec::new();
+                for nested_entry in nested_entries {
+                    collect_tab_entries(nested_entry, &mut tab_entries);
+                }
+
+                entries.extend(tab_entries.clone());
+                tabs.push(ChannelTab {
+                    tab_type,
+                    title: tab_title.to_string(),
+                    entries: tab_entries,
+                });
+            } else if let Some(video_entry) = parse_channel_entry(entry) {
+                entries.push(video_entry);
+            }
+        }
+    }
+
+    // 为本页 entries 赋予连续的 playlist_index（与 cursor 对齐）
+    for (idx, entry) in entries.iter_mut().enumerate() {
+        entry.playlist_index = Some(offset as u32 + idx as u32 + 1);
+        entry.selected = false;
+    }
+
+    let playlist_count = channel_data.playlist_count.and_then(|n| usize::try_from(n).ok());
+    let loaded = entries.len();
+    let has_more = playlist_count
+        .map(|total| (offset as usize).saturating_add(loaded) < total)
+        .unwrap_or(loaded == count);
+    let next_cursor = if has_more {
+        Some(offset.saturating_add(i64::try_from(loaded).unwrap_or(0)))
+    } else {
+        None
+    };
+
+    let first_uploader = entries.iter().find_map(|e| e.uploader.clone());
+    let uploader = channel_data
+        .uploader
+        .clone()
+        .or(channel_data.channel.clone())
+        .or(first_uploader.clone());
+    let title = channel_data
+        .title
+        .clone()
+        .or_else(|| uploader.clone())
+        .unwrap_or_else(|| "未知频道".to_string());
+    let id = channel_data
+        .id
+        .clone()
+        .or_else(|| fallback_channel_id(&request_url))
+        .unwrap_or_else(|| "unknown".to_string());
+    let video_count = playlist_count.unwrap_or_else(|| {
+        // playlist_count 缺失时，用“至少已加载数量”的下界，且若推断还有更多则 +1 以提示 UI
+        let base = (offset as usize).saturating_add(loaded);
+        if has_more { base.saturating_add(1) } else { base }
+    });
+
+    Ok(ChannelPageResult {
+        info: ChannelInfo {
+            id,
+            title,
+            url: request_url,
+            uploader,
+            description: channel_data.description,
+            video_count,
+            thumbnail: channel_data.thumbnail,
+            tabs,
+            entries,
+        },
+        next_cursor,
+        has_more,
     })
 }
 
@@ -245,6 +491,8 @@ struct ChannelInfoData {
     uploader: Option<String>,
     channel: Option<String>,
     thumbnail: Option<String>,
+    #[serde(default)]
+    playlist_count: Option<u64>,
     #[serde(default)]
     entries: Option<Vec<serde_json::Value>>,
 }

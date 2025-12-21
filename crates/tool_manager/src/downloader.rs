@@ -1,7 +1,8 @@
 use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
-    ChannelInfo, DownloadOptions, PlatformCookie, TaskId, VideoInfo, create_tokio_command,
+    ChannelInfo, ChannelPageResult, DownloadOptions, PlatformCookie, TaskId, VideoInfo,
+    create_tokio_command,
     utils::generate_output_path,
 };
 use std::path::PathBuf;
@@ -106,6 +107,28 @@ impl VideoDownloader {
         let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
         extractor
             .get_channel_info(url, cookies)
+            .await
+            .map_err(|e| DownloadError::extraction_failed(url, e.to_string()))
+    }
+
+    /// 分页获取频道/作者作品列表。
+    pub async fn get_channel_videos_page(
+        &self,
+        url: &str,
+        cursor: Option<i64>,
+        count: usize,
+        cookies: Option<&[PlatformCookie]>,
+    ) -> DownloadResult<ChannelPageResult> {
+        tracing::info!(
+            "📄 分页获取频道/作者信息，URL: {} cursor={:?} count={}",
+            url,
+            cursor,
+            count
+        );
+
+        let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
+        extractor
+            .get_channel_page(url, cursor, count, cookies)
             .await
             .map_err(|e| DownloadError::extraction_failed(url, e.to_string()))
     }

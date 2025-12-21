@@ -4,7 +4,9 @@
 
 use crate::error::{ExtractError, ExtractResult};
 use bytedance::douyin::DouyinApi;
-use magekit_shared::{ChannelInfo, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo};
+use magekit_shared::{
+    ChannelInfo, ChannelPageResult, ChannelVideoEntry, PlatformCookie, VideoFormat, VideoInfo,
+};
 use std::time::Duration;
 
 /// 设置 Cookie 的辅助函数
@@ -137,6 +139,103 @@ pub fn is_douyin_user_url(url: &str) -> bool {
     url_lower.contains("douyin.com/user/") || url_lower.contains("sec_user_id=")
 }
 
+fn parse_aweme_entries(
+    aweme_list: &[serde_json::Value],
+    uploader: &str,
+) -> Vec<ChannelVideoEntry> {
+    let mut entries = Vec::with_capacity(aweme_list.len());
+    for aweme in aweme_list {
+        let aweme_id = aweme["aweme_id"].as_str().unwrap_or("").to_string();
+        if aweme_id.is_empty() {
+            continue;
+        }
+
+        let desc = aweme["desc"].as_str().unwrap_or(&aweme_id).to_string();
+        let duration = aweme["video"]["duration"].as_u64().map(|d| d / 1000);
+        let thumbnail = aweme["video"]["cover"]["url_list"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        entries.push(ChannelVideoEntry {
+            id: aweme_id.clone(),
+            title: desc,
+            url: format!("https://www.douyin.com/video/{}", aweme_id),
+            duration,
+            thumbnail,
+            uploader: Some(uploader.to_string()),
+            playlist_index: None,
+            selected: false,
+        });
+    }
+    entries
+}
+
+/// 分页获取抖音用户主页作品列表。
+pub async fn extract_channel_page(
+    url: &str,
+    cookies: Option<&[PlatformCookie]>,
+    cursor: i64,
+    count: i64,
+) -> ExtractResult<ChannelPageResult> {
+    tracing::info!("📄 获取抖音用户主页分页: url={} cursor={} count={}", url, cursor, count);
+
+    let sec_user_id = DouyinApi::extract_sec_user_id(url)
+        .ok_or_else(|| ExtractError::Parse("无法从 URL 中提取 sec_user_id".to_string()))?;
+
+    let mut api =
+        DouyinApi::new().map_err(|e| ExtractError::Network(format!("创建 DouyinApi 失败: {}", e)))?;
+    setup_api_cookie(&mut api, cookies);
+
+    let user_info = api
+        .get_user_info(&sec_user_id)
+        .await
+        .map_err(|e| ExtractError::Network(format!("获取用户信息失败: {}", e)))?;
+
+    let posts_json = api
+        .get_user_posts(&sec_user_id, cursor, count)
+        .await
+        .map_err(|e| ExtractError::Network(format!("获取用户作品失败: {}", e)))?;
+
+    let aweme_list = posts_json
+        .get("aweme_list")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    let mut entries = parse_aweme_entries(aweme_list, &user_info.nickname);
+    for (idx, entry) in entries.iter_mut().enumerate() {
+        entry.playlist_index = Some(idx as u32 + 1);
+    }
+
+    let has_more = posts_json["has_more"].as_i64().unwrap_or(0) == 1;
+    let next_cursor = if has_more {
+        posts_json["max_cursor"].as_i64()
+    } else {
+        None
+    };
+
+    let video_count_u64 = user_info.aweme_count.unwrap_or(entries.len() as u64);
+    let video_count = usize::try_from(video_count_u64).unwrap_or(entries.len());
+
+    Ok(ChannelPageResult {
+        info: ChannelInfo {
+            id: sec_user_id,
+            title: user_info.nickname.clone(),
+            url: url.to_string(),
+            uploader: Some(user_info.nickname),
+            description: user_info.signature,
+            video_count,
+            thumbnail: user_info.avatar_url,
+            tabs: Vec::new(),
+            entries,
+        },
+        next_cursor,
+        has_more,
+    })
+}
+
 /// 获取抖音用户主页的作品列表
 pub async fn extract_channel_info(
     url: &str,
@@ -166,74 +265,23 @@ pub async fn extract_channel_info(
     tracing::info!("   用户名: {}", user_info.nickname);
     tracing::info!("   作品数: {:?}", user_info.aweme_count);
 
-    // 获取用户作品列表（分页获取）
-    let mut entries: Vec<ChannelVideoEntry> = Vec::new();
-    let mut max_cursor: i64 = 0;
+    // 频道页/作者页使用分页加载：这里只取第一页，避免一次性拉全量导致慢/风控
     let count: i64 = 20;
-    let max_pages = 50; // 最多获取 50 页
+    let posts_json = api
+        .get_user_posts(&sec_user_id, 0, count)
+        .await
+        .map_err(|e| ExtractError::Network(format!("获取用户作品失败: {}", e)))?;
 
-    for page in 0..max_pages {
-        tracing::info!("   获取第 {} 页作品 (cursor: {})", page + 1, max_cursor);
+    let aweme_list = posts_json
+        .get("aweme_list")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
 
-        let posts_json = api
-            .get_user_posts(&sec_user_id, max_cursor, count)
-            .await
-            .map_err(|e| ExtractError::Network(format!("获取用户作品失败: {}", e)))?;
-
-        // 解析作品列表
-        let aweme_list = posts_json
-            .get("aweme_list")
-            .and_then(|v| v.as_array())
-            .unwrap_or(&Vec::new())
-            .clone();
-
-        if aweme_list.is_empty() {
-            tracing::info!("   没有更多作品，停止获取");
-            break;
-        }
-
-        for aweme in &aweme_list {
-            let aweme_id = aweme["aweme_id"].as_str().unwrap_or("").to_string();
-            let desc = aweme["desc"].as_str().unwrap_or(&aweme_id).to_string();
-            let duration = aweme["video"]["duration"].as_u64().map(|d| d / 1000);
-            let thumbnail = aweme["video"]["cover"]["url_list"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            if !aweme_id.is_empty() {
-                entries.push(ChannelVideoEntry {
-                    id: aweme_id.clone(),
-                    title: desc,
-                    url: format!("https://www.douyin.com/video/{}", aweme_id),
-                    duration,
-                    thumbnail,
-                    uploader: Some(user_info.nickname.clone()),
-                    playlist_index: Some(entries.len() as u32 + 1),
-                    selected: false,
-                });
-            }
-        }
-
-        tracing::info!(
-            "   本页获取 {} 个作品，已获取总数: {}",
-            aweme_list.len(),
-            entries.len()
-        );
-
-        // 检查是否有更多
-        let has_more = posts_json["has_more"].as_i64().unwrap_or(0) == 1;
-        if !has_more {
-            tracing::info!("   已获取全部作品");
-            break;
-        }
-
-        // 更新 cursor
-        max_cursor = posts_json["max_cursor"].as_i64().unwrap_or(0);
-
-        // 稍微延迟避免请求过快
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let mut entries = parse_aweme_entries(aweme_list, &user_info.nickname);
+    for (idx, entry) in entries.iter_mut().enumerate() {
+        entry.playlist_index = Some(idx as u32 + 1);
+        entry.selected = false;
     }
 
     tracing::info!(
@@ -242,13 +290,16 @@ pub async fn extract_channel_info(
         entries.len()
     );
 
+    let video_count_u64 = user_info.aweme_count.unwrap_or(entries.len() as u64);
+    let video_count = usize::try_from(video_count_u64).unwrap_or(entries.len());
+
     Ok(ChannelInfo {
         id: sec_user_id,
         title: user_info.nickname.clone(),
         url: url.to_string(),
         uploader: Some(user_info.nickname),
         description: user_info.signature,
-        video_count: entries.len(),
+        video_count,
         thumbnail: user_info.avatar_url,
         tabs: Vec::new(),
         entries,

@@ -10,7 +10,7 @@ mod tiktok;
 mod ytdlp;
 
 use error::ExtractError;
-use magekit_shared::{ChannelInfo, PlatformCookie, VideoInfo};
+use magekit_shared::{ChannelInfo, ChannelPageResult, PlatformCookie, VideoInfo};
 use platform::{Platform, PlatformSupport};
 use std::path::PathBuf;
 
@@ -67,5 +67,26 @@ impl MediaExtractor {
 
         // 其他平台使用 yt-dlp
         ytdlp::extract_channel_info(url, cookies, &self.yt_dlp_path).await
+    }
+
+    /// 分页获取频道/作者作品列表。
+    ///
+    /// - 抖音用户主页：走自研分页接口（按 `cursor` 增量拉取）。
+    /// - 其他平台：当前仍一次性解析完整列表（`has_more=false`），调用方可在 UI 侧做本地分页。
+    pub async fn get_channel_page(
+        &self,
+        url: &str,
+        cursor: Option<i64>,
+        count: usize,
+        cookies: Option<&[PlatformCookie]>,
+    ) -> Result<ChannelPageResult, ExtractError> {
+        let platform = Platform::detect(url);
+
+        if matches!(platform, Platform::Douyin) && douyin::is_douyin_user_url(url) {
+            return douyin::extract_channel_page(url, cookies, cursor.unwrap_or(0), count as i64)
+                .await;
+        }
+
+        ytdlp::extract_channel_page(url, cursor, count, cookies, &self.yt_dlp_path).await
     }
 }

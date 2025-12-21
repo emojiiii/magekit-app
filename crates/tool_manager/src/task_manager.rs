@@ -193,6 +193,19 @@ impl ToolManager {
         self.downloader.get_channel_videos(url, cookies).await
     }
 
+    /// 分页获取频道/作者作品列表。
+    pub async fn get_channel_videos_page(
+        &self,
+        url: &str,
+        cursor: Option<i64>,
+        count: usize,
+        cookies: Option<&[magekit_shared::PlatformCookie]>,
+    ) -> DownloadResult<magekit_shared::ChannelPageResult> {
+        self.downloader
+            .get_channel_videos_page(url, cursor, count, cookies)
+            .await
+    }
+
     /// 开始下载任务
     ///
     /// # 参数
@@ -1890,7 +1903,33 @@ fn select_best_direct_format(formats: &[magekit_shared::VideoFormat]) -> Option<
     formats
         .iter()
         .filter(|f| f.download_url.is_some())
-        .max_by_key(|f| parse_height_from_resolution(f.resolution.as_deref()).unwrap_or(0))
+        .max_by_key(|f| {
+            (
+                parse_height_from_resolution(f.resolution.as_deref()).unwrap_or(0),
+                codec_preference_score(f),
+            )
+        })
+}
+
+fn codec_preference_score(format: &magekit_shared::VideoFormat) -> u8 {
+    // 经验优先级：h264（通用兼容） > 未知 > h265/hevc（Windows/部分播放器可能缺 codec）
+    let mut s = format.format_id.to_lowercase();
+    if let Some(q) = format.quality.as_deref() {
+        s.push(' ');
+        s.push_str(&q.to_lowercase());
+    }
+    if let Some(v) = format.vcodec.as_deref() {
+        s.push(' ');
+        s.push_str(&v.to_lowercase());
+    }
+
+    if s.contains("h264") || s.contains("avc") {
+        2
+    } else if s.contains("h265") || s.contains("hevc") {
+        0
+    } else {
+        1
+    }
 }
 
 fn parse_height_from_resolution(resolution: Option<&str>) -> Option<u32> {
@@ -2100,6 +2139,37 @@ mod tests {
         let best = super::select_best_direct_format(&formats).expect("best format");
         assert_eq!(best.format_id, "1080p");
         assert_eq!(best.download_url.as_deref(), Some("https://example.com/1080.mp4"));
+    }
+
+    #[test]
+    fn test_select_best_direct_format_prefers_h264_when_height_equal() {
+        let formats = vec![
+            VideoFormat {
+                format_id: "1080p_h265".to_string(),
+                ext: "mp4".to_string(),
+                resolution: Some("1920x1080".to_string()),
+                fps: None,
+                filesize: None,
+                vcodec: Some("h265".to_string()),
+                acodec: None,
+                quality: None,
+                download_url: Some("https://example.com/h265.mp4".to_string()),
+            },
+            VideoFormat {
+                format_id: "1080p_h264".to_string(),
+                ext: "mp4".to_string(),
+                resolution: Some("1920x1080".to_string()),
+                fps: None,
+                filesize: None,
+                vcodec: Some("h264".to_string()),
+                acodec: None,
+                quality: None,
+                download_url: Some("https://example.com/h264.mp4".to_string()),
+            },
+        ];
+
+        let best = super::select_best_direct_format(&formats).expect("best format");
+        assert_eq!(best.download_url.as_deref(), Some("https://example.com/h264.mp4"));
     }
 
     #[test]

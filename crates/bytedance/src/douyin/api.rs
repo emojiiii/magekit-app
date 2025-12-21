@@ -554,48 +554,57 @@ fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Optio
             .get("gear_name")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let codec = item
+        let codec_from_item = item
             .get("codec_type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let bitrate = parse_u64(item.get("bit_rate"));
 
-        let play_addr = item
-            .get("play_addr")
-            .or_else(|| item.get("play_addr_265"))
-            .or_else(|| item.get("play_addr_h264"));
+        // 同一档位可能同时包含 h264/h265 的播放地址：尽量都暴露出来，便于用户选择兼容编码
+        let mut addrs: Vec<(&str, &Value)> = Vec::new();
+        if let Some(pa) = item.get("play_addr_h264") {
+            addrs.push(("h264", pa));
+        }
+        if let Some(pa) = item.get("play_addr") {
+            addrs.push((codec_from_item, pa));
+        }
+        if let Some(pa) = item.get("play_addr_265") {
+            addrs.push(("h265", pa));
+        }
 
-        let Some(url) = first_url_from_list(play_addr.and_then(|p| p.get("url_list"))) else {
-            continue;
-        };
+        for (codec_label, play_addr) in addrs {
+            let Some(url) = first_url_from_list(play_addr.get("url_list")) else {
+                continue;
+            };
 
-        let width = parse_u64(play_addr.and_then(|p| p.get("width")))
-            .map(|n| n as u32)
-            .or(fallback_w);
-        let height = parse_u64(play_addr.and_then(|p| p.get("height")))
-            .map(|n| n as u32)
-            .or(fallback_h);
+            let width = parse_u64(play_addr.get("width"))
+                .map(|n| n as u32)
+                .or(fallback_w);
+            let height = parse_u64(play_addr.get("height"))
+                .map(|n| n as u32)
+                .or(fallback_h);
 
-        let resolution = width.zip(height).map(|(w, h)| format!("{}x{}", w, h));
-        let filesize = parse_u64(item.get("size"))
-            .or_else(|| parse_u64(play_addr.and_then(|p| p.get("data_size"))));
+            let resolution = width.zip(height).map(|(w, h)| format!("{}x{}", w, h));
+            let filesize = parse_u64(item.get("size")).or_else(|| parse_u64(play_addr.get("data_size")));
 
-        let format_id = make_format_id(gear_name, codec, height, parse_u64(item.get("bit_rate")));
-        let quality = if !gear_name.trim().is_empty() {
-            Some(gear_name.to_string())
-        } else if !codec.trim().is_empty() {
-            Some(codec.to_string())
-        } else {
-            None
-        };
+            let format_id = make_format_id(gear_name, codec_label, height, bitrate);
+            let quality = if !gear_name.trim().is_empty() {
+                Some(gear_name.to_string())
+            } else if !codec_label.trim().is_empty() {
+                Some(codec_label.to_string())
+            } else {
+                None
+            };
 
-        out.push(VideoFormat {
-            format_id,
-            ext: "mp4".to_string(),
-            resolution,
-            filesize,
-            quality,
-            download_url: Some(url),
-        });
+            out.push(VideoFormat {
+                format_id,
+                ext: "mp4".to_string(),
+                resolution,
+                filesize,
+                quality,
+                download_url: Some(url),
+            });
+        }
     }
 
     // 去重：同 URL 只保留第一个
@@ -708,6 +717,14 @@ mod tests {
                         "bit_rate": 2000000,
                         "size": 222,
                         "play_addr": { "url_list": ["https://example.com/1080.mp4"], "width": 1920, "height": 1080 }
+                    },
+                    {
+                        "gear_name": "hd",
+                        "codec_type": "h265",
+                        "bit_rate": 2500000,
+                        "size": 333,
+                        "play_addr_h264": { "url_list": ["https://example.com/1080_h264.mp4"], "width": 1920, "height": 1080 },
+                        "play_addr_265": { "url_list": ["https://example.com/1080_h265.mp4"], "width": 1920, "height": 1080 }
                     }
                 ]
             }
@@ -740,5 +757,13 @@ mod tests {
             .formats
             .iter()
             .any(|f| f.download_url.as_deref() == Some("https://example.com/1080.mp4")));
+        assert!(video
+            .formats
+            .iter()
+            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h264.mp4")));
+        assert!(video
+            .formats
+            .iter()
+            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080_h265.mp4")));
     }
 }

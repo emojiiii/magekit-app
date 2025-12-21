@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::Duration;
 use uuid::Uuid;
 
 /// 平台 Cookie 配置。
@@ -108,6 +107,17 @@ pub struct ChannelInfo {
     pub tabs: Vec<ChannelTab>,
     /// 扁平化的视频条目列表（兼容旧版）。
     pub entries: Vec<ChannelVideoEntry>,
+}
+
+/// 频道分页结果（用于按需加载频道/作者作品列表）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelPageResult {
+    /// 本页返回的频道信息（`entries` 仅包含本页条目；调用方可自行追加合并）。
+    pub info: ChannelInfo,
+    /// 下一页游标（平台相关；当前抖音使用 `max_cursor`）。
+    pub next_cursor: Option<i64>,
+    /// 是否还有更多页。
+    pub has_more: bool,
 }
 
 /// 频道中的视频条目（精简信息）。
