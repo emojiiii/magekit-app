@@ -138,46 +138,24 @@ impl RenderOnce for AppLayout {
                 IconName::Moon
             };
 
-            let footer_nav_item = |path: &'static str, label: &'static str, icon: IconName| {
-                let is_active = current_path == path;
-                SidebarMenuItem::new(label)
-                    .icon(icon)
-                    .active(is_active)
-                    .on_click(move |_, window, cx| {
-                        let mut navigate = use_navigate(cx);
-                        navigate(path.into());
-                        window.refresh();
-                    })
-            };
-
             Sidebar::new(Side::Left)
                 .collapsed(collapsed)
                 .collapsible(true)
                 .w(px(200.0))
-                .header(
-                    SidebarHeader::new().child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(Icon::new(IconName::Star))
-                            .when(!collapsed, |this| this.child("MageKit")),
-                    ),
-                )
                 .child(
-                    SidebarGroup::new("导航").child(
-                        SidebarMenu::new()
-                            .child(item("/", "首页", IconName::LayoutDashboard))
-                            .child(item("/record", "录制", IconName::Frame))
-                            .child(item("/capture", "嗅探", IconName::Globe))
-                            .child(item("/channel", "频道", IconName::User))
-                            .child(item("/tasks", "任务", IconName::Inbox))
-                            .child(item("/tools", "工具", IconName::SquareTerminal)),
-                    ),
+                    SidebarMenu::new()
+                        .child(item("/", "首页", IconName::LayoutDashboard))
+                        .child(item("/record", "录制", IconName::Frame))
+                        .child(item("/capture", "嗅探", IconName::Globe))
+                        .child(item("/channel", "频道", IconName::User))
+                        .child(item("/tasks", "任务", IconName::Inbox))
+                        .child(item("/tools", "工具", IconName::SquareTerminal)),
                 )
                 .footer(
                     SidebarMenu::new()
                         .collapsed(collapsed)
-                        .child(footer_nav_item("/settings", "设置", IconName::Settings))
+                        .w_full()
+                        .child(item("/settings", "设置", IconName::Settings))
                         .child(
                             SidebarMenuItem::new(if cx.theme().mode.is_dark() {
                                 "浅色模式"
