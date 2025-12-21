@@ -8,7 +8,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const CHARSET: &str = "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJnryx9HVGcaStCe=";
+const CHARSET: &str = concat!(
+    "Dkdpgh4ZKsQB80/Mfvw36XI1R25-WUAlEi7NLboqYTOPuzmFjJn",
+    "ryx9HVGcaStCe=",
+);
 const UA_KEY: [u8; 3] = [0, 1, 12];
 const EMPTY_MD5: &str = "d41d8cd98f00b204e9800998ecf8427e";
 
@@ -246,6 +249,26 @@ mod tests {
         assert_eq!(
             res.params,
             format!("{url}&X-Bogus=DFSzswVYEmGANjultmWx-e9WX7jq")
+        );
+    }
+
+    #[test]
+    fn test_xbogus_matches_python_vector_full_url() {
+        let url = "https://www.douyin.com/aweme/v1/web/aweme/post/?device_platform=webapp&aid=6383&channel=channel_pc_web";
+        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36";
+        let res = generate_xbogus(
+            url,
+            ua,
+            Some(XBogusOptions {
+                timestamp: Some(1_700_000_000),
+                user_agent: None,
+            }),
+        );
+
+        assert_eq!(res.signature, "DFSzswVYHGtANjultmWx-e9WX7jB");
+        assert_eq!(
+            res.params,
+            format!("{url}&X-Bogus=DFSzswVYHGtANjultmWx-e9WX7jB")
         );
     }
 }

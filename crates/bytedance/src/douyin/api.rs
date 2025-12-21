@@ -12,7 +12,15 @@ use regex::Regex;
 use serde_json::Value;
 
 /// 默认 Cookie（仅用于测试，生产环境应使用用户自定义 Cookie）
-const DEFAULT_COOKIE: &str = "ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE%7C1761045455%7Cab35197d5cfb21df6cbb2fa7ef1c9262206b062c315b9d04da746d0b37dfbc7d";
+const DEFAULT_COOKIE: &str = concat!(
+    "ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE%7C1761045455%7C",
+    "ab35197d5cfb21df6cbb2fa7ef1c9262206b062c315b9d04da746d0b37dfbc7d",
+);
+
+/// Douyin Web 端固定 User-Agent（与 A-Bogus 实现的 ua_code 对齐）
+///
+/// Python 参考实现明确提示不要随意修改 UA，否则请求可能失败。
+const DOUYIN_WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36";
 
 /// 抖音 API 客户端
 pub struct DouyinApi {
@@ -24,7 +32,10 @@ pub struct DouyinApi {
 impl DouyinApi {
     /// 创建新的 API 客户端
     pub fn new() -> BdResult<Self> {
-        let client = BdClient::new()?;
+        let client = BdClient::with_config(ClientConfig {
+            user_agent: DOUYIN_WEB_UA.to_string(),
+            ..Default::default()
+        })?;
         Ok(Self {
             user_agent: client.user_agent().to_string(),
             client,
@@ -70,10 +81,10 @@ impl DouyinApi {
         params.insert("browser_language", "zh-CN".to_string());
         params.insert("browser_platform", "Win32".to_string());
         params.insert("browser_name", "Chrome".to_string());
-        params.insert("browser_version", "116.0.0.0".to_string());
+        params.insert("browser_version", "130.0.0.0".to_string());
         params.insert("browser_online", "true".to_string());
         params.insert("engine_name", "Blink".to_string());
-        params.insert("engine_version", "116.0.0.0".to_string());
+        params.insert("engine_version", "130.0.0.0".to_string());
         params.insert("os_name", "Windows".to_string());
         params.insert("os_version", "10".to_string());
         params.insert("cpu_core_num", "12".to_string());
@@ -81,7 +92,16 @@ impl DouyinApi {
         params.insert("platform", "PC".to_string());
         params.insert("downlink", "10".to_string());
         params.insert("effective_type", "4g".to_string());
+        params.insert("from_user_page", "1".to_string());
+        params.insert("locate_query", "false".to_string());
+        params.insert("need_time_list", "1".to_string());
+        params.insert("pc_libra_divert", "Windows".to_string());
+        params.insert("publish_video_strategy_type", "2".to_string());
         params.insert("round_trip_time", "0".to_string());
+        params.insert("show_live_replay_strategy", "1".to_string());
+        params.insert("time_list_query", "0".to_string());
+        params.insert("whale_cut_token", "".to_string());
+        params.insert("update_version_code", "170400".to_string());
         params.insert("msToken", "".to_string());
         params
     }
@@ -98,6 +118,7 @@ impl DouyinApi {
     /// 生成带签名的 URL
     fn sign_url(&self, endpoint: &str, params: &IndexMap<&str, String>) -> String {
         let query = Self::params_to_query(params);
+        // Python 参考实现（2024-06）已不再使用 X-Bogus，改为仅使用 a_bogus。
         let a_bogus = ab_sign(&query, &self.user_agent, None);
         let a_bogus_encoded = urlencoding::encode(&a_bogus);
         format!("{endpoint}?{query}&a_bogus={a_bogus_encoded}")
@@ -167,37 +188,7 @@ impl DouyinApi {
             .get("aweme_detail")
             .ok_or_else(|| BdError::MissingData("aweme_detail".to_string()))?;
 
-        Ok(AwemeInfo {
-            aweme_id: detail["aweme_id"].as_str().unwrap_or(aweme_id).to_string(),
-            desc: detail["desc"].as_str().unwrap_or("").to_string(),
-            author: detail.get("author").map(|a| AuthorInfo {
-                uid: a["uid"].as_str().map(|s| s.to_string()),
-                sec_uid: a["sec_uid"].as_str().map(|s| s.to_string()),
-                nickname: a["nickname"].as_str().map(|s| s.to_string()),
-                avatar_url: a["avatar_thumb"]["url_list"][0]
-                    .as_str()
-                    .map(|s| s.to_string()),
-            }),
-            video: detail.get("video").map(|v| VideoData {
-                duration: v["duration"].as_u64(),
-                cover_url: v["cover"]["url_list"][0].as_str().map(|s| s.to_string()),
-                play_urls: v["play_addr"]["url_list"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|u| u.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                width: v["width"].as_u64().map(|n| n as u32),
-                height: v["height"].as_u64().map(|n| n as u32),
-                formats: vec![],
-            }),
-            create_time: detail["create_time"].as_u64(),
-            digg_count: detail["statistics"]["digg_count"].as_u64(),
-            comment_count: detail["statistics"]["comment_count"].as_u64(),
-            share_count: detail["statistics"]["share_count"].as_u64(),
-        })
+        Ok(parse_aweme_detail(detail, aweme_id))
     }
 
     // ========== 用户接口 ==========
@@ -453,9 +444,214 @@ impl Default for DouyinApi {
     }
 }
 
+fn parse_aweme_detail(detail: &Value, fallback_aweme_id: &str) -> AwemeInfo {
+    let aweme_id = detail
+        .get("aweme_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(fallback_aweme_id)
+        .to_string();
+
+    let mut desc = detail.get("desc").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if desc.trim().is_empty() {
+        // 部分作品 desc 为空，尝试使用 share_title 兜底，避免 UI 空标题
+        desc = detail
+            .pointer("/share_info/share_title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    if desc.trim().is_empty() {
+        desc = aweme_id.clone();
+    }
+
+    let author = detail.get("author").and_then(|a| {
+        Some(AuthorInfo {
+            uid: a.get("uid").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            sec_uid: a.get("sec_uid").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            nickname: a.get("nickname").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            avatar_url: first_url_from_list(a.pointer("/avatar_thumb/url_list")),
+        })
+    });
+
+    let video = detail.get("video").and_then(|v| {
+        let duration = parse_u64(v.get("duration"));
+        let width = parse_u64(v.get("width")).map(|n| n as u32);
+        let height = parse_u64(v.get("height")).map(|n| n as u32);
+
+        let cover_url = first_url_from_list(v.pointer("/cover/url_list"))
+            .or_else(|| first_url_from_list(v.pointer("/origin_cover/url_list")))
+            .or_else(|| first_url_from_list(v.pointer("/dynamic_cover/url_list")));
+
+        let mut formats = parse_video_formats(v, width, height);
+        if formats.is_empty() {
+            // 兜底：直接用 play_addr.url_list 生成一个可下载格式
+            if let Some(url) = first_url_from_list(v.pointer("/play_addr/url_list")) {
+                formats.push(VideoFormat {
+                    format_id: "play".to_string(),
+                    ext: "mp4".to_string(),
+                    resolution: width
+                        .zip(height)
+                        .map(|(w, h)| format!("{}x{}", w, h)),
+                    filesize: None,
+                    quality: Some("play_addr".to_string()),
+                    download_url: Some(url),
+                });
+            }
+        }
+
+        let play_urls = v
+            .pointer("/play_addr/url_list")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|u| u.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        Some(VideoData {
+            duration,
+            cover_url,
+            play_urls,
+            width,
+            height,
+            formats,
+        })
+    });
+
+    AwemeInfo {
+        aweme_id,
+        desc,
+        author,
+        video,
+        create_time: parse_u64(detail.get("create_time")),
+        digg_count: parse_u64(detail.pointer("/statistics/digg_count")),
+        comment_count: parse_u64(detail.pointer("/statistics/comment_count")),
+        share_count: parse_u64(detail.pointer("/statistics/share_count")),
+    }
+}
+
+fn parse_video_formats(video: &Value, fallback_w: Option<u32>, fallback_h: Option<u32>) -> Vec<VideoFormat> {
+    let mut out = Vec::new();
+
+    // 优先使用 download_addr（通常更适合直接下载）
+    if let Some(url) = first_url_from_list(video.pointer("/download_addr/url_list")) {
+        out.push(VideoFormat {
+            format_id: "download".to_string(),
+            ext: "mp4".to_string(),
+            resolution: fallback_w
+                .zip(fallback_h)
+                .map(|(w, h)| format!("{}x{}", w, h)),
+            filesize: parse_u64(video.pointer("/download_addr/data_size")),
+            quality: Some("download_addr".to_string()),
+            download_url: Some(url),
+        });
+    }
+
+    let bit_rate = video.get("bit_rate").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for item in bit_rate {
+        let gear_name = item
+            .get("gear_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let codec = item
+            .get("codec_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let play_addr = item
+            .get("play_addr")
+            .or_else(|| item.get("play_addr_265"))
+            .or_else(|| item.get("play_addr_h264"));
+
+        let Some(url) = first_url_from_list(play_addr.and_then(|p| p.get("url_list"))) else {
+            continue;
+        };
+
+        let width = parse_u64(play_addr.and_then(|p| p.get("width")))
+            .map(|n| n as u32)
+            .or(fallback_w);
+        let height = parse_u64(play_addr.and_then(|p| p.get("height")))
+            .map(|n| n as u32)
+            .or(fallback_h);
+
+        let resolution = width.zip(height).map(|(w, h)| format!("{}x{}", w, h));
+        let filesize = parse_u64(item.get("size"))
+            .or_else(|| parse_u64(play_addr.and_then(|p| p.get("data_size"))));
+
+        let format_id = make_format_id(gear_name, codec, height, parse_u64(item.get("bit_rate")));
+        let quality = if !gear_name.trim().is_empty() {
+            Some(gear_name.to_string())
+        } else if !codec.trim().is_empty() {
+            Some(codec.to_string())
+        } else {
+            None
+        };
+
+        out.push(VideoFormat {
+            format_id,
+            ext: "mp4".to_string(),
+            resolution,
+            filesize,
+            quality,
+            download_url: Some(url),
+        });
+    }
+
+    // 去重：同 URL 只保留第一个
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|f| f.download_url.as_deref().map(|u| seen.insert(u.to_string())).unwrap_or(true));
+    out
+}
+
+fn make_format_id(gear_name: &str, codec: &str, height: Option<u32>, bitrate: Option<u64>) -> String {
+    // format_id 用于 UI 展示/选择，尽量友好且可区分
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(h) = height {
+        parts.push(format!("{}p", h));
+    }
+    if !codec.trim().is_empty() {
+        parts.push(codec.to_string());
+    }
+    if let Some(br) = bitrate {
+        // kbps
+        parts.push(format!("{}k", br / 1000));
+    }
+    if parts.is_empty() && !gear_name.trim().is_empty() {
+        return gear_name.to_string();
+    }
+    if parts.is_empty() {
+        return "unknown".to_string();
+    }
+    parts.join("_")
+}
+
+fn parse_u64(v: Option<&Value>) -> Option<u64> {
+    let v = v?;
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(n) = v.as_i64() {
+        if n >= 0 {
+            return Some(n as u64);
+        }
+    }
+    if let Some(s) = v.as_str() {
+        return s.parse::<u64>().ok();
+    }
+    None
+}
+
+fn first_url_from_list(v: Option<&Value>) -> Option<String> {
+    v.and_then(|x| x.as_array())
+        .and_then(|arr| arr.iter().filter_map(|u| u.as_str()).next())
+        .map(|s| s.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_extract_aweme_id() {
@@ -477,5 +673,72 @@ mod tests {
             DouyinApi::extract_sec_user_id("https://www.douyin.com/user/MS4wLjABAAAA123abc"),
             Some("MS4wLjABAAAA123abc".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_aweme_detail_builds_multiple_formats_and_fallback_title() {
+        let detail = json!({
+            "aweme_id": "123",
+            "desc": "",
+            "share_info": { "share_title": "fallback-title" },
+            "author": {
+                "uid": "u1",
+                "sec_uid": "s1",
+                "nickname": "nick",
+                "avatar_thumb": { "url_list": ["https://example.com/a.jpg"] }
+            },
+            "video": {
+                "duration": 6500,
+                "width": 1920,
+                "height": 1080,
+                "cover": { "url_list": ["https://example.com/c.jpg"] },
+                "download_addr": { "url_list": ["https://example.com/dl.mp4"], "data_size": 123 },
+                "play_addr": { "url_list": ["https://example.com/play.mp4"] },
+                "bit_rate": [
+                    {
+                        "gear_name": "normal",
+                        "codec_type": "h264",
+                        "bit_rate": 1000000,
+                        "size": 111,
+                        "play_addr": { "url_list": ["https://example.com/720.mp4"], "width": 1280, "height": 720 }
+                    },
+                    {
+                        "gear_name": "hd",
+                        "codec_type": "h264",
+                        "bit_rate": 2000000,
+                        "size": 222,
+                        "play_addr": { "url_list": ["https://example.com/1080.mp4"], "width": 1920, "height": 1080 }
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_aweme_detail(&detail, "fallback");
+        assert_eq!(parsed.aweme_id, "123");
+        assert_eq!(parsed.desc, "fallback-title");
+
+        let video = parsed.video.expect("video");
+        assert_eq!(video.duration, Some(6500));
+        assert_eq!(video.width, Some(1920));
+        assert_eq!(video.height, Some(1080));
+        assert_eq!(
+            video.cover_url.as_deref(),
+            Some("https://example.com/c.jpg")
+        );
+
+        // download_addr + bit_rate(2) = 3 条直链格式（去重后仍应 >= 3）
+        assert!(
+            video.formats.len() >= 3,
+            "formats too few: {}",
+            video.formats.len()
+        );
+        assert!(video
+            .formats
+            .iter()
+            .any(|f| f.format_id == "download" && f.download_url.as_deref() == Some("https://example.com/dl.mp4")));
+        assert!(video
+            .formats
+            .iter()
+            .any(|f| f.download_url.as_deref() == Some("https://example.com/1080.mp4")));
     }
 }

@@ -46,9 +46,10 @@ fn extract_platform_from_url(url: &str) -> Option<String> {
 
 /// 获取指定平台的 Cookie 字符串
 fn get_cookie_string(platform: &str, cookies: &[PlatformCookie]) -> Option<String> {
+    let platform_lower = platform.to_lowercase();
     cookies
         .iter()
-        .find(|c| c.enabled && c.platform.to_lowercase() == platform.to_lowercase())
+        .find(|c| c.enabled && c.platform.to_lowercase().contains(&platform_lower))
         .map(|c| c.cookie.clone())
 }
 
@@ -154,7 +155,7 @@ impl VideoDownloader {
         if let Some(download_url) = &options.download_url {
             tracing::info!("🚀 使用直链下载模式");
             return self
-                .download_direct(task_id, download_url, &options, &progress_tx, cookies)
+                .download_direct(task_id, url, download_url, &options, &progress_tx, cookies)
                 .await;
         }
 
@@ -167,6 +168,7 @@ impl VideoDownloader {
     async fn download_direct(
         &self,
         task_id: TaskId,
+        source_url: &str,
         download_url: &str,
         options: &DownloadOptions,
         progress_tx: &mpsc::Sender<DownloadProgress>,
@@ -175,13 +177,12 @@ impl VideoDownloader {
         use tokio::io::AsyncWriteExt;
 
         // 构建输出文件路径（直链保持原有模板逻辑）
-        let filename = options
-            .output_template
-            .as_deref()
-            .unwrap_or("video.mp4")
-            .replace("%(title)s", "video")
-            .replace("%(ext)s", "mp4");
-        let output_path = options.output_path.join(&filename);
+        let title_for_path = options
+            .task_title
+            .clone()
+            .unwrap_or_else(|| task_id.to_string());
+        let output_path = generate_output_path(&options.output_path, &title_for_path, "mp4")
+            .map_err(|e| DownloadError::internal(format!("生成输出路径失败: {}", e)))?;
 
         tracing::info!("  直链: {}", download_url);
         tracing::info!("  输出文件: {:?}", output_path);
@@ -190,7 +191,7 @@ impl VideoDownloader {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::USER_AGENT,
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36"
                 .parse()
                 .unwrap(),
         );
@@ -201,7 +202,8 @@ impl VideoDownloader {
 
         // 添加 Cookie
         if let Some(cookies) = cookies {
-            let platform = extract_platform_from_url(download_url);
+            let platform = extract_platform_from_url(source_url)
+                .or_else(|| extract_platform_from_url(download_url));
             if let Some(platform) = platform {
                 if let Some(cookie_str) = get_cookie_string(&platform, cookies) {
                     if let Ok(cookie_val) = cookie_str.parse() {

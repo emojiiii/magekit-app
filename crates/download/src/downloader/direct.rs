@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::DownloadRequest;
@@ -178,6 +178,42 @@ impl crate::downloader::Downloader for DirectDownloader {
         }
 
         file.flush().await?;
+
+        // 校验：避免把 HTML/JSON/m3u8 等页面内容当作 mp4 保存
+        // 不做额外网络请求，仅在下载完成后读取本地文件头判断。
+        if created_new {
+            let mut f = tokio::fs::File::open(&temp_path).await?;
+            let mut buf = [0u8; 512];
+            let n = f.read(&mut buf).await.unwrap_or(0);
+            let head = &buf[..n];
+
+            let trimmed = {
+                let mut i = 0usize;
+                while i < head.len() && head[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if head.len() >= i + 3 && head[i..i + 3] == [0xEF, 0xBB, 0xBF] {
+                    i += 3;
+                }
+                &head[i..]
+            };
+
+            let ct = content_type.as_deref().unwrap_or("");
+            let looks_like_m3u8 = trimmed.starts_with(b"#EXTM3U")
+                || ct.contains("mpegurl")
+                || ct.contains("m3u8");
+            let looks_like_html = trimmed.starts_with(b"<") || ct.contains("text/html");
+            let looks_like_json = trimmed.starts_with(b"{") || ct.contains("application/json");
+
+            if looks_like_m3u8 || looks_like_html || looks_like_json {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(DownloadError::Network(format!(
+                    "unexpected response for direct download (content-type={})",
+                    ct
+                )));
+            }
+        }
+
         // 成功后重命名
         tokio::fs::rename(&temp_path, &output_path).await?;
         callback.on_progress(DownloadProgress::completed(downloaded, total));

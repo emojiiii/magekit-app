@@ -219,7 +219,7 @@ impl ToolManager {
     pub async fn start_download_with_info(
         &self,
         url: &str,
-        options: DownloadOptions,
+        mut options: DownloadOptions,
         cookies: Option<&[PlatformCookie]>,
         video_info: Option<VideoInfo>,
     ) -> DownloadResult<TaskId> {
@@ -242,6 +242,23 @@ impl ToolManager {
             Some(info) => info,
             None => self.get_video_info(&normalized_url, cookies).await?,
         };
+
+        // 如果解析器提供了直链，且用户选择的格式对应直链，则优先走直链下载（避免 yt-dlp）
+        if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+            if let Some(url) = video_info
+                .formats
+                .iter()
+                .find(|f| f.format_id == options.format_id)
+                .and_then(|f| f.download_url.clone())
+            {
+                options.download_url = Some(url);
+            } else if let Some(best) = select_best_direct_format(&video_info.formats) {
+                // UI 可能传入 yt-dlp 风格的 format 字符串；如果解析器已提供直链格式，
+                // 则直接选取“最高分辨率”的直链格式作为兜底，避免走 yt-dlp。
+                options.format_id = best.format_id.clone();
+                options.download_url = best.download_url.clone();
+            }
+        }
         if task_status.title.is_none() {
             task_status.title = Some(video_info.title.clone());
         }
@@ -867,15 +884,52 @@ impl ToolManager {
             tracing::debug!("📝 传递其他 ffmpeg 参数: {:?}", other_ffmpeg_args);
         }
 
-        // 🔧 传递 format_id 给 yt-dlp
-        if !options.format_id.is_empty() {
+        // 🔧 仅在会走 yt-dlp（Auto）时传递 format_id，避免 Direct/ffmpeg 场景产生误导日志
+        if options.download_url.is_none() && options.ffmpeg_url.is_none() && !options.format_id.is_empty() {
             let ytdlp_args = vec!["-f".to_string(), options.format_id.clone()];
             tool_args.insert("ytdlp".to_string(), ytdlp_args.clone());
             tracing::info!("📝 传递 yt-dlp 格式参数: {:?}", ytdlp_args);
         }
 
+        // Direct/ffmpeg 策略时，下载目标应使用解析得到的真实资源 URL，而不是用户输入的页面/短链。
+        // 否则会把 HTML/跳转页落盘成 .mp4（表现为 moov atom not found / 无法播放）。
+        let download_target_url = if let Some(stream_url) = options.ffmpeg_url.as_deref() {
+            stream_url
+        } else if let Some(direct_url) = options.download_url.as_deref() {
+            direct_url
+        } else {
+            parsed_url.as_str()
+        };
+
+        let parsed_download_url: url::Url = match download_target_url.parse() {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::error!("❌ 无法解析下载 URL: {} ({})", download_target_url, e);
+                let _ = event_tx.send(ToolManagerEvent::TaskUpdate(TaskUpdate::Failed(
+                    task_id,
+                    format!("无效的下载 URL: {}", e),
+                )));
+                return;
+            }
+        };
+
+        let platform_hint = platform_hint_from_url(&url);
+
+        // 对 Douyin 直链资源补齐必要的默认 headers，避免服务端返回 HTML/JSON。
+        if platform_hint == Some("douyin") {
+            headers_map.entry("User-Agent".to_string()).or_insert_with(|| {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36".to_string()
+            });
+            headers_map
+                .entry("Referer".to_string())
+                .or_insert_with(|| "https://www.douyin.com/".to_string());
+            headers_map
+                .entry("Origin".to_string())
+                .or_insert_with(|| "https://www.douyin.com".to_string());
+        }
+
         let request = download::DownloadRequest {
-            url: parsed_url,
+            url: parsed_download_url,
             output: download::DownloadOutput {
                 directory: options.output_path.clone(),
                 template: options.output_template.clone(),
@@ -902,7 +956,7 @@ impl ToolManager {
             extra: download::DownloadExtra {
                 headers: headers_map, // ✅ 传递解析后的 headers
                 cookie: magekit_extractor::cookies::build_cookie_header(
-                    platform_hint_from_url(&url),
+                    platform_hint,
                     cookies.as_deref(),
                 ),
                 query: Vec::new(),
@@ -1832,6 +1886,26 @@ fn is_direct_resource(url: &str) -> bool {
     false
 }
 
+fn select_best_direct_format(formats: &[magekit_shared::VideoFormat]) -> Option<&magekit_shared::VideoFormat> {
+    formats
+        .iter()
+        .filter(|f| f.download_url.is_some())
+        .max_by_key(|f| parse_height_from_resolution(f.resolution.as_deref()).unwrap_or(0))
+}
+
+fn parse_height_from_resolution(resolution: Option<&str>) -> Option<u32> {
+    let res = resolution?;
+    // 常见：1920x1080
+    if let Some(h) = res.split('x').last().and_then(|h| h.parse::<u32>().ok()) {
+        return Some(h);
+    }
+    // 兜底：1080p
+    if let Some(stripped) = res.strip_suffix('p') {
+        return stripped.parse::<u32>().ok();
+    }
+    None
+}
+
 /// 检测是否为流媒体资源（需要 ffmpeg 下载）
 fn is_streaming_resource(url: &str) -> bool {
     let streaming_exts = ["m3u8", "m3u", "ts", "mpd"];
@@ -1861,6 +1935,8 @@ fn is_streaming_resource(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+
+    use magekit_shared::VideoFormat;
 
     #[test]
     fn test_parse_ffmpeg_headers() {
@@ -1980,5 +2056,57 @@ mod tests {
         assert_eq!(headers_map.len(), 0);
         assert_eq!(other_args.len(), 4);
         assert_eq!(other_args, vec!["-c", "copy", "-f", "mp4"]);
+    }
+
+    #[test]
+    fn test_select_best_direct_format_prefers_highest_height() {
+        let formats = vec![
+            VideoFormat {
+                format_id: "720p".to_string(),
+                ext: "mp4".to_string(),
+                resolution: Some("1280x720".to_string()),
+                fps: None,
+                filesize: None,
+                vcodec: None,
+                acodec: None,
+                quality: None,
+                download_url: Some("https://example.com/720.mp4".to_string()),
+            },
+            VideoFormat {
+                format_id: "1080p".to_string(),
+                ext: "mp4".to_string(),
+                resolution: Some("1920x1080".to_string()),
+                fps: None,
+                filesize: None,
+                vcodec: None,
+                acodec: None,
+                quality: None,
+                download_url: Some("https://example.com/1080.mp4".to_string()),
+            },
+            // 即使更高分辨率，但没有直链也不应被选中
+            VideoFormat {
+                format_id: "4k".to_string(),
+                ext: "mp4".to_string(),
+                resolution: Some("3840x2160".to_string()),
+                fps: None,
+                filesize: None,
+                vcodec: None,
+                acodec: None,
+                quality: None,
+                download_url: None,
+            },
+        ];
+
+        let best = super::select_best_direct_format(&formats).expect("best format");
+        assert_eq!(best.format_id, "1080p");
+        assert_eq!(best.download_url.as_deref(), Some("https://example.com/1080.mp4"));
+    }
+
+    #[test]
+    fn test_parse_height_from_resolution_supports_common_shapes() {
+        assert_eq!(super::parse_height_from_resolution(Some("1920x1080")), Some(1080));
+        assert_eq!(super::parse_height_from_resolution(Some("1080p")), Some(1080));
+        assert_eq!(super::parse_height_from_resolution(Some("bad")), None);
+        assert_eq!(super::parse_height_from_resolution(None), None);
     }
 }

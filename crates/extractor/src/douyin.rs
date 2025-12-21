@@ -12,7 +12,11 @@ fn setup_api_cookie(api: &mut DouyinApi, cookies: Option<&[PlatformCookie]>) {
     if let Some(cookie_list) = cookies {
         if let Some(c) = cookie_list
             .iter()
-            .find(|c| c.enabled && c.platform.to_lowercase().contains("douyin"))
+            .find(|c| {
+                c.enabled
+                    && c.platform.to_lowercase().contains("douyin")
+                    && !c.cookie.trim().is_empty()
+            })
         {
             api.set_cookie(&c.cookie);
         }
@@ -94,10 +98,10 @@ pub async fn extract_video_info(
     let duration = aweme_info.video.as_ref().and_then(|v| {
         v.duration.map(|d| {
             // 如果时长大于 10000，说明是毫秒
-            if d > 10_000 {
-                Duration::from_millis(d)
-            } else {
+            if d < 1_000 {
                 Duration::from_secs(d)
+            } else {
+                Duration::from_millis(d)
             }
         })
     });
@@ -105,10 +109,19 @@ pub async fn extract_video_info(
     let thumbnail = aweme_info.video.as_ref().and_then(|v| v.cover_url.clone());
     let uploader = aweme_info.author.as_ref().and_then(|a| a.nickname.clone());
 
+    // 标题优先使用 desc；若为空（或兜底成 aweme_id），则使用作者名兜底，避免 UI 出现“纯数字标题”。
+    let title = if !aweme_info.desc.trim().is_empty() && aweme_info.desc != aweme_info.aweme_id {
+        aweme_info.desc.clone()
+    } else if let Some(name) = uploader.as_deref() {
+        format!("{}_{}", name, aweme_info.aweme_id)
+    } else {
+        aweme_info.aweme_id.clone()
+    };
+
     Ok(VideoInfo {
         id: aweme_info.aweme_id,
-        title: aweme_info.desc.clone(),
-        description: Some(aweme_info.desc),
+        title,
+        description: (!aweme_info.desc.trim().is_empty()).then_some(aweme_info.desc),
         duration,
         uploader,
         upload_date: None,
