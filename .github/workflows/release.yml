@@ -6,9 +6,18 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Auto bump version when version is empty (major/minor/patch)"
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       version:
-        description: "Release version (e.g., v0.1.0)"
-        required: true
+        description: "Release version (e.g., v0.1.0). Leave empty to auto-bump."
+        required: false
         type: string
 
 env:
@@ -21,17 +30,73 @@ jobs:
   prepare:
     name: Prepare Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Get version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          input_version="${{ inputs.version }}"
+          bump="${{ inputs.bump }}"
+
+          if [ -n "${input_version}" ]; then
+            version="${input_version}"
+            case "${version}" in
+              v*) ;;
+              *) version="v${version}" ;;
+            esac
+          else
+            latest_tag="$(git tag -l 'v[0-9]*' --sort=-version:refname | head -n 1 || true)"
+            if [ -z "${latest_tag}" ]; then
+              version="v0.1.0"
+            else
+              if [[ "${latest_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+                major="${BASH_REMATCH[1]}"
+                minor="${BASH_REMATCH[2]}"
+                patch="${BASH_REMATCH[3]}"
+              else
+                echo "Invalid latest tag format: ${latest_tag}" >&2
+                exit 1
+              fi
+
+              case "${bump}" in
+                major)
+                  major=$((major + 1))
+                  minor=0
+                  patch=0
+                  ;;
+                minor)
+                  minor=$((minor + 1))
+                  patch=0
+                  ;;
+                patch|*)
+                  patch=$((patch + 1))
+                  ;;
+              esac
+
+              version="v${major}.${minor}.${patch}"
+            fi
+          fi
+
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z.\-]+)?$ ]]; then
+            echo "Invalid version: ${version}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   # macOS build
   build-macos:
@@ -47,7 +112,7 @@ jobs:
           targets: x86_64-apple-darwin, aarch64-apple-darwin
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -160,7 +225,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -217,7 +282,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -367,9 +432,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -378,14 +445,59 @@ jobs:
           echo "Downloaded artifacts:"
           find artifacts -type f -name "*"
 
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ needs.prepare.outputs.version }}"
+          prev_tag="$(git tag -l 'v[0-9]*' --sort=-version:refname | grep -Fvx "${version}" | head -n 1 || true)"
+
+          {
+            echo "## MageKit ${version}"
+            echo
+            echo "### Downloads"
+            echo
+            echo "| Platform | File | Description |"
+            echo "|----------|------|-------------|"
+            echo "| **macOS** | \`MageKit-${version}-macos-universal.dmg\` | DMG installer (Intel + Apple Silicon) |"
+            echo "| **macOS** | \`MageKit-${version}-macos-universal.app.zip\` | App bundle zip |"
+            echo "| **Windows** | \`MageKit-${version}-windows-x64.exe\` | Standalone executable |"
+            echo "| **Windows** | \`MageKit-${version}-windows-x64-portable.zip\` | Portable edition |"
+            echo "| **Linux** | \`MageKit-${version}-linux-x64.AppImage\` | AppImage format |"
+            echo "| **Linux** | \`MageKit-${version}-linux-x64.tar.gz\` | Binary archive |"
+            echo
+            echo "### System Requirements"
+            echo
+            echo "- **macOS**: macOS 11.0 (Big Sur) or later"
+            echo "- **Windows**: Windows 10 or later"
+            echo "- **Linux**: Vulkan-capable graphics driver required"
+            echo
+            echo "### Changelog"
+            echo
+            if [ -n "${prev_tag}" ]; then
+              echo "对比：${prev_tag} ... ${version}"
+              echo
+              git log "${prev_tag}..${GITHUB_SHA}" --no-merges --pretty=format:'- %s (%h)'
+            else
+              echo "（未找到历史 tag，列出当前提交历史）"
+              echo
+              git log --no-merges --pretty=format:'- %s (%h)'
+            fi
+            echo
+          } > RELEASE_NOTES.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
+          target_commitish: ${{ github.sha }}
           name: MageKit ${{ needs.prepare.outputs.version }}
           draft: false
           prerelease: ${{ contains(needs.prepare.outputs.version, 'beta') || contains(needs.prepare.outputs.version, 'alpha') || contains(needs.prepare.outputs.version, 'rc') }}
-          generate_release_notes: true
+          generate_release_notes: false
+          body_path: RELEASE_NOTES.md
           files: |
             artifacts/macos-dmg/*
             artifacts/macos-app-zip/*
@@ -393,29 +505,6 @@ jobs:
             artifacts/windows-exe/*
             artifacts/linux-appimage/*
             artifacts/linux-tar-gz/*
-          body: |
-            ## MageKit ${{ needs.prepare.outputs.version }}
-
-            ### Downloads
-
-            | Platform | File | Description |
-            |----------|------|-------------|
-            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg` | DMG installer (Intel + Apple Silicon) |
-            | **macOS** | `MageKit-${{ needs.prepare.outputs.version }}-macos-universal.app.zip` | App bundle zip |
-            | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64.exe` | Standalone executable |
-            | **Windows** | `MageKit-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip` | Portable edition |
-            | **Linux** | `MageKit-${{ needs.prepare.outputs.version }}-linux-x64.AppImage` | AppImage format |
-            | **Linux** | `MageKit-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz` | Binary archive |
-
-            ### System Requirements
-
-            - **macOS**: macOS 11.0 (Big Sur) or later
-            - **Windows**: Windows 10 or later
-            - **Linux**: Vulkan-capable graphics driver required
-
-            ### Changelog
-
-            See the auto-generated release notes below or check [CHANGELOG.md](https://github.com/emojiiii/magekit-app/blob/main/CHANGELOG.md)
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
