@@ -1169,7 +1169,12 @@ impl RecordingPage {
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 // 更新录制任务的进度信息
                                 if let Some(ref mut task) = state.current_task {
-                                    task.duration = progress.duration;
+                                    // UI 以本地 start_time 计算已录制时长，避免不同 FFmpeg 版本
+                                    // `-progress` 时间字段单位差异/重连导致的时长跳变。
+                                    task.duration = chrono::Utc::now()
+                                        .signed_duration_since(task.start_time)
+                                        .num_seconds()
+                                        .max(0) as u64;
                                     task.recorded_bytes = progress.size;
                                 }
                             }
