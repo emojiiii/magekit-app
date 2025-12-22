@@ -76,10 +76,9 @@ impl ToolStorage {
             }
         }
 
-        let output = cmd.output()
-            .map_err(|e| {
-                ToolManagerError::process_failed(tool_path.display().to_string(), e.to_string())
-            })?;
+        let output = cmd.output().map_err(|e| {
+            ToolManagerError::process_failed(tool_path.display().to_string(), e.to_string())
+        })?;
 
         if !output.status.success() {
             return Ok(None);

@@ -39,7 +39,12 @@ impl ToolUpdater {
 
         // 已安装且已是最新版本时直接返回；否则执行覆盖式更新。
         if self.storage.is_tool_installed(ToolType::YtDlp).await {
-            let current = self.storage.get_tool_version(ToolType::YtDlp).await.ok().flatten();
+            let current = self
+                .storage
+                .get_tool_version(ToolType::YtDlp)
+                .await
+                .ok()
+                .flatten();
             let latest = match self.get_latest_yt_dlp_version(channel.clone()).await {
                 Ok(v) => v,
                 Err(e) => {
@@ -107,10 +112,7 @@ impl ToolUpdater {
         let latest_yt_dlp = self.get_latest_yt_dlp_version(channel).await?;
         if let (Some(current), Some(latest)) = (current_yt_dlp, latest_yt_dlp) {
             if self.is_version_newer(&latest, &current) {
-                update_info.yt_dlp_update = Some(ToolUpdate {
-                    current,
-                    latest,
-                });
+                update_info.yt_dlp_update = Some(ToolUpdate { current, latest });
             }
         }
 
@@ -379,7 +381,10 @@ impl ToolUpdater {
     }
 
     /// 获取yt-dlp最新版本信息
-    async fn get_latest_yt_dlp_version(&self, channel: UpdateChannel) -> ToolManagerResult<Option<String>> {
+    async fn get_latest_yt_dlp_version(
+        &self,
+        channel: UpdateChannel,
+    ) -> ToolManagerResult<Option<String>> {
         match channel {
             UpdateChannel::Stable => self.get_latest_yt_dlp_version_from_github_redirect().await,
             // Nightly/Custom 暂不支持准确的“最新版本”解析
@@ -388,11 +393,15 @@ impl ToolUpdater {
     }
 
     /// 通过 GitHub releases/latest 的重定向解析最新版本号（避免 GitHub API 限流）。
-    async fn get_latest_yt_dlp_version_from_github_redirect(&self) -> ToolManagerResult<Option<String>> {
+    async fn get_latest_yt_dlp_version_from_github_redirect(
+        &self,
+    ) -> ToolManagerResult<Option<String>> {
         let client = reqwest::Client::builder()
             .user_agent("MageKit/1.0")
             .build()
-            .map_err(|e| ToolManagerError::internal(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                ToolManagerError::internal(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let resp = client
             .get("https://github.com/yt-dlp/yt-dlp/releases/latest")
@@ -481,7 +490,10 @@ impl ToolUpdater {
         }
     }
 
-    async fn get_installed_tool_version(&self, tool_type: ToolType) -> ToolManagerResult<Option<String>> {
+    async fn get_installed_tool_version(
+        &self,
+        tool_type: ToolType,
+    ) -> ToolManagerResult<Option<String>> {
         // 1) 优先应用内 tools 目录
         if let Ok(Some(v)) = self.storage.get_tool_version(tool_type).await {
             return Ok(Some(v));
@@ -522,7 +534,12 @@ impl ToolUpdater {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(match tool_type {
-            ToolType::YtDlp => stdout.lines().next().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+            ToolType::YtDlp => stdout
+                .lines()
+                .next()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
             ToolType::Ffmpeg => stdout
                 .lines()
                 .find(|line| line.contains("ffmpeg version"))

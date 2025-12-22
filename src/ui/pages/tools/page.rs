@@ -117,7 +117,9 @@ impl ToolsPage {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(move || app_state.check_for_tool_updates_sync(UpdateChannel::Stable)).await;
+            let result =
+                smol::unblock(move || app_state.check_for_tool_updates_sync(UpdateChannel::Stable))
+                    .await;
 
             let _ = this.update(cx, |this, cx| {
                 this.is_checking_updates = false;
