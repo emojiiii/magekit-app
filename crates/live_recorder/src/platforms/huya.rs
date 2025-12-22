@@ -37,7 +37,12 @@ impl HuyaHandler {
 
     /// 重新生成 anti-code（参考 py_demo 的实现）
     /// 虎牙的流 URL 需要重新生成 anti-code 才能正常访问
-    fn generate_anti_code(&self, old_anti_code: &str, stream_name: &str) -> String {
+    fn generate_anti_code(
+        &self,
+        old_anti_code: &str,
+        stream_name: &str,
+        ctype_override: Option<&str>,
+    ) -> String {
         let params_t = 100;
         let sdk_version = 2403051612u64;
 
@@ -66,10 +71,11 @@ impl HuyaHandler {
                 .collect();
 
         let fm = query_params.get("fm").map(|s| s.as_str()).unwrap_or("");
-        let ctype = query_params
+        let ctype_from_query = query_params
             .get("ctype")
             .map(|s| s.as_str())
             .unwrap_or("tars_mp");
+        let ctype = ctype_override.unwrap_or(ctype_from_query);
         let fs = query_params.get("fs").map(|s| s.as_str()).unwrap_or("bgct");
 
         // fm 参数值是经过 URL 编码然后 base64 编码的
@@ -219,13 +225,24 @@ impl HuyaHandler {
                         let hls_anti_code = stream_item["sHlsAntiCode"].as_str().unwrap_or("");
 
                         // 重新生成 anti-code（关键修复）
-                        let new_flv_anti_code = self.generate_anti_code(flv_anti_code, stream_name);
-                        let new_hls_anti_code = self.generate_anti_code(hls_anti_code, stream_name);
+                        let flv_ctype_override = if cdn_type == "TX" {
+                            Some("huya_webh5")
+                        } else {
+                            None
+                        };
+                        let new_flv_anti_code =
+                            self.generate_anti_code(flv_anti_code, stream_name, flv_ctype_override);
+                        let new_hls_anti_code =
+                            self.generate_anti_code(hls_anti_code, stream_name, None);
 
-                        let flv_url =
-                            format!("{}/{}.flv?{}", flv_url_base, stream_name, new_flv_anti_code);
+                        // Huya 的播放地址需要携带 `ratio` 参数（即使为空），否则可能出现
+                        // FFmpeg 能启动但无法持续拉流/无数据写入的问题（对齐 py_demo 实现）
+                        let flv_url = format!(
+                            "{}/{}.flv?{}&ratio=",
+                            flv_url_base, stream_name, new_flv_anti_code
+                        );
                         let mut m3u8_url = format!(
-                            "{}/{}.m3u8?{}",
+                            "{}/{}.m3u8?{}&ratio=",
                             hls_url_base, stream_name, new_hls_anti_code
                         );
 
