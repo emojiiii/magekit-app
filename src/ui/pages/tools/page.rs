@@ -6,7 +6,8 @@ use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
-use magekit_shared::ToolType;
+use magekit_shared::{ToolType, UpdateChannel};
+use magekit_tool_manager::UpdateInfo;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -17,6 +18,8 @@ pub struct ToolsPage {
     app_state: Arc<AppState>,
     tools: Vec<ToolInfo>,
     is_checking: bool,
+    is_checking_updates: bool,
+    update_info: Option<UpdateInfo>,
     error_message: Option<String>,
     initial_check_done: bool,
 }
@@ -30,6 +33,8 @@ impl ToolsPage {
             app_state,
             tools,
             is_checking: false,
+            is_checking_updates: false,
+            update_info: None,
             error_message: None,
             initial_check_done: false,
         };
@@ -40,7 +45,11 @@ impl ToolsPage {
             Timer::after(std::time::Duration::from_millis(100)).await;
 
             let _ = this.update(cx, |this, cx| {
-                this.check_tools_status(cx);
+                if !this.initial_check_done {
+                    this.initial_check_done = true;
+                    this.check_tools_status(cx);
+                    this.check_tool_updates(cx);
+                }
             });
         })
         .detach();
@@ -49,6 +58,9 @@ impl ToolsPage {
     }
 
     fn check_tools_status(&mut self, cx: &mut Context<Self>) {
+        if self.is_checking {
+            return;
+        }
         self.is_checking = true;
         self.error_message = None;
 
@@ -96,8 +108,105 @@ impl ToolsPage {
         .detach();
     }
 
+    fn check_tool_updates(&mut self, cx: &mut Context<Self>) {
+        if self.is_checking_updates {
+            return;
+        }
+        self.is_checking_updates = true;
+
+        let app_state = self.app_state.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || app_state.check_for_tool_updates_sync(UpdateChannel::Stable)).await;
+
+            let _ = this.update(cx, |this, cx| {
+                this.is_checking_updates = false;
+                match result {
+                    Ok(info) => {
+                        this.update_info = Some(info);
+                    }
+                    Err(e) => {
+                        this.error_message = Some(format!("检查更新失败: {}", e));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn install_tool(&mut self, tool_type: ToolType, cx: &mut Context<Self>) {
-        // 设置初始下载状态
+        // ffmpeg 当前没有可靠的下载进度（macOS/Linux 走系统包管理器），直接展示“安装中”。
+        if tool_type == ToolType::Ffmpeg {
+            for tool in &mut self.tools {
+                if tool.tool_type == tool_type {
+                    tool.state = ToolInstallState::Installing;
+                    break;
+                }
+            }
+            cx.notify();
+
+            let app_state = self.app_state.clone();
+            let handle = app_state.install_tool_in_background(tool_type);
+
+            cx.spawn(async move |this, cx| {
+                loop {
+                    if handle.is_finished() {
+                        break;
+                    }
+                    Timer::after(std::time::Duration::from_millis(100)).await;
+                }
+
+                let (result, status): (anyhow::Result<()>, ToolStatus) = smol::unblock(move || {
+                    let result = handle
+                        .join()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("安装线程崩溃")));
+                    let status = app_state.check_tool_status_sync(tool_type);
+                    (result, status)
+                })
+                .await;
+
+                let refresh_updates = result.is_ok();
+                let _ = this.update(cx, |this, cx| {
+                    for tool in &mut this.tools {
+                        if tool.tool_type == tool_type {
+                            match &result {
+                                Ok(_) => {
+                                    tool.state = match &status {
+                                        ToolStatus::NotInstalled => ToolInstallState::NotInstalled,
+                                        ToolStatus::Installed { version, is_system } => {
+                                            ToolInstallState::Installed {
+                                                version: version.clone(),
+                                                is_system: *is_system,
+                                            }
+                                        }
+                                    };
+                                    tracing::info!("✅ 安装成功: {}", tool.name);
+                                }
+                                Err(e) => {
+                                    tool.state = ToolInstallState::Failed(e.to_string());
+                                    this.error_message =
+                                        Some(format!("安装 {} 失败: {}", tool.name, e));
+                                    tracing::error!("❌ 安装失败: {}: {}", tool.name, e);
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    // 安装成功后刷新一次更新信息
+                    if refresh_updates {
+                        this.check_tool_updates(cx);
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+
+            return;
+        }
+
+        // yt-dlp：展示下载进度
         for tool in &mut self.tools {
             if tool.tool_type == tool_type {
                 tool.state = ToolInstallState::Downloading(DownloadProgress {
@@ -179,6 +288,7 @@ impl ToolsPage {
             })
             .await;
 
+            let refresh_updates = result.is_ok();
             // 更新 UI
             let _ = this.update(cx, |this, cx| {
                 for tool in &mut this.tools {
@@ -205,6 +315,10 @@ impl ToolsPage {
                         }
                         break;
                     }
+                }
+                // 安装成功后刷新一次更新信息
+                if refresh_updates {
+                    this.check_tool_updates(cx);
                 }
                 cx.notify();
             });
@@ -273,6 +387,7 @@ impl ToolsPage {
             let result = handle
                 .join()
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("安装线程崩溃")));
+            let refresh_updates = result.is_ok();
 
             // 安装完成后重新检测所有工具状态
             let yt_dlp_status = app_state.check_tool_status_sync(ToolType::YtDlp);
@@ -306,6 +421,9 @@ impl ToolsPage {
                         }
                     };
                 }
+                if refresh_updates {
+                    this.check_tool_updates(cx);
+                }
                 cx.notify();
             });
         })
@@ -314,6 +432,7 @@ impl ToolsPage {
 
     fn refresh_status(&mut self, cx: &mut Context<Self>) {
         self.check_tools_status(cx);
+        self.check_tool_updates(cx);
     }
 }
 
@@ -383,6 +502,11 @@ impl ToolsPage {
     ) -> impl IntoElement {
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;
+        let has_updates = self
+            .update_info
+            .as_ref()
+            .map(|info| info.has_updates())
+            .unwrap_or(false);
 
         div()
             .flex()
@@ -412,9 +536,38 @@ impl ToolsPage {
                     .flex()
                     .gap(px(8.0))
                     .child(
+                        div()
+                            .relative()
+                            .child(
+                                Button::new("check-updates")
+                                    .ghost()
+                                    .label(if self.is_checking_updates {
+                                        "检查更新中..."
+                                    } else {
+                                        "检查更新"
+                                    })
+                                    .disabled(self.is_checking_updates)
+                                    .on_click(cx.listener(|this, _ev, _window, cx| {
+                                        this.check_tool_updates(cx);
+                                    })),
+                            )
+                            .when(has_updates, |el| {
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(-2.0))
+                                        .right(px(-2.0))
+                                        .w(px(8.0))
+                                        .h(px(8.0))
+                                        .bg(rgb(0xef4444))
+                                        .rounded_full(),
+                                )
+                            }),
+                    )
+                    .child(
                         Button::new("refresh-tools")
                             .ghost()
-                            .label("刷新状态")
+                            .label("刷新")
                             .disabled(self.is_checking)
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.refresh_status(cx);
@@ -452,6 +605,8 @@ impl ToolsPage {
         let success_color = cx.theme().success;
         let danger_color = cx.theme().danger;
         let primary_color = cx.theme().primary;
+        let warning_color: Hsla = rgb(0xfbbf24).into();
+        let update_info = self.update_info.clone();
 
         self.tools
             .iter()
@@ -465,19 +620,36 @@ impl ToolsPage {
                 let tool_name: SharedString = tool.name.into();
                 let tool_desc: SharedString = tool.description.into();
                 let tool_icon = tool.icon;
+                let tool_update = update_info.as_ref().and_then(|info| match tool_type {
+                    ToolType::YtDlp => info.yt_dlp_update.as_ref(),
+                    ToolType::Ffmpeg => info.ffmpeg_update.as_ref(),
+                });
+                let has_update = tool_update.is_some();
 
                 // 状态文本和颜色
                 let (status_text, status_color): (SharedString, Hsla) = match &tool.state {
                     ToolInstallState::Unknown => ("检查中...".into(), muted_color),
                     ToolInstallState::NotInstalled => ("未安装".into(), danger_color),
                     ToolInstallState::Installed { version, is_system } => {
-                        let text: SharedString = match (version, is_system) {
-                            (Some(v), true) => format!("v{} (系统)", v).into(),
-                            (Some(v), false) => format!("v{}", v).into(),
-                            (None, true) => "已安装 (系统)".into(),
-                            (None, false) => "已安装".into(),
-                        };
-                        (text, success_color)
+                        if let Some(update) = tool_update {
+                            let suffix = if *is_system { " (系统)" } else { "" };
+                            (
+                                format!(
+                                    "v{} → v{} 可更新{}",
+                                    update.current, update.latest, suffix
+                                )
+                                .into(),
+                                warning_color,
+                            )
+                        } else {
+                            let text: SharedString = match (version, is_system) {
+                                (Some(v), true) => format!("v{} (系统)", v).into(),
+                                (Some(v), false) => format!("v{}", v).into(),
+                                (None, true) => "已安装 (系统)".into(),
+                                (None, false) => "已安装".into(),
+                            };
+                            (text, success_color)
+                        }
                     }
                     ToolInstallState::Downloading(progress) => {
                         let text: SharedString = format!(
@@ -611,25 +783,56 @@ impl ToolsPage {
                                     })
                                     // 安装/更新按钮
                                     .child({
-                                        let (btn_label, btn_disabled) = match &tool.state {
-                                            ToolInstallState::NotInstalled
-                                            | ToolInstallState::Failed(_) => ("安装", false),
-                                            ToolInstallState::Installed { .. } => {
-                                                ("检查更新", false)
-                                            }
-                                            ToolInstallState::Installing
-                                            | ToolInstallState::Downloading(_) => {
-                                                ("下载中...", true)
-                                            }
-                                            ToolInstallState::Unknown => ("...", true),
-                                        };
+                                        let (btn_label, btn_disabled, btn_action) =
+                                            match &tool.state {
+                                                ToolInstallState::NotInstalled
+                                                | ToolInstallState::Failed(_) => {
+                                                    ("安装", false, "install")
+                                                }
+                                                ToolInstallState::Installed { .. } => {
+                                                    if has_update {
+                                                        ("更新", false, "install")
+                                                    } else if tool_type == ToolType::Ffmpeg {
+                                                        ("重新检测", false, "refresh")
+                                                    } else {
+                                                        ("检查更新", false, "check_updates")
+                                                    }
+                                                }
+                                                ToolInstallState::Installing
+                                                | ToolInstallState::Downloading(_) => {
+                                                    ("下载中...", true, "none")
+                                                }
+                                                ToolInstallState::Unknown => ("...", true, "none"),
+                                            };
                                         Button::new(btn_id)
                                             .label(btn_label)
                                             .primary()
                                             .disabled(btn_disabled || is_busy)
                                             .on_click(cx.listener(move |this, _ev, _window, cx| {
-                                                tracing::info!("🔧 点击安装按钮: {:?}", tool_type);
-                                                this.install_tool(tool_type, cx);
+                                                match btn_action {
+                                                    "install" => {
+                                                        tracing::info!(
+                                                            "🔧 点击安装/更新按钮: {:?}",
+                                                            tool_type
+                                                        );
+                                                        this.install_tool(tool_type, cx);
+                                                    }
+                                                    "refresh" => {
+                                                        tracing::info!(
+                                                            "🔄 点击重新检测按钮: {:?}",
+                                                            tool_type
+                                                        );
+                                                        this.refresh_status(cx);
+                                                    }
+                                                    "check_updates" => {
+                                                        tracing::info!(
+                                                            "🔎 点击检查更新按钮: {:?}",
+                                                            tool_type
+                                                        );
+                                                        this.check_tool_updates(cx);
+                                                    }
+                                                    _ => {}
+                                                }
                                             }))
                                     }),
                             ),

@@ -1,7 +1,10 @@
 use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
 use futures_util::StreamExt;
-use magekit_shared::{ToolType, UpdateChannel, create_tokio_command, get_temp_dir};
+use magekit_shared::{
+    ToolType, UpdateChannel, create_tokio_command, get_temp_dir, resolve_ffmpeg_path,
+    resolve_yt_dlp_path,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::fs;
@@ -32,20 +35,55 @@ impl ToolUpdater {
         channel: UpdateChannel,
         progress_callback: Option<ProgressCallback>,
     ) -> ToolManagerResult<()> {
+        let has_progress = progress_callback.is_some();
+
+        // 已安装且已是最新版本时直接返回；否则执行覆盖式更新。
         if self.storage.is_tool_installed(ToolType::YtDlp).await {
-            tracing::info!("yt-dlp already installed");
-            return Ok(());
+            let current = self.storage.get_tool_version(ToolType::YtDlp).await.ok().flatten();
+            let latest = match self.get_latest_yt_dlp_version(channel.clone()).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // 无法获取最新版本：非交互场景不阻断；交互场景允许继续走覆盖式下载。
+                    tracing::warn!("yt-dlp version check failed: {}", e);
+                    if !has_progress {
+                        return Ok(());
+                    }
+                    None
+                }
+            };
+
+            // 已安装但无法解析版本 / 无法获取最新版本：非交互场景不强行更新，避免“每次确保工具都重下”。
+            let (Some(current), Some(latest)) = (current.as_deref(), latest.as_deref()) else {
+                if !has_progress {
+                    tracing::info!(
+                        "yt-dlp already installed (skip update check due to missing version)"
+                    );
+                    return Ok(());
+                }
+                // 交互场景（UI 点击“更新/安装”）允许继续走覆盖式下载
+                tracing::info!("yt-dlp already installed (force reinstall due to missing version)");
+                return self
+                    .download_yt_dlp_with_progress(channel, progress_callback)
+                    .await;
+            };
+
+            if !self.is_version_newer(latest, current) {
+                tracing::info!("yt-dlp already up-to-date: {}", current);
+                return Ok(());
+            }
+            tracing::info!("yt-dlp update available: {} -> {}", current, latest);
         }
 
-        tracing::info!("Installing yt-dlp...");
+        tracing::info!("Installing/updating yt-dlp...");
         self.download_yt_dlp_with_progress(channel, progress_callback)
             .await
     }
 
     /// 检查并下载ffmpeg
     pub async fn ensure_ffmpeg(&self) -> ToolManagerResult<()> {
-        if self.storage.is_tool_installed(ToolType::Ffmpeg).await {
-            tracing::info!("ffmpeg already available");
+        // 只要能解析到可执行文件（应用内 tools 或系统 PATH）即可视为可用，避免反复执行 brew/apt。
+        if resolve_ffmpeg_path().is_some() {
+            tracing::info!("ffmpeg already available (tools dir or system PATH)");
             return Ok(());
         }
 
@@ -64,31 +102,20 @@ impl ToolUpdater {
     pub async fn check_for_updates(&self, channel: UpdateChannel) -> ToolManagerResult<UpdateInfo> {
         let mut update_info = UpdateInfo::new();
 
-        // 检查yt-dlp更新
-        if let Ok(Some(current_version)) = self.storage.get_tool_version(ToolType::YtDlp).await {
-            if let Some(latest_version) = self.get_latest_yt_dlp_version(channel).await? {
-                if self.is_version_newer(&latest_version, &current_version) {
-                    update_info.yt_dlp_update = Some(ToolUpdate {
-                        current: current_version,
-                        latest: latest_version,
-                    });
-                }
+        // 检查 yt-dlp 更新（优先应用内 tools，其次系统 PATH）
+        let current_yt_dlp = self.get_installed_tool_version(ToolType::YtDlp).await?;
+        let latest_yt_dlp = self.get_latest_yt_dlp_version(channel).await?;
+        if let (Some(current), Some(latest)) = (current_yt_dlp, latest_yt_dlp) {
+            if self.is_version_newer(&latest, &current) {
+                update_info.yt_dlp_update = Some(ToolUpdate {
+                    current,
+                    latest,
+                });
             }
-        } else {
-            // 工具未安装，需要下载
-            update_info.yt_dlp_update = Some(ToolUpdate {
-                current: "Not installed".to_string(),
-                latest: "Latest".to_string(),
-            });
         }
 
-        // 检查ffmpeg更新（简化实现）
-        if !self.storage.is_tool_installed(ToolType::Ffmpeg).await {
-            update_info.ffmpeg_update = Some(ToolUpdate {
-                current: "Not installed".to_string(),
-                latest: "Latest".to_string(),
-            });
-        }
+        // 检查 ffmpeg（目前仅提示“未安装”）
+        // ffmpeg 更新：暂不支持可靠的“最新版本”判断；因此这里只做占位，不提示更新。
 
         Ok(update_info)
     }
@@ -352,12 +379,43 @@ impl ToolUpdater {
     }
 
     /// 获取yt-dlp最新版本信息
-    async fn get_latest_yt_dlp_version(
-        &self,
-        _channel: UpdateChannel,
-    ) -> ToolManagerResult<Option<String>> {
-        // 简化实现，返回固定版本
-        Ok(Some("2023.07.06".to_string()))
+    async fn get_latest_yt_dlp_version(&self, channel: UpdateChannel) -> ToolManagerResult<Option<String>> {
+        match channel {
+            UpdateChannel::Stable => self.get_latest_yt_dlp_version_from_github_redirect().await,
+            // Nightly/Custom 暂不支持准确的“最新版本”解析
+            UpdateChannel::Nightly | UpdateChannel::Custom(_) => Ok(None),
+        }
+    }
+
+    /// 通过 GitHub releases/latest 的重定向解析最新版本号（避免 GitHub API 限流）。
+    async fn get_latest_yt_dlp_version_from_github_redirect(&self) -> ToolManagerResult<Option<String>> {
+        let client = reqwest::Client::builder()
+            .user_agent("MageKit/1.0")
+            .build()
+            .map_err(|e| ToolManagerError::internal(format!("Failed to create HTTP client: {}", e)))?;
+
+        let resp = client
+            .get("https://github.com/yt-dlp/yt-dlp/releases/latest")
+            .send()
+            .await
+            .map_err(ToolManagerError::Network)?;
+
+        if !resp.status().is_success() {
+            return Err(ToolManagerError::version_check_failed(
+                "yt-dlp",
+                format!("HTTP {}", resp.status()),
+            ));
+        }
+
+        // 例：/yt-dlp/yt-dlp/releases/tag/2025.12.10
+        let path = resp.url().path();
+        let tag = path
+            .split("/tag/")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .map(|s| s.to_string());
+
+        Ok(tag)
     }
 
     /// 从GitHub API获取发布下载URL
@@ -405,8 +463,73 @@ impl ToolUpdater {
 
     /// 比较版本号
     fn is_version_newer(&self, latest: &str, current: &str) -> bool {
-        // 简化的版本比较，实际应用中需要更复杂的语义版本比较
-        latest != current
+        fn parse(v: &str) -> Option<Vec<u32>> {
+            let mut out = Vec::new();
+            for part in v.split('.') {
+                let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if digits.is_empty() {
+                    return None;
+                }
+                out.push(digits.parse::<u32>().ok()?);
+            }
+            Some(out)
+        }
+
+        match (parse(latest), parse(current)) {
+            (Some(a), Some(b)) => a > b,
+            _ => latest != current,
+        }
+    }
+
+    async fn get_installed_tool_version(&self, tool_type: ToolType) -> ToolManagerResult<Option<String>> {
+        // 1) 优先应用内 tools 目录
+        if let Ok(Some(v)) = self.storage.get_tool_version(tool_type).await {
+            return Ok(Some(v));
+        }
+
+        // 2) 退回系统 PATH
+        let path = match tool_type {
+            ToolType::YtDlp => resolve_yt_dlp_path(),
+            ToolType::Ffmpeg => resolve_ffmpeg_path(),
+        };
+        let Some(path) = path else { return Ok(None) };
+
+        self.get_tool_version_from_path(tool_type, &path).await
+    }
+
+    async fn get_tool_version_from_path(
+        &self,
+        tool_type: ToolType,
+        path: &std::path::Path,
+    ) -> ToolManagerResult<Option<String>> {
+        let mut cmd = create_tokio_command(path);
+        match tool_type {
+            ToolType::YtDlp => {
+                cmd.arg("--version");
+            }
+            ToolType::Ffmpeg => {
+                cmd.arg("-version");
+            }
+        }
+
+        let output = cmd.output().await.map_err(|e| {
+            ToolManagerError::process_failed(path.display().to_string(), e.to_string())
+        })?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(match tool_type {
+            ToolType::YtDlp => stdout.lines().next().map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+            ToolType::Ffmpeg => stdout
+                .lines()
+                .find(|line| line.contains("ffmpeg version"))
+                .and_then(|line| line.split("version").nth(1))
+                .and_then(|rest| rest.split_whitespace().next())
+                .map(|v| v.to_string()),
+        })
     }
 }
 

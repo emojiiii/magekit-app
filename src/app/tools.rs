@@ -24,6 +24,20 @@ impl AppState {
             .flatten()
     }
 
+    /// 检查工具更新（同步版本，供 UI 后台线程调用）
+    pub fn check_for_tool_updates_sync(
+        &self,
+        channel: magekit_shared::UpdateChannel,
+    ) -> Result<magekit_tool_manager::UpdateInfo> {
+        let tool_manager = self.tool_manager.clone();
+        self.runtime.block_on(async move {
+            tool_manager
+                .check_for_updates(channel)
+                .await
+                .map_err(|e| anyhow::anyhow!("检查工具更新失败: {}", e))
+        })
+    }
+
     /// 检测工具状态 - 同步版本 (用于 UI 初始化)
     pub fn check_tool_status_sync(&self, tool_type: magekit_shared::ToolType) -> ToolStatus {
         // 先检查应用内安装 (使用同步版本)
@@ -68,10 +82,17 @@ impl AppState {
         tool_type: magekit_shared::ToolType,
         path: &std::path::Path,
     ) -> Option<String> {
-        let output = magekit_shared::create_command(path)
-            .arg("--version")
-            .output()
-            .ok()?;
+        let mut cmd = magekit_shared::create_command(path);
+        match tool_type {
+            magekit_shared::ToolType::YtDlp => {
+                cmd.arg("--version");
+            }
+            magekit_shared::ToolType::Ffmpeg => {
+                // ffmpeg 使用单短横线参数：`-version`
+                cmd.arg("-version");
+            }
+        }
+        let output = cmd.output().ok()?;
 
         if !output.status.success() {
             return None;

@@ -65,9 +65,18 @@ impl ToolStorage {
         let tool_path = self.get_tool_path(tool_type);
 
         // 使用无窗口命令执行工具获取版本 (同步)
-        let output = create_command(&tool_path)
-            .arg("--version")
-            .output()
+        let mut cmd = create_command(&tool_path);
+        match tool_type {
+            ToolType::YtDlp => {
+                cmd.arg("--version");
+            }
+            ToolType::Ffmpeg => {
+                // ffmpeg 使用单短横线参数：`-version`
+                cmd.arg("-version");
+            }
+        }
+
+        let output = cmd.output()
             .map_err(|e| {
                 ToolManagerError::process_failed(tool_path.display().to_string(), e.to_string())
             })?;
