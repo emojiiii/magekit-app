@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use gpui::*;
-use gpui_component::Root;
+use gpui_component::{Root, TitleBar};
 use gpui_router::init as router_init;
 use std::{path::PathBuf, sync::Arc};
 
@@ -74,7 +74,10 @@ fn main() -> Result<()> {
                     origin: point(px(100.0), px(100.0)),
                     size: size(px(1200.0), px(800.0)),
                 })),
-                titlebar: None, // 禁用系统标题栏
+                // 使用 gpui-component 的 TitleBar 时，需要设置 titlebar options：
+                // - macOS：用于启用/定位交通灯（关闭/最小化/缩放）
+                // - Windows：用于隐藏系统标题栏以配合自绘标题栏
+                titlebar: Some(TitleBar::title_bar_options()),
                 window_background: WindowBackgroundAppearance::Transparent,
                 focus: true,
                 show: true,
