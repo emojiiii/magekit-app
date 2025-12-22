@@ -1174,7 +1174,8 @@ impl RecordingPage {
                                     task.duration = chrono::Utc::now()
                                         .signed_duration_since(task.start_time)
                                         .num_seconds()
-                                        .max(0) as u64;
+                                        .max(0)
+                                        as u64;
                                     task.recorded_bytes = progress.size;
                                 }
                             }
