@@ -112,6 +112,7 @@ impl TaskListData {
             match &status.state {
                 TaskState::Queued => stats.queued += 1,
                 TaskState::Downloading => stats.downloading += 1,
+                TaskState::Merging => stats.downloading += 1,
                 TaskState::Paused => stats.paused += 1,
                 TaskState::Completed => stats.completed += 1,
                 TaskState::Failed(_) => stats.failed += 1,
@@ -326,7 +327,7 @@ fn render_task_item(task: &TaskStatus, is_selected: bool, cx: &mut App) -> impl 
     let title = task.title.clone().unwrap_or_else(|| task.url.clone());
     // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
     let title = truncate_string(&title, 40);
-    let is_downloading = matches!(state, TaskState::Downloading);
+    let is_downloading = matches!(state, TaskState::Downloading | TaskState::Merging);
     let is_paused = matches!(state, TaskState::Paused);
     let is_failed = matches!(state, TaskState::Failed(_));
     let is_completed = matches!(state, TaskState::Completed);
@@ -426,6 +427,7 @@ fn render_state_icon(state: &TaskState) -> impl IntoElement {
     let icon_char = match state {
         TaskState::Queued => "⏳",
         TaskState::Downloading => "⬇️",
+        TaskState::Merging => "🔄",
         TaskState::Paused => "⏸️",
         TaskState::Completed => "✅",
         TaskState::Failed(_) => "❌",
@@ -440,6 +442,7 @@ fn state_color(state: &TaskState, theme: &Theme) -> Hsla {
     match state {
         TaskState::Queued => theme.muted_foreground,
         TaskState::Downloading => theme.primary,
+        TaskState::Merging => theme.warning,
         TaskState::Paused => theme.warning,
         TaskState::Completed => theme.success,
         TaskState::Failed(_) => theme.danger,
@@ -452,6 +455,7 @@ fn state_text(state: &TaskState) -> String {
     match state {
         TaskState::Queued => "排队中".to_string(),
         TaskState::Downloading => "下载中".to_string(),
+        TaskState::Merging => "合并中".to_string(),
         TaskState::Paused => "已暂停".to_string(),
         TaskState::Completed => "已完成".to_string(),
         TaskState::Failed(err) => format!("失败: {}", err),

@@ -118,7 +118,7 @@ impl AppState {
         {
             let mut tasks = self.tasks.blocking_write();
             if let Some(task) = tasks.get_mut(&task_id) {
-                if matches!(task.state, TaskState::Downloading) {
+                if matches!(task.state, TaskState::Downloading | TaskState::Merging) {
                     task.state = TaskState::Paused;
                 }
             }

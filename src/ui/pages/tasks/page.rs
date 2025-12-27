@@ -128,7 +128,10 @@ impl TasksPage {
                 TaskFilter::Downloading => {
                     matches!(
                         task.state,
-                        TaskState::Downloading | TaskState::Paused | TaskState::Queued
+                        TaskState::Downloading
+                            | TaskState::Merging
+                            | TaskState::Paused
+                            | TaskState::Queued
                     )
                 }
                 TaskFilter::Completed => {

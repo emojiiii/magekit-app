@@ -31,7 +31,7 @@ impl DownloadClient {
 
         // 使用提供的路径或降级到默认路径
         if let Some(path) = ytdlp_path {
-            registry.register(YtDlpDownloader::new(path));
+            registry.register(YtDlpDownloader::new(path, ffmpeg_path.clone()));
         } else {
             registry.register(YtDlpDownloader::default());
         }
@@ -133,7 +133,20 @@ impl DownloadClient {
                         DownloadError::Unsupported("Downloader `direct` not found".into())
                     })?;
 
-                    return direct.download(fallback, callback, cancel).await;
+                    return match direct.download(fallback, callback, cancel).await {
+                        Ok(outcome) => Ok(outcome),
+                        Err(fallback_err) => {
+                            callback.on_log(LogLine {
+                                source: LogSource::System,
+                                line: format!(
+                                    "Auto fallback failed: direct also failed (ignored): {}",
+                                    fallback_err
+                                ),
+                            });
+                            // 保留 primary_err 作为最终错误，避免被 direct 的 “HTML content-type” 等误导信息覆盖
+                            Err(primary_err)
+                        }
+                    };
                 }
             }
         }

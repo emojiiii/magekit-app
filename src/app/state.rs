@@ -111,7 +111,7 @@ impl AppState {
                         // 记录需要恢复的任务（下载中或排队中的任务）
                         if matches!(
                             task_status.state,
-                            TaskState::Downloading | TaskState::Queued
+                            TaskState::Downloading | TaskState::Merging | TaskState::Queued
                         ) {
                             tasks_to_resume.push(task_status.id);
                         }

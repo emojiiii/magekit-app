@@ -27,6 +27,13 @@ fn test_ytdlp_destination_parse() {
 }
 
 #[test]
+fn test_ytdlp_progress_line_already_downloaded_is_ignored() {
+    // 该行不包含 “x% of y at ...”，解析应为 None，避免误更新为 0
+    let line = "[download] C:\\tmp\\video.mp4 has already been downloaded";
+    assert!(parse_progress_line(line).is_none());
+}
+
+#[test]
 fn test_ytdlp_progress_partial_fields() {
     // 缺少 total/speed 时应解析为 None
     let line = "[download]  12.0% of ~ at  ETA 00:05";
@@ -34,6 +41,15 @@ fn test_ytdlp_progress_partial_fields() {
     assert!(total.is_none());
     assert!(speed.is_none());
     assert!(downloaded.is_none());
+}
+
+#[test]
+fn test_ytdlp_progress_parse_with_punctuations() {
+    let line = "[download]  10.0% of 12.34MiB, at 1.23MiB/s, ETA 00:05";
+    let (downloaded, total, speed) = parse_progress_line(line).unwrap();
+    assert!(downloaded.is_some());
+    assert!(total.is_some());
+    assert!(speed.is_some());
 }
 
 #[test]

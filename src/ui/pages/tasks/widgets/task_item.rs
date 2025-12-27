@@ -88,6 +88,7 @@ impl RenderOnce for TaskItem {
         let (status_icon, status_color, status_text) = match &task.state {
             TaskState::Queued => ("⏳", rgb(0xfbbf24), "等待中".to_string()),
             TaskState::Downloading => ("⬇️", rgb(0x3b82f6), "下载中".to_string()),
+            TaskState::Merging => ("🔄", rgb(0x8b5cf6), "合并中".to_string()),
             TaskState::Paused => ("⏸️", rgb(0xf59e0b), "已暂停".to_string()),
             TaskState::Completed => ("✅", rgb(0x22c55e), "已完成".to_string()),
             TaskState::Failed(_) => ("❌", rgb(0xef4444), "失败".to_string()),
@@ -140,7 +141,7 @@ impl RenderOnce for TaskItem {
         let is_completed = matches!(task.state, TaskState::Completed);
         let is_active = matches!(
             task.state,
-            TaskState::Downloading | TaskState::Paused | TaskState::Queued
+            TaskState::Downloading | TaskState::Merging | TaskState::Paused | TaskState::Queued
         );
 
         div()

@@ -256,11 +256,18 @@ impl ToolManager {
             None => self.get_video_info(&normalized_url, cookies).await?,
         };
 
+        let platform_hint = platform_hint_from_url(&normalized_url);
+
         // 如果解析器提供了直链，且用户选择的格式对应直链，则优先走直链下载（避免 yt-dlp）
         //
         // 额外支持“视频+音频”直链合并（例如 Bilibili DASH：bili_vqn120+bili_a30280）。
         // 需要在“单直链兜底逻辑”之前处理，否则会误触发 best direct fallback。
-        if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+        // 注意：YouTube（googlevideo）直链通常依赖特定 headers/UA 且 URL 易过期，
+        // 用 ffmpeg 直接拉流也更容易触发 TLS/EOF 等问题；因此默认强制走 yt-dlp。
+        if platform_hint != Some("youtube")
+            && options.download_url.is_none()
+            && options.ffmpeg_url.is_none()
+        {
             if let Some((video_url, audio_url)) =
                 try_select_direct_merge_pair(&options.format_id, &video_info.formats)
             {
@@ -276,7 +283,10 @@ impl ToolManager {
                 ];
             }
         }
-        if options.download_url.is_none() && options.ffmpeg_url.is_none() {
+        if platform_hint != Some("youtube")
+            && options.download_url.is_none()
+            && options.ffmpeg_url.is_none()
+        {
             // 若用户只选了“仅视频”的 DASH 直链（无音频），则自动挑选最优音频并用 ffmpeg 合并，
             // 避免把 fMP4 分段当作 mp4 直下导致“文件无法播放”。
             if let Some(selected) = video_info
@@ -371,16 +381,19 @@ impl ToolManager {
             .clone()
             .unwrap_or_else(|| video_info.title.clone());
 
-        let output_path = generate_output_path(
-            &options.output_path,
-            &title_for_path,
-            &video_info
+        let output_path = generate_output_path(&options.output_path, &title_for_path, {
+            let format_id = options.format_id.as_str();
+            let primary_id = format_id
+                .split_once('+')
+                .map(|(l, _)| l)
+                .unwrap_or(format_id);
+            video_info
                 .formats
                 .iter()
-                .find(|f| f.format_id == options.format_id)
+                .find(|f| f.format_id == primary_id)
                 .map(|f| f.ext.as_str())
-                .unwrap_or("mp4"),
-        )
+                .unwrap_or("mp4")
+        })
         .map_err(|e| DownloadError::internal(e.to_string()))?;
 
         task_status.output_path = Some(output_path.clone());
@@ -860,7 +873,13 @@ impl ToolManager {
                             if matches!(status.state, TaskState::Paused | TaskState::Cancelled) {
                                 return;
                             }
-                            status.state = TaskState::Downloading;
+                            if matches!(status.state, TaskState::Completed | TaskState::Failed(_)) {
+                                return;
+                            }
+                            if matches!(status.state, TaskState::Queued) {
+                                status.state = TaskState::Downloading;
+                                status.started_at = Some(std::time::SystemTime::now());
+                            }
                             status.progress = *progress;
                             status.downloaded_bytes = *downloaded;
                             status.total_bytes = *total;
@@ -878,6 +897,30 @@ impl ToolManager {
                         }
 
                         // 广播进度更新
+                        let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));
+                    }
+                    TaskUpdate::StateChanged(id, new_state) => {
+                        let status = Self::update_task_in_map(&tasks_for_progress, *id, |status| {
+                            status.state = new_state.clone();
+                            if matches!(new_state, TaskState::Downloading | TaskState::Merging)
+                                && status.started_at.is_none()
+                            {
+                                status.started_at = Some(std::time::SystemTime::now());
+                            }
+                            if matches!(
+                                new_state,
+                                TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
+                            ) {
+                                status.completed_at = Some(std::time::SystemTime::now());
+                            }
+                        })
+                        .await;
+
+                        if let Some(status) = status {
+                            let mut p = persistence_for_progress.lock().await;
+                            let _ = p.update_task_status(*id, status);
+                        }
+
                         let _ = event_tx_for_progress.send(ToolManagerEvent::TaskUpdate(update));
                     }
                     TaskUpdate::Completed(id, output_path) => {
@@ -993,7 +1036,14 @@ impl ToolManager {
             && options.ffmpeg_url.is_none()
             && !options.format_id.is_empty()
         {
-            let ytdlp_args = vec!["-f".to_string(), options.format_id.clone()];
+            let mut ytdlp_args = vec!["-f".to_string(), options.format_id.clone()];
+
+            // YouTube：优先尝试合并为 mp4；若编码不兼容则由下载层后处理转码为 H.264/AAC mp4。
+            if platform_hint_from_url(&url) == Some("youtube") && options.format_id.contains('+') {
+                ytdlp_args.push("--merge-output-format".to_string());
+                ytdlp_args.push("mp4".to_string());
+            }
+
             tool_args.insert("ytdlp".to_string(), ytdlp_args.clone());
             tracing::info!("📝 传递 yt-dlp 格式参数: {:?}", ytdlp_args);
         }
@@ -1047,31 +1097,26 @@ impl ToolManager {
                 .or_insert_with(|| "https://www.bilibili.com".to_string());
         }
 
+        let strategy = choose_download_strategy(&options);
+        let full_path = match strategy {
+            DownloadStrategy::Auto | DownloadStrategy::YtDlp => None,
+            _ => {
+                let tasks_guard = tasks.read().await;
+                tasks_guard
+                    .get(&task_id)
+                    .and_then(|handle| handle.status.output_path.clone())
+            }
+        };
+
         let request = download::DownloadRequest {
             url: parsed_download_url,
             output: download::DownloadOutput {
                 directory: options.output_path.clone(),
                 template: options.output_template.clone(),
-                // 🔧 从 TaskStatus 获取完整输出路径
-                full_path: {
-                    let tasks_guard = tasks.read().await;
-                    tasks_guard
-                        .get(&task_id)
-                        .and_then(|handle| handle.status.output_path.clone())
-                },
+                // yt-dlp 场景不使用 full_path，避免固定后缀导致生成 “.mp4.webm” 等迷惑文件名
+                full_path,
             },
-            strategy: if let Some(stream_url) = options.ffmpeg_url.as_deref() {
-                // m3u8/mpd 默认走 hls_dash（分段缓存 + 断点续传），其它仍走 ffmpeg
-                if is_streaming_resource(stream_url) {
-                    DownloadStrategy::HlsDash
-                } else {
-                    DownloadStrategy::Ffmpeg
-                }
-            } else if options.download_url.is_some() {
-                DownloadStrategy::Direct
-            } else {
-                DownloadStrategy::Auto
-            },
+            strategy,
             extra: download::DownloadExtra {
                 headers: headers_map, // ✅ 传递解析后的 headers
                 cookie: magekit_extractor::cookies::build_cookie_header(
@@ -1105,12 +1150,46 @@ impl ToolManager {
         tracing::info!("✅ download_client.download() 返回");
 
         // 等待进度监控完成
+        //
+        // 注意：download crate 的 downloader 通常不会通过 callback 上报 error（只会 return Err），
+        // 如果这里不主动关闭 progress channel，progress_handle 可能会一直阻塞在 recv()，导致任务卡死。
+        drop(callback);
+        drop(progress_tx);
         let _ = progress_handle.await;
 
         // 处理结果
         match result {
             Ok(outcome) => {
                 tracing::info!("✅ 任务 {} 下载成功: {:?}", task_id, outcome.output_path);
+
+                // 兜底：如果 downloader 未发送 Completed（例如异常返回路径），这里确保任务落到 Completed。
+                let already_completed = {
+                    let guard = tasks.read().await;
+                    matches!(
+                        guard.get(&task_id).map(|t| &t.status.state),
+                        Some(TaskState::Completed)
+                    )
+                };
+
+                if !already_completed {
+                    let status = Self::update_task_in_map(&tasks, task_id, |status| {
+                        status.state = TaskState::Completed;
+                        status.progress = 1.0;
+                        status.completed_at = Some(std::time::SystemTime::now());
+                        status.output_path = Some(outcome.output_path.clone());
+                    })
+                    .await;
+
+                    if let Some(status) = status {
+                        let mut p = persistence.lock().await;
+                        let _ = p.update_task_status(task_id, status);
+                    }
+
+                    let _ = event_tx.send(ToolManagerEvent::TaskUpdate(TaskUpdate::Completed(
+                        task_id,
+                        outcome.output_path.clone(),
+                    )));
+                }
             }
             Err(e) => {
                 // 取消（暂停/取消按钮）属于“控制流”，不应被视为失败。
@@ -2154,11 +2233,34 @@ fn is_streaming_resource(url: &str) -> bool {
     url.contains(".m3u8") || url.contains(".m3u") || url.contains(".mpd")
 }
 
+fn looks_like_manifest_url(url: &str) -> bool {
+    let s = url.to_ascii_lowercase();
+    s.contains(".m3u8") || s.contains(".mpd")
+}
+
+fn choose_download_strategy(options: &DownloadOptions) -> DownloadStrategy {
+    if let Some(stream_url) = options.ffmpeg_url.as_deref() {
+        if looks_like_manifest_url(stream_url) {
+            return DownloadStrategy::HlsDash;
+        }
+        return DownloadStrategy::Ffmpeg;
+    }
+
+    if let Some(download_url) = options.download_url.as_deref() {
+        if looks_like_manifest_url(download_url) {
+            return DownloadStrategy::Auto;
+        }
+        return DownloadStrategy::Direct;
+    }
+
+    DownloadStrategy::Auto
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use magekit_shared::VideoFormat;
+    use magekit_shared::{DownloadOptions, VideoFormat};
 
     #[test]
     fn test_parse_ffmpeg_headers() {
@@ -2436,5 +2538,35 @@ mod tests {
         ];
         let best = super::select_best_audio_only_format(&formats).expect("best audio");
         assert_eq!(best.format_id, "a2");
+    }
+
+    #[test]
+    fn test_choose_download_strategy_download_url_manifest_uses_auto() {
+        let mut options = DownloadOptions::default();
+        options.download_url = Some("https://example.com/playlist/index.m3u8".to_string());
+        assert!(matches!(
+            super::choose_download_strategy(&options),
+            super::DownloadStrategy::Auto
+        ));
+    }
+
+    #[test]
+    fn test_choose_download_strategy_download_url_file_uses_direct() {
+        let mut options = DownloadOptions::default();
+        options.download_url = Some("https://example.com/video.mp4".to_string());
+        assert!(matches!(
+            super::choose_download_strategy(&options),
+            super::DownloadStrategy::Direct
+        ));
+    }
+
+    #[test]
+    fn test_choose_download_strategy_ffmpeg_url_manifest_uses_hls_dash() {
+        let mut options = DownloadOptions::default();
+        options.ffmpeg_url = Some("https://example.com/playlist/index.m3u8".to_string());
+        assert!(matches!(
+            super::choose_download_strategy(&options),
+            super::DownloadStrategy::HlsDash
+        ));
     }
 }

@@ -396,11 +396,17 @@ async fn merge_with_ffmpeg(
     }
     tokio::fs::write(&concat_list, list).await?;
 
-    let out_file_name = output_path
-        .file_name()
+    let stem = output_path
+        .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("output.mp4");
-    let tmp_out = output_path.with_file_name(format!("{}.part", out_file_name));
+        .unwrap_or("output");
+    let ext = output_path.extension().and_then(|s| s.to_str());
+    let tmp_out = match ext {
+        Some(ext) if !ext.is_empty() => {
+            output_path.with_file_name(format!("{}.part.{}", stem, ext))
+        }
+        _ => output_path.with_file_name(format!("{}.part", stem)),
+    };
 
     let mut cmd = Command::new(ffmpeg_path);
     cmd.arg("-hide_banner")

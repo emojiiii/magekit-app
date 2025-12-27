@@ -16,6 +16,8 @@ pub enum TaskState {
     Queued,
     /// 下载中。
     Downloading,
+    /// 合并/转码中。
+    Merging,
     /// 已暂停。
     Paused,
     /// 已完成。
@@ -84,7 +86,7 @@ impl TaskStatus {
     pub fn is_active(&self) -> bool {
         matches!(
             self.state,
-            TaskState::Queued | TaskState::Downloading | TaskState::Paused
+            TaskState::Queued | TaskState::Downloading | TaskState::Merging | TaskState::Paused
         )
     }
 
