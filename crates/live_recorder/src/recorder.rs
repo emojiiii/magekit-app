@@ -1,9 +1,10 @@
 use crate::{
     error::{RecorderError, RecorderResult},
-    platforms::{PlatformFactory, PlatformHandler},
+    platforms::{PlatformCookies, PlatformFactory, PlatformHandler},
     types::{RecordConfig, RecordProgress, RecordStatus, StreamData, StreamInfo, VideoQuality},
 };
 use magekit_shared::create_tokio_command;
+use magekit_shared::types::PlatformCookie;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -44,6 +45,93 @@ fn is_hevc_codec_url(url: &str) -> bool {
         || lowered.contains("codec=hev1")
 }
 
+/// 根据 URL + 平台名 查找匹配的 Cookie
+fn find_cookie_for_request(
+    url: &str,
+    platform_name: &str,
+    cookies: &[PlatformCookie],
+) -> Option<PlatformCookies> {
+    let platform_lower = platform_name.to_lowercase();
+
+    // 1) 优先按“平台名”精确匹配（避免 sooplive/sooplive.com 这类包含关系误匹配）
+    for cookie in cookies {
+        if !cookie.enabled {
+            continue;
+        }
+        if cookie.platform.eq_ignore_ascii_case(platform_name) {
+            tracing::debug!("🍪 找到匹配的 Cookie: platform={}", cookie.platform);
+            return Some(PlatformCookies {
+                cookie: Some(cookie.cookie.clone()),
+                username: None,
+                password: None,
+            });
+        }
+    }
+
+    // 2) 若 Cookie key 是域名（如 bilibili.com / sooplive.com），则按 host 匹配
+    let host = Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_lowercase()));
+    if let Some(host) = host {
+        for cookie in cookies {
+            if !cookie.enabled {
+                continue;
+            }
+            let mut key = cookie.platform.trim().to_lowercase();
+            key = key.trim_start_matches("http://").to_string();
+            key = key.trim_start_matches("https://").to_string();
+            key = key.trim_end_matches('/').to_string();
+
+            if !key.contains('.') {
+                continue;
+            }
+
+            if host == key || host.ends_with(&format!(".{}", key)) {
+                tracing::debug!("🍪 找到匹配的 Cookie: platform={}", cookie.platform);
+                return Some(PlatformCookies {
+                    cookie: Some(cookie.cookie.clone()),
+                    username: None,
+                    password: None,
+                });
+            }
+        }
+    }
+
+    // 3) 兼容历史行为：非 SOOP 平台允许通过“URL 子串”粗匹配
+    // SOOP 已拆分 KR/Global 为两个平台，必须避免子串匹配导致 cookie 误用。
+    if platform_lower.starts_with("sooplive") {
+        tracing::debug!(
+            "🍪 未找到匹配的 Cookie: platform={} url={}",
+            platform_name,
+            url
+        );
+        return None;
+    }
+
+    let url_lower = url.to_lowercase();
+    for cookie in cookies {
+        if !cookie.enabled {
+            continue;
+        }
+        let platform = cookie.platform.to_lowercase();
+        if url_lower.contains(&platform) {
+            tracing::debug!("🍪 找到匹配的 Cookie: platform={}", cookie.platform);
+            return Some(PlatformCookies {
+                cookie: Some(cookie.cookie.clone()),
+                username: None,
+                password: None,
+            });
+        }
+    }
+
+    tracing::debug!(
+        "🍪 未找到匹配的 Cookie: platform={} url={}",
+        platform_name,
+        url
+    );
+    None
+}
+
 /// 直播录制器
 pub struct LiveRecorder {
     platform_factory: PlatformFactory,
@@ -68,6 +156,16 @@ impl LiveRecorder {
         url: &str,
         config: RecordConfig,
     ) -> RecorderResult<RecordingHandle> {
+        self.start_recording_with_cookies(url, config, &[]).await
+    }
+
+    /// 开始录制直播（带 Cookie 支持）
+    pub async fn start_recording_with_cookies(
+        &self,
+        url: &str,
+        mut config: RecordConfig,
+        cookies: &[PlatformCookie],
+    ) -> RecorderResult<RecordingHandle> {
         info!("开始录制直播: {}", url);
 
         // 获取平台处理器
@@ -77,13 +175,60 @@ impl LiveRecorder {
         let room_id = platform_handler.extract_room_id(url).await?;
         info!("获取到房间ID: {}", room_id);
 
-        // 获取流信息
-        let stream_info = platform_handler.get_stream_info(&room_id).await?;
+        // 查找匹配的 Cookie
+        let mut platform_cookies =
+            find_cookie_for_request(url, platform_handler.platform_name(), cookies)
+                .unwrap_or_else(|| PlatformCookies::default());
+
+        // 如果有 Cookie，添加到 headers 中
+        if let Some(cookie) = platform_cookies.cookie.as_deref() {
+            // HeaderValue 不允许 CR/LF；同时避免 ffmpeg 参数被换行污染
+            let sanitized = cookie
+                .replace('\r', "")
+                .replace('\n', "")
+                .trim()
+                .to_string();
+            platform_cookies.cookie = Some(sanitized.clone());
+            config.headers.insert("Cookie".to_string(), sanitized);
+            tracing::info!(
+                "🍪 录制任务使用 Cookie，长度: {} 字节",
+                platform_cookies
+                    .cookie
+                    .as_deref()
+                    .map(|s| s.len())
+                    .unwrap_or(0)
+            );
+        }
+
+        // 获取流信息（带 Cookie）
+        let stream_info = platform_handler
+            .get_stream_info_with_cookies(&room_id, &platform_cookies)
+            .await?;
 
         if stream_info.room.status != crate::types::LiveStatus::Live {
             return Err(RecorderError::StreamNotAvailable(
                 "直播间未开播".to_string(),
             ));
+        }
+
+        // 平台定制：SOOP 某些场景下，输入 URL 的 broad_no 与实际直播 broad_no 不一致，
+        // 需要使用“实际 broad_no”构造的 play.sooplive.co.kr referer 才能稳定拉流。
+        if platform_handler.platform_name() == "sooplive" {
+            if let Some(play_url) = stream_info
+                .room
+                .extra
+                .get("play_url")
+                .and_then(|v| v.as_str())
+            {
+                config
+                    .headers
+                    .insert("Referer".to_string(), play_url.to_string());
+                config.headers.insert(
+                    "Origin".to_string(),
+                    "https://play.sooplive.co.kr".to_string(),
+                );
+                tracing::debug!("🔧 SOOP 录制 Referer 已覆盖为: {}", play_url);
+            }
         }
 
         // 选择最佳的流
@@ -167,17 +312,52 @@ impl LiveRecorder {
 
     /// 检查直播间状态
     pub async fn check_room_status(&self, url: &str) -> RecorderResult<crate::types::LiveRoomInfo> {
+        self.check_room_status_with_cookies(url, &[]).await
+    }
+
+    /// 检查直播间状态（带 Cookie 支持）
+    pub async fn check_room_status_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[PlatformCookie],
+    ) -> RecorderResult<crate::types::LiveRoomInfo> {
         let platform_handler = self.platform_factory.get_handler_for_url(url)?;
         let room_id = platform_handler.extract_room_id(url).await?;
-        let stream_info = platform_handler.get_stream_info(&room_id).await?;
+
+        // 查找匹配的 Cookie
+        let platform_cookies =
+            find_cookie_for_request(url, platform_handler.platform_name(), cookies)
+                .unwrap_or_else(|| PlatformCookies::default());
+
+        let stream_info = platform_handler
+            .get_stream_info_with_cookies(&room_id, &platform_cookies)
+            .await?;
+
         Ok(stream_info.room)
     }
 
     /// 获取可用流信息
     pub async fn get_stream_info(&self, url: &str) -> RecorderResult<StreamInfo> {
+        self.get_stream_info_with_cookies(url, &[]).await
+    }
+
+    /// 获取可用流信息（带 Cookie 支持）
+    pub async fn get_stream_info_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[PlatformCookie],
+    ) -> RecorderResult<StreamInfo> {
         let platform_handler = self.platform_factory.get_handler_for_url(url)?;
         let room_id = platform_handler.extract_room_id(url).await?;
-        platform_handler.get_stream_info(&room_id).await
+
+        // 查找匹配的 Cookie
+        let platform_cookies =
+            find_cookie_for_request(url, platform_handler.platform_name(), cookies)
+                .unwrap_or_else(|| PlatformCookies::default());
+
+        platform_handler
+            .get_stream_info_with_cookies(&room_id, &platform_cookies)
+            .await
     }
 
     /// 选择最佳的流
@@ -514,12 +694,19 @@ impl RecordingSession {
             error: None,
         });
 
-        // 始终使用 FFmpeg 录制，因为它更稳定，能处理直播流的各种问题
-        // 直接下载 FLV 流容易断开连接
-        let result = if self.platform_name == "huya" {
-            self.record_huya_ffmpeg_loop().await
-        } else {
-            self.record_with_ffmpeg().await
+        let result = match self.platform_name.as_str() {
+            "huya" => self.record_huya_ffmpeg_loop().await,
+            "sooplive" | "sooplive.com" => {
+                // 按用户偏好：SOOP（KR/Global）优先使用内置 HLS 录制（reqwest 拉流）
+                if !self.stream_url.contains(".m3u8") {
+                    return Err(RecorderError::StreamNotAvailable(
+                        "SOOP 当前仅支持 HLS(m3u8) 录制".to_string(),
+                    ));
+                }
+                let stream_url = self.stream_url.clone();
+                self.record_hls_ts_with_reqwest(&stream_url).await
+            }
+            _ => self.record_with_ffmpeg().await,
         };
 
         // 发送最终状态
@@ -578,7 +765,7 @@ impl RecordingSession {
         use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
         info!(
-            "🧩 使用内置 HLS 录制（Huya）: {} -> {:?}",
+            "🧩 使用内置 HLS 录制: {} -> {:?}",
             stream_url, self.output_path
         );
 
@@ -590,7 +777,7 @@ impl RecordingSession {
             .to_ascii_lowercase();
         if output_ext != "ts" {
             return Err(RecorderError::ConfigError(
-                "虎牙内置 HLS 录制当前仅支持 ts 输出（请将录制格式设置为 ts）".to_string(),
+                "内置 HLS 录制当前仅支持 ts 输出（请将录制格式设置为 ts）".to_string(),
             ));
         }
         let room_url = self.room_url.clone();
@@ -919,11 +1106,22 @@ impl RecordingSession {
         );
 
         let mut cmd = create_tokio_command("ffmpeg");
+        let is_soop = matches!(
+            self.platform_name.as_str(),
+            "soop" | "sooplive" | "sooplive.com"
+        );
 
         // 添加输入选项
         cmd.arg("-hide_banner");
-        cmd.arg("-loglevel").arg("warning"); // 降噪，避免 HLS "Opening ..." 刷屏
+        // SOOP 录制故障排查时需要更多 http/hls 细节；其他平台保持 warning 降噪
+        cmd.arg("-loglevel")
+            .arg(if is_soop { "info" } else { "warning" });
         cmd.arg("-nostats");
+        let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+        // 对齐 py_demo：显式设置 HTTP User-Agent（比通过 -headers 传递更稳定）
+        cmd.arg("-user_agent").arg(user_agent);
+
         // 用于实时进度/时长估算：key=value 输出到 stdout（与 stderr 日志分离）
         cmd.arg("-progress").arg("pipe:1");
         cmd.arg("-y"); // 覆盖输出文件
@@ -941,46 +1139,112 @@ impl RecordingSession {
         let rw_timeout_us = self.config.timeout.saturating_mul(1_000_000).max(5_000_000);
         cmd.arg("-rw_timeout").arg(rw_timeout_us.to_string());
 
-        // 添加请求头（必须在 -i 之前）
-        // 注意：每个 header 后面都需要 \r\n，包括最后一个
-        let mut headers = vec![
-            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string(),
-        ];
-
-        // 根据流 URL 添加特定的 Referer
         // 以“直播间 URL / 平台名”为准设置 Referer/Origin（不要依赖 CDN 的 stream_url）
-        let (referer, origin) =
-            LiveRecorder::default_referer_and_origin(&self.platform_name, &self.room_url);
-        if let Some(referer) = referer {
-            headers.push(format!("Referer: {}", referer));
-        }
-        if let Some(origin) = origin {
-            headers.push(format!("Origin: {}", origin));
-        }
+        // 允许上层（平台 handler）通过 config.headers 覆盖 Referer/Origin
+        let mut referer = self
+            .config
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("referer"))
+            .map(|(_, v)| v.clone());
+        let mut origin = self
+            .config
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("origin"))
+            .map(|(_, v)| v.clone());
 
-        for (key, value) in &self.config.headers {
-            headers.push(format!("{}: {}", key, value));
+        if referer.is_none() || origin.is_none() {
+            let (default_referer, default_origin) =
+                LiveRecorder::default_referer_and_origin(&self.platform_name, &self.room_url);
+            referer = referer.or(default_referer);
+            origin = origin.or(default_origin);
         }
 
         // HLS 预检：先拉 m3u8 + 首段，尽早暴露 403/风控/超时 等原因（并发场景尤为关键）
+        // 预检使用 reqwest：需要把 Cookie/Referer/Origin 都带上
+        let mut headers_for_preflight = vec![format!("User-Agent: {}", user_agent)];
+        if let Some(ref referer) = referer {
+            headers_for_preflight.push(format!("Referer: {}", referer));
+        }
+        if let Some(ref origin) = origin {
+            headers_for_preflight.push(format!("Origin: {}", origin));
+        }
+        for (key, value) in &self.config.headers {
+            headers_for_preflight.push(format!("{}: {}", key, value));
+        }
         if self.stream_url.contains(".m3u8") {
-            LiveRecorder::hls_preflight(&self.config, &self.stream_url, &headers).await?;
+            LiveRecorder::hls_preflight(&self.config, &self.stream_url, &headers_for_preflight)
+                .await?;
         }
 
-        if !headers.is_empty() {
-            // FFmpeg 要求每个 header 以 \r\n 结尾
-            let headers_str = headers
+        // 对齐 curl：优先使用 ffmpeg 原生输入选项传递 Cookie/Referer（比 -headers 更稳）
+        let cookie = self
+            .config
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            .map(|(_, v)| v.clone());
+
+        // SOOP：对齐 py_demo/curl，用 -headers 统一传递 Cookie/Referer/Origin，
+        // 避免 -cookies/-referer 在部分 ffmpeg 版本/协议栈下对 HLS 子请求不生效。
+        if !is_soop {
+            if let Some(ref referer) = referer {
+                cmd.arg("-referer").arg(referer);
+            }
+            if let Some(ref cookie) = cookie {
+                cmd.arg("-cookies").arg(cookie);
+            }
+        }
+
+        // 仍然保留 -headers：仅用于 origin 等不属于 ffmpeg 专用选项的头
+        let mut ffmpeg_headers: Vec<String> = Vec::new();
+        if let Some(ref origin) = origin {
+            ffmpeg_headers.push(format!("Origin: {}", origin));
+        }
+        if is_soop {
+            if let Some(ref referer) = referer {
+                ffmpeg_headers.push(format!("Referer: {}", referer));
+            }
+            if let Some(ref cookie) = cookie {
+                ffmpeg_headers.push(format!("Cookie: {}", cookie));
+            }
+            ffmpeg_headers.push("Accept: */*".to_string());
+            ffmpeg_headers.push("Accept-Language: zh-CN,zh;q=0.9,ko;q=0.8,en;q=0.7".to_string());
+        }
+        for (key, value) in &self.config.headers {
+            if key.eq_ignore_ascii_case("cookie")
+                || key.eq_ignore_ascii_case("referer")
+                || key.eq_ignore_ascii_case("origin")
+                || key.eq_ignore_ascii_case("user-agent")
+            {
+                continue;
+            }
+            ffmpeg_headers.push(format!("{}: {}", key, value));
+        }
+        if !ffmpeg_headers.is_empty() {
+            let headers_str = ffmpeg_headers
                 .iter()
                 .map(|h| format!("{}\r\n", h))
                 .collect::<String>();
-            cmd.arg("-headers");
-            cmd.arg(headers_str);
+            cmd.arg("-headers").arg(headers_str);
         }
 
         // 添加代理设置
         if let Some(proxy) = &self.config.proxy {
             cmd.arg("-http_proxy");
             cmd.arg(proxy);
+        }
+
+        // 对齐 py_demo：放宽 HLS 所需协议白名单（兼容部分平台的 crypto/redirect 情况）
+        if self.stream_url.contains(".m3u8") {
+            cmd.arg("-protocol_whitelist")
+                .arg("rtmp,crypto,file,http,https,tcp,tls,udp,rtp,httpproxy");
+        }
+
+        // 对齐 py_demo：SOOP HLS 输入加 -re，避免过快请求导致 CDN 直接 EOF/断链
+        if is_soop && self.stream_url.contains(".m3u8") {
+            cmd.arg("-re");
         }
 
         cmd.arg("-i").arg(&self.stream_url).arg("-c").arg("copy");
@@ -1204,7 +1468,24 @@ impl RecordingSession {
                 stdout_task.abort();
                 stderr_task.abort();
                 info!("✅ FFmpeg 进程已终止");
-                return Ok(());
+                if started_writing.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+
+                let stderr_tail = {
+                    let buf = stderr_lines.lock().await;
+                    buf.iter().cloned().collect::<Vec<_>>().join("\n")
+                };
+
+                let msg = if stderr_tail.trim().is_empty() {
+                    "录制已停止，但未写入任何数据（可能是拉流失败或停止过快）".to_string()
+                } else {
+                    format!(
+                        "录制已停止，但未写入任何数据（可能是拉流失败或停止过快）\nffmpeg stderr（最近输出）:\n{}",
+                        stderr_tail
+                    )
+                };
+                return Err(RecorderError::RecordingError(msg));
             }
             result = child.wait() => {
                 progress_task.abort();
@@ -1298,7 +1579,24 @@ impl RecordingSession {
                 stdout_task.abort();
                 stderr_task.abort();
                 info!("✅ FFmpeg 进程已终止");
-                Ok(())
+                if started_writing.load(Ordering::Relaxed) {
+                    Ok(())
+                } else {
+                    let stderr_tail = {
+                        let buf = stderr_lines.lock().await;
+                        buf.iter().cloned().collect::<Vec<_>>().join("\n")
+                    };
+
+                    let msg = if stderr_tail.trim().is_empty() {
+                        "录制已停止，但未写入任何数据（可能是拉流失败或停止过快）".to_string()
+                    } else {
+                        format!(
+                            "录制已停止，但未写入任何数据（可能是拉流失败或停止过快）\nffmpeg stderr（最近输出）:\n{}",
+                            stderr_tail
+                        )
+                    };
+                    Err(RecorderError::RecordingError(msg))
+                }
             }
             result = child.wait() => {
                 progress_task.abort();

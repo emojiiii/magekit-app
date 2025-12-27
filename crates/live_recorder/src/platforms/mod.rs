@@ -93,6 +93,7 @@ pub mod factory;
 pub mod huya;
 pub mod kuaishou;
 pub mod soop;
+pub mod soop_global;
 
 pub use bilibili::BilibiliHandler;
 pub use douyin::DouyinHandler;
@@ -100,4 +101,5 @@ pub use douyu::DouyuHandler;
 pub use factory::PlatformFactory;
 pub use huya::HuyaHandler;
 pub use kuaishou::KuaishouHandler;
-pub use soop::SoopHandler;
+pub use soop::SoopKrHandler;
+pub use soop_global::SoopGlobalHandler;

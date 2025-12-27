@@ -23,7 +23,8 @@ impl PlatformFactory {
         factory.register_platform(Arc::new(crate::platforms::HuyaHandler::new()));
         factory.register_platform(Arc::new(crate::platforms::DouyuHandler::new()));
         factory.register_platform(Arc::new(crate::platforms::KuaishouHandler::new()));
-        factory.register_platform(Arc::new(crate::platforms::SoopHandler::new()));
+        factory.register_platform(Arc::new(crate::platforms::SoopKrHandler::new()));
+        factory.register_platform(Arc::new(crate::platforms::SoopGlobalHandler::new()));
 
         factory
     }

@@ -418,18 +418,30 @@ impl RecordingPage {
 
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
+        let app_state = self.app_state.clone();
 
         tracing::debug!("🔍 开始检查 {} 个房间状态...", rooms.len());
 
         cx.spawn(async move |this, cx| {
+            // 读取 Cookie 配置
+            let cookies = {
+                let config = app_state.config.blocking_read();
+                config.advanced.cookies.clone()
+            };
+
             for room in rooms {
                 let recorder = live_recorder.clone();
                 let url = room.url.clone();
                 let room_id = room.id;
+                let cookies_clone = cookies.clone();
 
                 // 在 tokio runtime 中执行
                 let result = runtime
-                    .spawn(async move { recorder.check_room_status(&url).await })
+                    .spawn(async move {
+                        recorder
+                            .check_room_status_with_cookies(&url, &cookies_clone)
+                            .await
+                    })
                     .await;
 
                 match result {
@@ -696,6 +708,7 @@ impl RecordingPage {
         // 后台获取房间详细信息
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
+        let app_state = self.app_state.clone();
 
         tracing::info!("📡 获取直播间信息请求: url={}", url);
 
@@ -703,8 +716,18 @@ impl RecordingPage {
             let url_for_log = url.clone();
             let url_for_request = url.clone();
 
+            // 读取 Cookie 配置
+            let cookies = {
+                let config = app_state.config.blocking_read();
+                config.advanced.cookies.clone()
+            };
+
             let result = runtime
-                .spawn(async move { live_recorder.check_room_status(&url_for_request).await })
+                .spawn(async move {
+                    live_recorder
+                        .check_room_status_with_cookies(&url_for_request, &cookies)
+                        .await
+                })
                 .await;
 
             match result {
@@ -891,6 +914,7 @@ impl RecordingPage {
         let output_path = self.generate_output_path(&room);
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
+        let app_state = self.app_state.clone();
         let url = room.url.clone();
         let anchor_name = room.anchor_name.clone();
 
@@ -955,8 +979,18 @@ impl RecordingPage {
         };
 
         cx.spawn(async move |this, cx| {
+            // 读取 Cookie 配置
+            let cookies = {
+                let config = app_state.config.blocking_read();
+                config.advanced.cookies.clone()
+            };
+
             let result = runtime
-                .spawn(async move { live_recorder.start_recording(&url, config).await })
+                .spawn(async move {
+                    live_recorder
+                        .start_recording_with_cookies(&url, config, &cookies)
+                        .await
+                })
                 .await;
 
             match result {
@@ -1053,6 +1087,30 @@ impl RecordingPage {
                     Ok(Ok(_)) => {
                         let _ = this.update(cx, move |page, cx| {
                             if let Some(input_path) = output_path_for_toast {
+                                let recorded_bytes =
+                                    std::fs::metadata(&input_path).map(|m| m.len()).unwrap_or(0);
+
+                                if recorded_bytes == 0 {
+                                    page.push_toast(
+                                        ToastLevel::Error,
+                                        format!(
+                                            "录制已停止但未写入任何数据：{}",
+                                            anchor_name_for_toast
+                                        ),
+                                    );
+                                    if let Some(state) = page.room_states.get_mut(&room_id) {
+                                        state.last_error = Some("未写入任何数据".to_string());
+                                        if let Some(ref mut task) = state.current_task {
+                                            task.status =
+                                                magekit_shared::types::RecordingTaskStatus::Failed(
+                                                    "未写入任何数据".to_string(),
+                                                );
+                                        }
+                                    }
+                                    cx.notify();
+                                    return;
+                                }
+
                                 if page.transcode_target_path(&input_path).is_some() {
                                     page.push_toast(
                                         ToastLevel::Info,
@@ -1241,6 +1299,7 @@ impl RecordingPage {
         let output_path = self.generate_output_path(&room);
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
+        let app_state = self.app_state.clone();
         let url = room.url.clone();
         let anchor_name = room.anchor_name.clone();
 
@@ -1291,8 +1350,18 @@ impl RecordingPage {
         };
 
         cx.spawn(async move |this, cx| {
+            // 读取 Cookie 配置
+            let cookies = {
+                let config = app_state.config.blocking_read();
+                config.advanced.cookies.clone()
+            };
+
             let result = runtime
-                .spawn(async move { live_recorder.start_recording(&url, config).await })
+                .spawn(async move {
+                    live_recorder
+                        .start_recording_with_cookies(&url, config, &cookies)
+                        .await
+                })
                 .await;
 
             match result {
@@ -1398,13 +1467,24 @@ impl RecordingPage {
         let live_recorder = self.live_recorder.clone();
         let runtime = self.app_state.runtime.clone();
         let url = room.url.clone();
+        let app_state = self.app_state.clone();
 
         tracing::info!("🔄 开始刷新房间: {} ({})", room.anchor_name, room_id);
 
         cx.spawn(async move |this, cx| {
+            // 读取 Cookie 配置
+            let cookies = {
+                let config = app_state.config.blocking_read();
+                config.advanced.cookies.clone()
+            };
+
             // 获取完整的流信息（包括封面图和标题）
             let result = runtime
-                .spawn(async move { live_recorder.get_stream_info(&url).await })
+                .spawn(async move {
+                    live_recorder
+                        .get_stream_info_with_cookies(&url, &cookies)
+                        .await
+                })
                 .await;
 
             match result {

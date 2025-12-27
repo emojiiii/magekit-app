@@ -3,6 +3,7 @@ use crate::{
     recorder::LiveRecorder as Recorder,
     types::{RecordConfig, VideoQuality},
 };
+use magekit_shared::types::PlatformCookie;
 
 /// 直播录制器核心接口
 pub struct LiveRecorderCore {
@@ -33,6 +34,18 @@ impl LiveRecorderCore {
         self.recorder.start_recording(url, config).await
     }
 
+    /// 开始录制直播（带 Cookie 支持）
+    pub async fn start_recording_with_cookies(
+        &self,
+        url: &str,
+        config: RecordConfig,
+        cookies: &[PlatformCookie],
+    ) -> crate::error::RecorderResult<crate::recorder::RecordingHandle> {
+        self.recorder
+            .start_recording_with_cookies(url, config, cookies)
+            .await
+    }
+
     /// 检查直播间状态
     pub async fn check_room_status(
         &self,
@@ -41,12 +54,34 @@ impl LiveRecorderCore {
         self.recorder.check_room_status(url).await
     }
 
+    /// 检查直播间状态（带 Cookie 支持）
+    pub async fn check_room_status_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[PlatformCookie],
+    ) -> crate::error::RecorderResult<crate::types::LiveRoomInfo> {
+        self.recorder
+            .check_room_status_with_cookies(url, cookies)
+            .await
+    }
+
     /// 获取可用流信息
     pub async fn get_stream_info(
         &self,
         url: &str,
     ) -> crate::error::RecorderResult<crate::types::StreamInfo> {
         self.recorder.get_stream_info(url).await
+    }
+
+    /// 获取可用流信息（带 Cookie 支持）
+    pub async fn get_stream_info_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[PlatformCookie],
+    ) -> crate::error::RecorderResult<crate::types::StreamInfo> {
+        self.recorder
+            .get_stream_info_with_cookies(url, cookies)
+            .await
     }
 
     /// 快速录制方法（使用默认配置）
