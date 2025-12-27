@@ -1,15 +1,15 @@
 //! 斗鱼直播平台处理器
 //!
-//! 使用 QuickJS 执行从网页提取的 JS 代码来生成签名
+//! 使用 Douyu 加密接口生成签名参数
 
 use async_trait::async_trait;
 use md5::{Digest, Md5};
 use regex::Regex;
 use reqwest::Client;
-use rquickjs::{CatchResultExt, Context, Function, Runtime};
+use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     error::{RecorderError, RecorderResult},
@@ -36,6 +36,16 @@ impl DouyuHandler {
             .expect("Failed to create HTTP client");
 
         Self { client }
+    }
+
+    fn now_unix_secs() -> RecorderResult<u64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| RecorderError::PlatformError {
+                platform: "douyu".to_string(),
+                message: format!("SystemTime error: {}", e),
+            })
+            .map(|d| d.as_secs())
     }
 
     /// 获取房间信息
@@ -89,155 +99,83 @@ impl DouyuHandler {
         format!("{:x}", hasher.finalize())
     }
 
-    /// 从网页提取 JS 并生成签名参数
+    /// 通过 Douyu 新加密接口生成参数（替代网页 JS 解析/执行）
     async fn get_sign_params(
         &self,
         room_id: &str,
         did: &str,
     ) -> RecorderResult<HashMap<String, String>> {
-        // 1. 请求房间页面
-        let url = format!("https://www.douyu.com/{}", room_id);
-
-        tracing::debug!("🌐 请求斗鱼房间页面: {}", url);
-
-        let html = self
-            .client
-            .get(&url)
-            .header(
-                "Accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
-            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            .send()
-            .await?
-            .text()
-            .await?;
-
-        tracing::debug!("📄 获取到 HTML, 长度: {}", html.len());
-
-        // 2. 正则提取 JS 代码
-        // 匹配 var xxx=[0x... 开头到 function ub98484234 ... 到下一个 function
-        // 注意: Douyu 使用随机变量名如 d8b2bedb187f87c
-        let re_js = Regex::new(
-            r"(var [a-zA-Z0-9_]+=\[0x[a-f0-9]+[\s\S]*?function ub98484234[\s\S]*?)function",
-        )
-        .map_err(|e| RecorderError::InvalidResponseFormat(format!("Regex error: {}", e)))?;
-
-        let js_code = re_js
-            .captures(&html)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .ok_or_else(|| {
-                RecorderError::InvalidResponseFormat("Cannot find JS code in page".to_string())
-            })?;
-
-        tracing::debug!("📜 提取到 JS 代码, 长度: {}", js_code.len());
-
-        // 3. 替换 eval 语句: eval(strc)(params);} -> strc;}
-        // 实际格式: eval(strc)(d8b2bedb187f87c0,d8b2bedb187f87c1,d8b2bedb187f87c2);}
-        let re_eval = Regex::new(r"eval\(strc\)\([^)]*\);\}")
-            .map_err(|e| RecorderError::InvalidResponseFormat(format!("Regex error: {}", e)))?;
-        let func_ub9 = re_eval.replace_all(js_code, "strc;}").to_string();
-
-        // 4. 使用 QuickJS 执行 ub98484234 函数
-        let runtime = Runtime::new().map_err(|e| {
-            RecorderError::JavaScriptError(format!("Failed to create JS runtime: {}", e))
-        })?;
-        let context = Context::full(&runtime).map_err(|e| {
-            RecorderError::JavaScriptError(format!("Failed to create JS context: {}", e))
-        })?;
-
-        // 执行第一段 JS
-        let res: String = context.with(|ctx| {
-            // 先执行函数定义
-            ctx.eval::<(), _>(func_ub9.as_str())
-                .catch(&ctx)
-                .map_err(|e| {
-                    RecorderError::JavaScriptError(format!("Failed to eval JS: {:?}", e))
-                })?;
-
-            // 调用 ub98484234
-            let func: Function = ctx.globals().get("ub98484234").catch(&ctx).map_err(|e| {
-                RecorderError::JavaScriptError(format!("Failed to get ub98484234: {:?}", e))
-            })?;
-
-            let result: String = func.call(()).catch(&ctx).map_err(|e| {
-                RecorderError::JavaScriptError(format!("Failed to call ub98484234: {:?}", e))
-            })?;
-
-            Ok::<String, RecorderError>(result)
-        })?;
-
-        tracing::debug!("📋 ub98484234 返回: {}...", &res[..res.len().min(100)]);
-
-        // 5. 获取时间戳和 v 参数
-        let t10 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .to_string();
-
-        let re_v = Regex::new(r"v=(\d+)")
-            .map_err(|e| RecorderError::InvalidResponseFormat(format!("Regex error: {}", e)))?;
-        let v = re_v
-            .captures(&res)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str())
-            .ok_or_else(|| {
-                RecorderError::InvalidResponseFormat("Cannot find v parameter".to_string())
-            })?;
-
-        // 6. 计算 rb = md5(rid + did + t10 + v)
-        let rb = Self::md5_hash(&format!("{}{}{}{}", room_id, did, t10, v));
-
-        tracing::debug!("🔐 v={}, t10={}, rb={}", v, t10, rb);
-
-        // 7. 构建 sign 函数
-        // 替换: return rt;}\);? -> return rt;}
-        let re_return = Regex::new(r"return rt;\}\);?")
-            .map_err(|e| RecorderError::InvalidResponseFormat(format!("Regex error: {}", e)))?;
-        let func_sign = re_return.replace(&res, "return rt;}").to_string();
-
-        // 替换: (function ( -> function sign(
-        let func_sign = func_sign.replace("(function (", "function sign(");
-
-        // 替换: CryptoJS.MD5(cb).toString() -> "rb"
-        let func_sign = func_sign.replace("CryptoJS.MD5(cb).toString()", &format!("\"{}\"", rb));
-
-        // 8. 使用 QuickJS 执行 sign 函数
-        let params: String = context.with(|ctx| {
-            // 执行 sign 函数定义
-            ctx.eval::<(), _>(func_sign.as_str())
-                .catch(&ctx)
-                .map_err(|e| {
-                    RecorderError::JavaScriptError(format!("Failed to eval sign JS: {:?}", e))
-                })?;
-
-            // 调用 sign(rid, did, t10)
-            let func: Function = ctx.globals().get("sign").catch(&ctx).map_err(|e| {
-                RecorderError::JavaScriptError(format!("Failed to get sign: {:?}", e))
-            })?;
-
-            let result: String = func
-                .call((room_id, did, t10.as_str()))
-                .catch(&ctx)
-                .map_err(|e| {
-                    RecorderError::JavaScriptError(format!("Failed to call sign: {:?}", e))
-                })?;
-
-            Ok::<String, RecorderError>(result)
-        })?;
-
-        tracing::debug!("📝 sign 返回: {}", params);
-
-        // 9. 解析参数
-        let mut result = HashMap::new();
-        for pair in params.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                result.insert(key.to_string(), value.to_string());
-            }
+        #[derive(Debug, Deserialize)]
+        struct EncryptionResponse {
+            error: i64,
+            data: Option<EncryptionData>,
+            msg: Option<String>,
         }
 
+        #[derive(Debug, Deserialize)]
+        struct EncryptionData {
+            enc_data: String,
+            rand_str: String,
+            key: String,
+            enc_time: u32,
+            is_special: Option<u32>,
+        }
+
+        let key_url = format!(
+            "https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did={}",
+            did
+        );
+
+        let response = self
+            .client
+            .get(&key_url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            .header("Referer", format!("https://www.douyu.com/{}", room_id))
+            .header("Accept", "application/json, text/plain, */*")
+            .send()
+            .await?;
+
+        let json: EncryptionResponse = response.json().await?;
+        if json.error != 0 {
+            let msg = json.msg.unwrap_or_else(|| "Unknown error".to_string());
+            return Err(RecorderError::StreamNotAvailable(format!(
+                "Douyu encryption API error {}: {}",
+                json.error, msg
+            )));
+        }
+
+        let enc = json.data.ok_or_else(|| {
+            RecorderError::InvalidResponseFormat("Douyu encryption API missing data".to_string())
+        })?;
+
+        let EncryptionData {
+            enc_data,
+            rand_str,
+            key,
+            enc_time,
+            is_special,
+        } = enc;
+
+        let ts = Self::now_unix_secs()?;
+        let sign_str = match is_special {
+            Some(1) => String::new(),
+            _ => format!("{}{}", room_id, ts),
+        };
+
+        let mut auth = rand_str;
+        for _ in 0..enc_time {
+            auth = Self::md5_hash(&format!("{}{}", auth, key));
+        }
+        auth = Self::md5_hash(&format!("{}{}{}", auth, key, sign_str));
+
+        let mut result = HashMap::new();
+        result.insert("enc_data".to_string(), enc_data);
+        result.insert("tt".to_string(), ts.to_string());
+        result.insert("did".to_string(), did.to_string());
+        result.insert("auth".to_string(), auth);
         Ok(result)
     }
 
@@ -259,28 +197,44 @@ impl DouyuHandler {
         // 获取签名参数
         let sign_params = self.get_sign_params(room_id, &did).await?;
 
-        // 构建请求参数
-        let api_url = format!("https://www.douyu.com/lapi/live/getH5Play/{}", room_id);
+        let enc_data = sign_params.get("enc_data").cloned().unwrap_or_default();
+        let tt = sign_params.get("tt").cloned().unwrap_or_default();
+        let auth = sign_params.get("auth").cloned().unwrap_or_default();
 
-        let mut form_data = HashMap::new();
-        form_data.insert("v", sign_params.get("v").cloned().unwrap_or_default());
-        form_data.insert("did", did.to_string());
-        form_data.insert("tt", sign_params.get("tt").cloned().unwrap_or_default());
-        form_data.insert("sign", sign_params.get("sign").cloned().unwrap_or_default());
-        form_data.insert("ver", "22011191".to_string());
-        form_data.insert("rid", room_id.to_string());
-        form_data.insert("rate", "-1".to_string()); // -1 表示最高画质
+        if enc_data.is_empty() || tt.is_empty() || auth.is_empty() {
+            return Err(RecorderError::StreamNotAvailable(
+                "Failed to get Douyu sign params".to_string(),
+            ));
+        }
+
+        // 构建请求参数（application/x-www-form-urlencoded）
+        let api_url = format!("https://www.douyu.com/lapi/live/getH5PlayV1/{}", room_id);
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("enc_data", &enc_data)
+            .append_pair("tt", &tt)
+            .append_pair("did", did)
+            .append_pair("auth", &auth)
+            .append_pair("cdn", "")
+            .append_pair("rate", "-1")
+            .append_pair("hevc", "0")
+            .append_pair("fa", "0")
+            .append_pair("ive", "0")
+            .finish();
 
         tracing::debug!("🚀 请求斗鱼 API: {}", api_url);
-        tracing::debug!("📨 请求参数: {:?}", form_data);
+        tracing::debug!("📨 请求参数: {}", body);
 
         let response = self
             .client
             .post(&api_url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Referer", format!("https://www.douyu.com/{}", room_id))
             .header("Origin", "https://www.douyu.com")
-            .form(&form_data)
+            .body(body)
             .send()
             .await?;
 
@@ -366,19 +320,57 @@ impl PlatformHandler for DouyuHandler {
             return Ok(rid);
         }
 
-        // 从路径获取
-        let path = parsed.path().trim_start_matches('/');
+        // 从路径获取（优先取第一个段，避免 /topic/xxx 等形式误判）
+        let path = parsed.path().trim_matches('/');
+        let first_segment = path.split('/').next().unwrap_or("");
 
-        // 过滤掉非数字路径
-        if !path.is_empty() && path.chars().all(|c| c.is_ascii_digit()) {
-            return Ok(path.to_string());
+        // 数字房间号
+        if !first_segment.is_empty() && first_segment.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(first_segment.to_string());
         }
 
-        // 尝试从路径中提取数字
-        let re = Regex::new(r"/(\d+)").unwrap();
-        if let Some(caps) = re.captures(url) {
-            if let Some(m) = caps.get(1) {
-                return Ok(m.as_str().to_string());
+        // 兼容：短链/房间别名（非数字），从移动端页面 pageContext 解析真实 rid
+        if !first_segment.is_empty() {
+            let mobile_url = format!("https://m.douyu.com/{}", first_segment);
+            let html = self
+                .client
+                .get(&mobile_url)
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                )
+                .header(
+                    "Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                )
+                .send()
+                .await?
+                .text()
+                .await?;
+
+            let re_ctx = Regex::new(
+                r#"(?s)<script id="vike_pageContext" type="application/json">(.*?)</script>"#,
+            )
+            .map_err(|e| RecorderError::InvalidResponseFormat(format!("Regex error: {}", e)))?;
+
+            if let Some(json_str) = re_ctx
+                .captures(&html)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+            {
+                let ctx_json: serde_json::Value = serde_json::from_str(json_str)?;
+                if let Some(rid) = ctx_json
+                    .pointer("/pageProps/room/roomInfo/roomInfo/rid")
+                    .and_then(|v| {
+                        v.as_i64()
+                            .map(|n| n.to_string())
+                            .or_else(|| v.as_str().map(|s| s.to_string()))
+                    })
+                {
+                    if !rid.is_empty() {
+                        return Ok(rid);
+                    }
+                }
             }
         }
 
@@ -423,15 +415,15 @@ mod tests {
 
         match &result {
             Ok(params) => {
-                println!("v = {:?}", params.get("v"));
+                println!("enc_data = {:?}", params.get("enc_data"));
                 println!("did = {:?}", params.get("did"));
                 println!("tt = {:?}", params.get("tt"));
-                println!("sign = {:?}", params.get("sign"));
+                println!("auth = {:?}", params.get("auth"));
 
                 // 验证必要参数存在
-                assert!(params.contains_key("v"), "缺少 v 参数");
+                assert!(params.contains_key("enc_data"), "缺少 enc_data 参数");
                 assert!(params.contains_key("tt"), "缺少 tt 参数");
-                assert!(params.contains_key("sign"), "缺少 sign 参数");
+                assert!(params.contains_key("auth"), "缺少 auth 参数");
             }
             Err(e) => {
                 println!("错误: {:?}", e);

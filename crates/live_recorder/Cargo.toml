@@ -31,7 +31,6 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 urlencoding = "2.1"
 regex = "1"
-rquickjs = { version = "0.10.0", features = ["full-async", "parallel"] }
 
 # Local dependencies
 xbogus = { path = "../xbogus" }

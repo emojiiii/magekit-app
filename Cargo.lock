@@ -3764,7 +3764,6 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.27",
- "rquickjs",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
