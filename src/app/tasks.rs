@@ -5,13 +5,49 @@
 
 use anyhow::Result;
 use magekit_shared::{TaskId, TaskState, TaskStatus};
+use std::cmp::Reverse;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::state::AppState;
+
+fn system_time_millis(t: SystemTime) -> u128 {
+    t.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
 
 impl AppState {
     /// 获取所有任务状态（从本地缓存读取，同步版本）
     pub fn get_all_tasks_sync(&self) -> Vec<TaskStatus> {
-        self.tasks.blocking_read().values().cloned().collect()
+        let mut tasks: Vec<TaskStatus> = self.tasks.blocking_read().values().cloned().collect();
+
+        // 排序规则：
+        // 1) 进行中（Queued/Downloading/Merging/Paused）优先
+        // 2) 已结束任务按“完成时间”倒序（Completed/Failed/Cancelled 的 completed_at）
+        // 3) 兜底用 created_at + id，确保稳定且可预期
+        tasks.sort_by_key(|task| {
+            let group = if task.is_active() { 0u8 } else { 1u8 };
+
+            let primary_time = if group == 0 {
+                task.started_at.unwrap_or(task.created_at)
+            } else {
+                task.completed_at
+                    .or(task.started_at)
+                    .unwrap_or(task.created_at)
+            };
+
+            let primary_ms = system_time_millis(primary_time);
+            let created_ms = system_time_millis(task.created_at);
+
+            (
+                group,
+                Reverse(primary_ms),
+                Reverse(created_ms),
+                Reverse(task.id.as_u128()),
+            )
+        });
+
+        tasks
     }
 
     /// 获取指定任务状态（从本地缓存读取，同步版本）
