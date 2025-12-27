@@ -117,7 +117,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: macos-release-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             macos-release-cargo-
@@ -142,19 +141,19 @@ jobs:
           APP_DIR="MageKit.app"
           mkdir -p "${APP_DIR}/Contents/MacOS"
           mkdir -p "${APP_DIR}/Contents/Resources"
-          
+
           cp target/universal-apple-darwin/release/magekit "${APP_DIR}/Contents/MacOS/MageKit"
           chmod +x "${APP_DIR}/Contents/MacOS/MageKit"
-          
+
           if [ -d "themes" ]; then
             mkdir -p "${APP_DIR}/Contents/Resources/themes"
             cp -r themes/* "${APP_DIR}/Contents/Resources/themes/"
           fi
-          
+
           if [ -f "assets/icon.icns" ]; then
             cp assets/icon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
           fi
-          
+
           cat > "${APP_DIR}/Contents/Info.plist" << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -186,14 +185,23 @@ jobs:
           </plist>
           EOF
 
+          # Keep only the .app bundle to reduce runner disk usage before DMG creation
+          rm -rf target/x86_64-apple-darwin target/aarch64-apple-darwin target/universal-apple-darwin
+
       - name: Create DMG
         run: |
           mkdir -p dmg_contents
           cp -r MageKit.app dmg_contents/
           ln -s /Applications dmg_contents/Applications
-          
+
+          # Explicitly reserve size: hdiutil's auto-estimation can be too small and fill up the mounted volume
+          CONTENT_KB="$(du -sk dmg_contents | awk '{print $1}')"
+          CONTENT_MB="$(( (CONTENT_KB + 1023) / 1024 ))"
+          DMG_MB="$(( CONTENT_MB + (CONTENT_MB / 3) + 64 ))"
+
           hdiutil create -volname "MageKit" \
             -srcfolder dmg_contents \
+            -size "${DMG_MB}m" \
             -ov -format UDZO \
             "MageKit-${{ needs.prepare.outputs.version }}-macos-universal.dmg"
 
