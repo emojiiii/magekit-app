@@ -119,10 +119,12 @@ impl SoopKrHandler {
             .map(|m| m.as_str().to_string())
             .filter(|n| n != "0");
 
-        let og_title_re = Regex::new(r#"<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']"#)
-            .map_err(|e| RecorderError::InvalidResponseFormat(e.to_string()))?;
-        let og_image_re = Regex::new(r#"<meta\s+property=["']og:image["']\s+content=["']([^"']*)["']"#)
-            .map_err(|e| RecorderError::InvalidResponseFormat(e.to_string()))?;
+        let og_title_re =
+            Regex::new(r#"<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']"#)
+                .map_err(|e| RecorderError::InvalidResponseFormat(e.to_string()))?;
+        let og_image_re =
+            Regex::new(r#"<meta\s+property=["']og:image["']\s+content=["']([^"']*)["']"#)
+                .map_err(|e| RecorderError::InvalidResponseFormat(e.to_string()))?;
         let bj_nick_re = Regex::new(r#"window\.szBjNick\s*=\s*['"]([^'"]*)['"]"#)
             .map_err(|e| RecorderError::InvalidResponseFormat(e.to_string()))?;
         let broad_title_re = Regex::new(r#"window\.szBroadTitle\s*=\s*["']([^"']*)["']"#)
@@ -346,7 +348,9 @@ impl SoopKrHandler {
 
         // 如果 room_id 中包含 broad_no，则优先使用它；否则为空（让 API 返回当前直播）
         let mut broad_no_param = url_broad_no.as_deref().unwrap_or("");
-        let mut json = self.post_kr_watch_api(&bj_id, broad_no_param, &headers).await?;
+        let mut json = self
+            .post_kr_watch_api(&bj_id, broad_no_param, &headers)
+            .await?;
 
         // 观测：部分场景下输入的 broad_no 可能已过期，watch API 会返回 -3004。
         // 此时重试 broad_no=(auto)，让服务端返回当前 broad_no。
@@ -356,7 +360,9 @@ impl SoopKrHandler {
                 "⚠️ SOOP KR watch API 返回 -3004，尝试 broad_no=(auto) 重试以纠正过期 broad_no"
             );
             broad_no_param = "";
-            json = self.post_kr_watch_api(&bj_id, broad_no_param, &headers).await?;
+            json = self
+                .post_kr_watch_api(&bj_id, broad_no_param, &headers)
+                .await?;
         }
 
         // 输出关键字段用于调试
@@ -442,7 +448,9 @@ impl SoopKrHandler {
                     });
                 }
                 -3002 => {
-                    tracing::warn!("🔒 SOOP 直播需要 19+ 认证（watch API code=-3002），回退解析开播状态");
+                    tracing::warn!(
+                        "🔒 SOOP 直播需要 19+ 认证（watch API code=-3002），回退解析开播状态"
+                    );
 
                     let play_meta = match self.get_kr_play_page_meta(&bj_id, cookies).await {
                         Ok(m) => Some(m),
@@ -479,10 +487,9 @@ impl SoopKrHandler {
                     } else {
                         LiveStatus::Offline
                     };
-                    room_info.extra.insert(
-                        "requires_auth".to_string(),
-                        serde_json::Value::Bool(true),
-                    );
+                    room_info
+                        .extra
+                        .insert("requires_auth".to_string(), serde_json::Value::Bool(true));
                     room_info.extra.insert(
                         "auth_reason".to_string(),
                         serde_json::Value::String("soop_19plus".to_string()),
@@ -512,7 +519,9 @@ impl SoopKrHandler {
                     });
                 }
                 -3004 => {
-                    tracing::warn!("🔒 SOOP watch API 返回 -3004，尝试通过 player_live_api 获取流信息");
+                    tracing::warn!(
+                        "🔒 SOOP watch API 返回 -3004，尝试通过 player_live_api 获取流信息"
+                    );
 
                     // 先补齐 play 页面可见的元数据（标题/封面/当前 broad_no）
                     let play_meta = match self.get_kr_play_page_meta(&bj_id, cookies).await {
@@ -524,10 +533,10 @@ impl SoopKrHandler {
                     };
 
                     // 复用 player_live_api 的 BNO（若可用）作为更可靠的当前 broad_no
-                    let (bj_nick, broad_no_from_player) =
-                        self.get_kr_bj_nick_and_broad_no_via_player_live_api(&bj_id, cookies)
-                            .await
-                            .unwrap_or((None, None));
+                    let (bj_nick, broad_no_from_player) = self
+                        .get_kr_bj_nick_and_broad_no_via_player_live_api(&bj_id, cookies)
+                        .await
+                        .unwrap_or((None, None));
 
                     let resolved_broad_no = broad_no_from_player
                         .or_else(|| play_meta.as_ref().and_then(|m| m.broad_no.clone()))
@@ -548,7 +557,8 @@ impl SoopKrHandler {
                             room_info.cover_url = Some(cover.clone());
                         }
                     }
-                    if let Some(nick) = bj_nick.or_else(|| play_meta.as_ref().and_then(|m| m.bj_nick.clone()))
+                    if let Some(nick) =
+                        bj_nick.or_else(|| play_meta.as_ref().and_then(|m| m.bj_nick.clone()))
                     {
                         room_info.anchor_name = format!("{}-{}", nick, bj_id);
                     }
@@ -580,10 +590,9 @@ impl SoopKrHandler {
 
                     // 若没有 Cookie，直接提示需要登录；有 Cookie 则继续尝试拿流（对齐 py_demo）
                     if cookies.is_none() {
-                        room_info.extra.insert(
-                            "requires_auth".to_string(),
-                            serde_json::Value::Bool(true),
-                        );
+                        room_info
+                            .extra
+                            .insert("requires_auth".to_string(), serde_json::Value::Bool(true));
                         room_info.extra.insert(
                             "auth_reason".to_string(),
                             serde_json::Value::String("soop_login".to_string()),
@@ -646,10 +655,9 @@ impl SoopKrHandler {
                         }
                     }
 
-                    room_info.extra.insert(
-                        "requires_auth".to_string(),
-                        serde_json::Value::Bool(true),
-                    );
+                    room_info
+                        .extra
+                        .insert("requires_auth".to_string(), serde_json::Value::Bool(true));
                     room_info.extra.insert(
                         "auth_reason".to_string(),
                         serde_json::Value::String("soop_login".to_string()),

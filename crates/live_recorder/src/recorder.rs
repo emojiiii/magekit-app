@@ -243,7 +243,9 @@ impl LiveRecorder {
                     "SOOP 直播需要登录/年龄验证，请配置 Cookie".to_string(),
                 ));
             }
-            return Err(RecorderError::StreamNotAvailable("没有可用的流".to_string()));
+            return Err(RecorderError::StreamNotAvailable(
+                "没有可用的流".to_string(),
+            ));
         }
 
         // 选择最佳的流
