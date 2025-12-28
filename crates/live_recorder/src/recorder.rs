@@ -231,6 +231,21 @@ impl LiveRecorder {
             }
         }
 
+        if stream_info.streams.is_empty() {
+            if stream_info
+                .room
+                .extra
+                .get("requires_auth")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
+                return Err(RecorderError::AuthenticationRequired(
+                    "SOOP 直播需要登录/年龄验证，请配置 Cookie".to_string(),
+                ));
+            }
+            return Err(RecorderError::StreamNotAvailable("没有可用的流".to_string()));
+        }
+
         // 选择最佳的流
         let selected_stream = self.select_best_stream(&stream_info, &config.quality)?;
 
