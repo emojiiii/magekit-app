@@ -126,7 +126,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -137,7 +137,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1713,7 +1713,7 @@ dependencies = [
  "hex",
  "hyper 0.14.32",
  "m3u8-rs",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
@@ -1888,7 +1888,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3763,7 +3763,7 @@ dependencies = [
  "platform-api",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3910,7 +3910,7 @@ dependencies = [
  "open",
  "parking_lot",
  "rand 0.8.5",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "reqwest_client",
  "rfd",
  "serde",
@@ -3938,7 +3938,7 @@ dependencies = [
  "magekit-shared",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3960,7 +3960,7 @@ dependencies = [
  "platform-api",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
@@ -4001,7 +4001,7 @@ dependencies = [
  "futures-util",
  "magekit-extractor",
  "magekit-shared",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
@@ -4350,7 +4350,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4941,7 +4941,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.27",
+ "reqwest 0.12.28",
  "rquickjs",
  "serde",
  "serde_json",
@@ -5558,9 +5558,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.27"
+version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e893f6bece5953520ddbb3f8f46f3ef36dd1fef4ee9b087c4b4a725fd5d10e4"
+checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5871,7 +5871,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5884,7 +5884,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5987,7 +5987,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6583,7 +6583,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -6973,7 +6972,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8154,7 +8153,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
