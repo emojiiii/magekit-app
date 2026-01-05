@@ -41,7 +41,7 @@ indexmap = "2"
 async-trait = "0.1"
 
 # QuickJS (用于 X-Bogus JS 签名)
-rquickjs = { version = "0.10.0", features = [
+rquickjs = { version = "0.11.0", features = [
     "full-async",
     "parallel",
     "macro",
