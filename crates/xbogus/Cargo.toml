@@ -12,7 +12,7 @@ rquickjs = { version = "0.10.0", features = [
     "parallel",
     "macro",
 ] }
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 
 [dev-dependencies]

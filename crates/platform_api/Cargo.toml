@@ -48,5 +48,5 @@ rquickjs = { version = "0.10.0", features = [
 ] }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros"] }
 pretty_assertions = "1.4"

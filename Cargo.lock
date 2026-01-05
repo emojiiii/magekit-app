@@ -3947,7 +3947,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "which 8.0.0",
+ "which 7.0.3",
 ]
 
 [[package]]
@@ -6459,7 +6459,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
 dependencies = [
- "dirs 4.0.0",
+ "dirs 6.0.0",
 ]
 
 [[package]]
@@ -7183,9 +7183,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.48.0"
+version = "1.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
+checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
 dependencies = [
  "bytes",
  "libc",
@@ -8148,6 +8148,18 @@ dependencies = [
  "either",
  "home",
  "rustix 0.38.44",
+ "winsafe",
+]
+
+[[package]]
+name = "which"
+version = "7.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+dependencies = [
+ "either",
+ "env_home",
+ "rustix 1.1.2",
  "winsafe",
 ]
 
