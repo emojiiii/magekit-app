@@ -26,7 +26,7 @@ reqwest = { workspace = true }
 url = { workspace = true }
 
 # WebSocket (用于 CDP)
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 
 # 随机数
 rand = "0.8"
