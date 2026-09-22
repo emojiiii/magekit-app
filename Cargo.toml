@@ -29,10 +29,11 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 url = "2.4"
 
-# GPUI dependencies
-gpui = { version = "*" }
-gpui-component = { version = "*" }
-gpui-component-assets = { version = "*" }
+# GPUI dependencies: keep the compatible release series from Cargo.lock.
+# Upgrade GPUI, components, assets and reqwest_client together after GUI regression testing.
+gpui = { version = "0.2.2" }
+gpui-component = { version = "0.5.0" }
+gpui-component-assets = { version = "0.5.0" }
 reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.5.0" }
 
 # Configuration
