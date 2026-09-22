@@ -1,7 +1,12 @@
 //! An application-owned Python runtime. Published environments are never modified in place.
 use crate::error::{RecorderError, RecorderResult};
 use serde::{Deserialize, Serialize};
-use std::{path::{Path, PathBuf}, process::Stdio, sync::OnceLock, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::OnceLock,
+    time::Duration,
+};
 use tokio::{io::AsyncWriteExt, process::Command, sync::Mutex};
 
 pub const STREAMLINK_VERSION: &str = "8.6.1";
@@ -24,7 +29,11 @@ fn root() -> RecorderResult<PathBuf> {
 }
 
 fn python_path(env: &Path) -> PathBuf {
-    env.join(if cfg!(windows) { "Scripts/python.exe" } else { "bin/python" })
+    env.join(if cfg!(windows) {
+        "Scripts/python.exe"
+    } else {
+        "bin/python"
+    })
 }
 
 /// Does not access the network or install anything. Incomplete installs are not active.
@@ -43,15 +52,25 @@ pub async fn status() -> RecorderResult<Option<RuntimeInfo>> {
     }
     paths.sort();
     for path in paths.into_iter().rev() {
-        let Ok(bytes) = tokio::fs::read(path).await else { continue };
-        let Ok(mut info) = serde_json::from_slice::<RuntimeInfo>(&bytes) else { continue };
+        let Ok(bytes) = tokio::fs::read(path).await else {
+            continue;
+        };
+        let Ok(mut info) = serde_json::from_slice::<RuntimeInfo>(&bytes) else {
+            continue;
+        };
         // Never execute a path supplied by a manifest outside our own environment directory.
         if !info.environment.starts_with("env-")
-            || !info.environment.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            || !info
+                .environment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
             continue;
         }
         info.python = python_path(&root.join(&info.environment));
-        if info.python.is_file() { return Ok(Some(info)); }
+        if info.python.is_file() {
+            return Ok(Some(info));
+        }
     }
     Ok(None)
 }
@@ -61,7 +80,9 @@ async fn uv_path(root: &Path) -> RecorderResult<PathBuf> {
     if let Some(path) = std::env::var_os("MAGEKIT_UV_PATH") {
         let path = PathBuf::from(path);
         if !path.is_file() {
-            return Err(RecorderError::ConfigError("MAGEKIT_UV_PATH is not a file".into()));
+            return Err(RecorderError::ConfigError(
+                "MAGEKIT_UV_PATH is not a file".into(),
+            ));
         }
         return Ok(path);
     }
@@ -70,16 +91,26 @@ async fn uv_path(root: &Path) -> RecorderResult<PathBuf> {
         if let Some(paths) = std::env::var_os("PATH") {
             for directory in std::env::split_paths(&paths) {
                 let candidate = directory.join(name);
-                if candidate.is_file() { return Ok(candidate); }
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
             }
         }
         return Err(RecorderError::ConfigError(
-            "开发构建未内嵌 uv；请设置 MAGEKIT_UV_PATH，或将 uv 加入 PATH".into()
+            "开发构建未内嵌 uv；请设置 MAGEKIT_UV_PATH，或将 uv 加入 PATH".into(),
         ));
     }
-    let dir = root.join(format!("uv-{UV_VERSION}-{}-{}", std::env::consts::OS, std::env::consts::ARCH));
+    let dir = root.join(format!(
+        "uv-{UV_VERSION}-{}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(dir.join("LICENSE-MIT.txt"), include_str!("../licenses/uv-MIT.txt")).await?;
+    tokio::fs::write(
+        dir.join("LICENSE-MIT.txt"),
+        include_str!("../licenses/uv-MIT.txt"),
+    )
+    .await?;
     let executable = dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
     if tokio::fs::read(&executable).await.ok().as_deref() == Some(UV_BYTES) {
         return Ok(executable);
@@ -87,7 +118,8 @@ async fn uv_path(root: &Path) -> RecorderResult<PathBuf> {
     // Write to a unique temporary file so another process never sees half an executable.
     let staged = dir.join(format!("{}.tmp", uuid::Uuid::new_v4()));
     tokio::fs::write(&staged, UV_BYTES).await?;
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o700)).await?;
     }
@@ -108,33 +140,42 @@ fn uv_command(uv: &Path, root: &Path) -> Command {
         .env("UV_PYTHON_INSTALL_REGISTRY", "false")
         .env("UV_PYTHON_INSTALL_BIN", "false")
         .env("UV_PYTHON_PREFERENCE", "only-managed")
-        .stdin(Stdio::null()).kill_on_drop(true);
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
     cmd
 }
 
 async fn checked(mut cmd: Command, label: &str) -> RecorderResult<Vec<u8>> {
-    let output = tokio::time::timeout(Duration::from_secs(600), cmd.output()).await
+    let output = tokio::time::timeout(Duration::from_secs(600), cmd.output())
+        .await
         .map_err(|_| RecorderError::ConfigError(format!("{label}: timed out")))??;
     if !output.status.success() {
         // Do not forward subprocess output: index/proxy credentials may be included there.
         return Err(RecorderError::ConfigError(format!(
-            "{label} failed (exit {:?}); check network/proxy and available disk space", output.status.code()
+            "{label} failed (exit {:?}); check network/proxy and available disk space",
+            output.status.code()
         )));
     }
     Ok(output.stdout)
 }
 
 /// First installation pins Streamlink. No network requests after a usable install exists.
-pub async fn ensure() -> RecorderResult<RuntimeInfo> { install(false).await }
+pub async fn ensure() -> RecorderResult<RuntimeInfo> {
+    install(false).await
+}
 
 /// Resolve the newest compatible 8.x release in a NEW environment, then publish it.
 /// Existing recording/probe processes retain their previous Python path.
-pub async fn update() -> RecorderResult<RuntimeInfo> { install(true).await }
+pub async fn update() -> RecorderResult<RuntimeInfo> {
+    install(true).await
+}
 
 async fn install(upgrade: bool) -> RecorderResult<RuntimeInfo> {
     let _guard = INSTALL_LOCK.get_or_init(|| Mutex::new(())).lock().await;
     if !upgrade {
-        if let Some(info) = status().await? { return Ok(info); }
+        if let Some(info) = status().await? {
+            return Ok(info);
+        }
     }
     let root = root()?;
     tokio::fs::create_dir_all(root.join("activations")).await?;
@@ -176,15 +217,22 @@ async fn install(upgrade: bool) -> RecorderResult<RuntimeInfo> {
         tokio::fs::rename(tmp, published).await?;
         Ok(info)
     }.await;
-    if result.is_err() { let _ = tokio::fs::remove_dir_all(&env_dir).await; }
+    if result.is_err() {
+        let _ = tokio::fs::remove_dir_all(&env_dir).await;
+    }
     result
 }
 
 pub(crate) fn worker(info: &RuntimeInfo) -> Command {
     let mut cmd = magekit_shared::create_tokio_command(&info.python);
     cmd.args(["-I", "-u", "-c", include_str!("streamlink_worker.py")])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .kill_on_drop(true);
-    #[cfg(unix)] { cmd.process_group(0); }
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
     cmd
 }

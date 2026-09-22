@@ -1,6 +1,8 @@
 use clap::Parser;
-use live_recorder::{RecordConfig, RecordStatus, RecordingBackend, VideoQuality, streamlink_runtime};
 use live_recorder::recorder::LiveRecorder;
+use live_recorder::{
+    RecordConfig, RecordStatus, RecordingBackend, VideoQuality, streamlink_runtime,
+};
 use tracing::{info, level_filters::LevelFilter};
 
 #[derive(Parser)]
@@ -30,8 +32,10 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt().with_max_level(LevelFilter::INFO)
-        .with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::INFO)
+        .with_writer(std::io::stderr)
+        .init();
     let arguments = Arguments::parse();
     if let Some(action) = arguments.runtime {
         let result = match action.as_str() {
@@ -50,14 +54,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let url = arguments.url.ok_or("缺少直播间 URL")?;
     if arguments.check {
-        println!("{}", serde_json::to_string_pretty(&recorder.check_room_status(&url).await?)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&recorder.check_room_status(&url).await?)?
+        );
         return Ok(());
     }
-    if arguments.duration == Some(0) { return Err("录制时长必须大于 0".into()); }
+    if arguments.duration == Some(0) {
+        return Err("录制时长必须大于 0".into());
+    }
     let config = RecordConfig {
-        output_path_template: arguments.output.unwrap_or_else(|| format!(
-            "./downloads/{{platform}}/{{anchor_name}}_{{timestamp}}.{}", arguments.format
-        )),
+        output_path_template: arguments.output.unwrap_or_else(|| {
+            format!(
+                "./downloads/{{platform}}/{{anchor_name}}_{{timestamp}}.{}",
+                arguments.format
+            )
+        }),
         quality: VideoQuality::from_str(&arguments.quality),
         format: arguments.format,
         proxy: arguments.proxy,
