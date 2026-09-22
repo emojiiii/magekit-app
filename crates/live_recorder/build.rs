@@ -58,8 +58,5 @@ fn main() {
         );
     } else {
         fs::write(destination, []).expect("write empty development bundle");
-        println!(
-            "cargo:warning=uv is not embedded: use MAGEKIT_UV_PATH or uv on PATH for development"
-        );
     }
 }

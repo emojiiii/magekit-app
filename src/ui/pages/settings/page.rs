@@ -39,6 +39,7 @@ pub struct SettingsPage {
     // 高级设置
     auto_check_updates: bool,
     debug_mode: bool,
+    streamlink_only: bool,
 
     // 是否有未保存的更改
     has_changes: bool,
@@ -106,6 +107,7 @@ impl SettingsPage {
                 config.advanced.log_level,
                 magekit_shared::LogLevel::Debug | magekit_shared::LogLevel::Trace
             ),
+            streamlink_only: config.live_record.streamlink_only,
             has_changes: false,
         }
     }
@@ -152,6 +154,12 @@ impl SettingsPage {
 
     fn toggle_debug_mode(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.debug_mode = enabled;
+        self.has_changes = true;
+        self.save_settings(cx);
+    }
+
+    fn toggle_streamlink_only(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.streamlink_only = enabled;
         self.has_changes = true;
         self.save_settings(cx);
     }
@@ -335,6 +343,7 @@ impl SettingsPage {
         let embed_thumbnail = self.embed_thumbnail;
         let auto_check_updates = self.auto_check_updates;
         let debug_mode = self.debug_mode;
+        let streamlink_only = self.streamlink_only;
         let theme_name = self.theme_name.to_string();
         let proxy_mode = self.proxy_mode;
         let proxy_url = self.proxy_url.clone();
@@ -349,6 +358,7 @@ impl SettingsPage {
                 config.download.embed_metadata = embed_metadata;
                 config.download.embed_thumbnail = embed_thumbnail;
                 config.tools.auto_update = auto_check_updates;
+                config.live_record.streamlink_only = streamlink_only;
                 // 保存主题名称到配置
                 config.ui.theme = AppTheme::Custom(magekit_shared::types::ThemeConfig {
                     name: theme_name.clone(),
@@ -526,17 +536,26 @@ impl Render for SettingsPage {
                             })
                             // 高级设置
                             .child(
-                                AdvancedSettingsCard::new(self.auto_check_updates, self.debug_mode)
-                                    .on_auto_check_change(cx.listener(
-                                        |this, enabled: &bool, _window, cx| {
-                                            this.toggle_auto_check_updates(*enabled, cx);
-                                        },
-                                    ))
-                                    .on_debug_mode_change(cx.listener(
-                                        |this, enabled: &bool, _window, cx| {
-                                            this.toggle_debug_mode(*enabled, cx);
-                                        },
-                                    )),
+                                AdvancedSettingsCard::new(
+                                    self.auto_check_updates,
+                                    self.debug_mode,
+                                    self.streamlink_only,
+                                )
+                                .on_auto_check_change(cx.listener(
+                                    |this, enabled: &bool, _window, cx| {
+                                        this.toggle_auto_check_updates(*enabled, cx);
+                                    },
+                                ))
+                                .on_debug_mode_change(cx.listener(
+                                    |this, enabled: &bool, _window, cx| {
+                                        this.toggle_debug_mode(*enabled, cx);
+                                    },
+                                ))
+                                .on_streamlink_only_change(
+                                    cx.listener(|this, enabled: &bool, _window, cx| {
+                                        this.toggle_streamlink_only(*enabled, cx);
+                                    }),
+                                ),
                             )
                             // 关于
                             .child(AboutSection),

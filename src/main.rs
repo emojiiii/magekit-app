@@ -1,6 +1,8 @@
 // 在 Windows Release 模式下隐藏控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(dead_code)]
+// MSVC link.exe 会输出正常的库/对象文件创建信息，rustc 会将其标记为 linker_messages warning。
+#![cfg_attr(windows, allow(linker_messages))]
 
 use anyhow::Result;
 use gpui::*;

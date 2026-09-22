@@ -2,7 +2,7 @@
 use crate::app::AppState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{ActiveTheme, Disableable};
+use gpui_component::{ActiveTheme, Disableable, StyledExt};
 use live_recorder::streamlink_runtime;
 use std::sync::Arc;
 

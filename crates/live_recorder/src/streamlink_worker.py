@@ -96,6 +96,12 @@ def make_session(request):
         for name, contents in cookie_pairs(value):
             session.http.cookies.set(name, contents, domain=domain, path="/",
                                      secure=parsed.scheme == "https")
+    # 直接复用探测阶段的 SOOP HLS 地址时，不会再经过插件的请求头注入逻辑。
+    # 补上插件原本使用的 Referer/Origin，避免 CDN 对录制请求返回空流。
+    if any(matching_domain(parsed.hostname, domain) for domain in
+           ("sooplive.com", "sooplive.co.kr", "afreecatv.com")):
+        session.http.headers["Referer"] = url
+        session.http.headers["Origin"] = "https://play.sooplive.com"
     return session
 
 
@@ -175,10 +181,23 @@ def classify(error):
 def pull(request):
     if os.name != "nt":
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    session, _, plugin = resolve(request)
+    session = make_session(request)
     source = None
     try:
-        source_stream = choose_stream(plugin.streams(), request.get("config", {}).get("quality", "Original"))
+        direct_url = request.get("stream_url")
+        if direct_url:
+            from streamlink.stream.hls import HLSStream
+            parsed = urlparse(direct_url)
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError("Streamlink returned an invalid HLS URL")
+            source_stream = HLSStream(session, direct_url)
+        else:
+            name, cls, resolved_url = session.resolve_url(request["url"], follow_redirect=False)
+            del name
+            plugin = cls(session, resolved_url)
+            source_stream = choose_stream(
+                plugin.streams(), request.get("config", {}).get("quality", "Original")
+            )
         if source_stream is None:
             return OFFLINE
         source = source_stream.open()
@@ -238,10 +257,143 @@ def mux_args(ffmpeg, output, format_name):
     return args + ["-f", formats[format_name], str(output)]
 
 
+def record_direct_ts(request):
+    """直接保存 Streamlink 已输出的 MPEG-TS，避免直播管道等待 EOF 才 flush。"""
+    config = request["config"]
+    output = Path(request["output"])
+    stop = threading.Event()
+
+    def control():
+        # EOF also means the Rust owner went away. Never leave a detached recording running.
+        for line in sys.stdin:
+            if line.strip() == "stop":
+                break
+        stop.set()
+
+    threading.Thread(target=control, daemon=True).start()
+    started = time.monotonic()
+    last_size = 0
+    last_report = started
+    total_input = [0]
+    source = None
+    terminal, message = "completed", None
+    maximum = config.get("max_duration")
+    timeout = max(20, int(config.get("timeout", 30)))
+    retries = max(0, min(100, int(config.get("retry_count", 3))))
+
+    def progress(state):
+        nonlocal last_size, last_report
+        now = time.monotonic()
+        size = output.stat().st_size if output.exists() else 0
+        speed = max(0, int((size - last_size) / max(0.01, now - last_report)))
+        last_size, last_report = size, now
+        emit(kind="progress", status=state, duration=int(now - started), size=size, speed=speed)
+
+    try:
+        with output.open("wb") as target:
+            for attempt in range(retries + 1):
+                if stop.is_set():
+                    terminal = "stopped"
+                    break
+                if maximum is not None and time.monotonic() - started >= maximum:
+                    break
+
+                progress("connecting")
+                request_pull = dict(request, mode="pull")
+                source = command(
+                    [sys.executable, "-I", "-u", "-c", worker_source()],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                source_process = source
+                source.stdin.write((json.dumps(request_pull) + "\n").encode())
+                source.stdin.close()
+                done = threading.Event()
+                pump_errors = []
+                last_data = [time.monotonic()]
+
+                def pump():
+                    try:
+                        while chunk := source_process.stdout.read(64 * 1024):
+                            target.write(chunk)
+                            target.flush()
+                            total_input[0] += len(chunk)
+                            last_data[0] = time.monotonic()
+                    except (OSError, ValueError) as error:
+                        pump_errors.append(type(error).__name__)
+                    finally:
+                        done.set()
+
+                pump_thread = threading.Thread(target=pump, daemon=True)
+                pump_thread.start()
+                interrupted = False
+                while not done.wait(0.25):
+                    now = time.monotonic()
+                    if now - last_report >= 1:
+                        progress("recording" if total_input[0] else "connecting")
+                    if stop.is_set() or (maximum is not None and now - started >= maximum):
+                        terminal = "stopped" if stop.is_set() else "completed"
+                        interrupted = True
+                        break
+                    if now - last_data[0] >= timeout:
+                        break
+
+                code = source.poll()
+                if done.is_set() and code is None:
+                    try:
+                        code = source.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass
+                source_stderr = source.stderr
+                terminate(source)
+                source_message = ""
+                if source_stderr is not None:
+                    try:
+                        source_message = source_stderr.read().decode("utf-8", errors="replace").strip()
+                    except (OSError, ValueError):
+                        source_message = ""
+                if not done.wait(5):
+                    raise RuntimeError("Media stream pump failed to stop")
+                pump_thread.join(timeout=1)
+                source = None
+
+                if interrupted:
+                    break
+                if pump_errors:
+                    raise RuntimeError("Media stream pump failed; existing output is preserved")
+                if code in (AUTH, UNSUPPORTED):
+                    raise RuntimeError(source_message or "Stream access/plugin error; check login permissions and plugin version")
+                if total_input[0] > 0 and code in (0, OFFLINE):
+                    break
+                if attempt == retries:
+                    raise RuntimeError(source_message or "Stream ended/stalled and the reconnect budget was exhausted")
+
+                progress("connecting")
+                until = time.monotonic() + min(30, 2 ** attempt)
+                while time.monotonic() < until and not stop.wait(0.25):
+                    if maximum is not None and time.monotonic() - started >= maximum:
+                        break
+
+        if total_input[0] == 0 and terminal != "stopped":
+            raise RuntimeError("No media was recorded")
+    except Exception as error:
+        terminal = "error"
+        message = str(error) if isinstance(error, RuntimeError) else "Recording pipeline failed; check output permissions"
+    finally:
+        terminate(source)
+    progress(terminal)
+    emit(kind="finished", status=terminal, message=message,
+         duration=int(time.monotonic() - started), size=last_size, speed=0)
+    return 0 if terminal != "error" else FAILED
+
+
 def record(request):
     config = request["config"]
     if config.get("segment_duration") is not None or config.get("include_danmaku"):
         raise ValueError("Streamlink backend does not yet implement timed file splitting or danmaku")
+    if config.get("format") == "ts" and request.get("stream_url"):
+        return record_direct_ts(request)
     output = Path(request["output"])
     ffmpeg = request["ffmpeg"]
     stop = threading.Event()
@@ -285,7 +437,7 @@ def record(request):
             progress("connecting")
             request_pull = dict(request, mode="pull")
             source = command([sys.executable, "-I", "-u", "-c", worker_source()],
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             source.stdin.write((json.dumps(request_pull) + "\n").encode())
             source.stdin.close()
             # Normalize each connection before reconnecting to the persistent final muxer.
@@ -326,12 +478,19 @@ def record(request):
                 if now - last_data >= timeout or muxer.poll() is not None:
                     break  # bounded stall recovery, even when a process remains alive
             code = source.poll()
+            source_message = ""
             if done.is_set() and code is None:
                 try:
                     code = source.wait(timeout=1)
                 except subprocess.TimeoutExpired:
                     pass
+            source_stderr = source.stderr
             terminate(source)
+            if source_stderr is not None:
+                try:
+                    source_message = source_stderr.read().decode("utf-8", errors="replace").strip()
+                except (OSError, ValueError):
+                    source_message = ""
             # EOF from the source lets the normalizer and pump drain before another attempt.
             if not done.wait(5):
                 terminate(normalizer)
@@ -348,9 +507,9 @@ def record(request):
             if code == OFFLINE and total_input[0] > 0:
                 break
             if code in (AUTH, UNSUPPORTED):
-                raise RuntimeError("Stream access/plugin error; check login permissions and plugin version")
+                raise RuntimeError(source_message or "Stream access/plugin error; check login permissions and plugin version")
             if attempt == retries:
-                raise RuntimeError("Stream ended/stalled and the reconnect budget was exhausted")
+                raise RuntimeError(source_message or "Stream ended/stalled and the reconnect budget was exhausted")
             # An EOF is not a byte-range resume. Resolve a fresh plugin/session on the next attempt.
             progress("connecting")
             until = time.monotonic() + min(30, 2 ** attempt)
@@ -397,7 +556,10 @@ def main():
         return 0
     except Exception as error:
         code, message = classify(error)
-        if mode != "pull":
+        if mode == "pull":
+            # 父进程只读取媒体 stdout；错误摘要走 stderr，避免污染 TS 数据。
+            print(message, file=sys.stderr, flush=True)
+        else:
             emit(kind="unsupported" if code == UNSUPPORTED else "error", message=message)
         return code
 

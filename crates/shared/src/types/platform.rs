@@ -175,6 +175,9 @@ pub struct LiveRecordConfig {
     /// 全局自动录制开关（仅影响“检测到开播后自动开始录制”行为，不影响手动录制）。
     #[serde(default = "default_true")]
     pub auto_record: bool,
+    /// 是否仅使用 Streamlink，关闭后才允许回退到旧的原生录制实现。
+    #[serde(default = "default_true")]
+    pub streamlink_only: bool,
 }
 
 fn default_record_path() -> PathBuf {
@@ -215,6 +218,7 @@ impl Default for LiveRecordConfig {
             reconnect_delay: default_reconnect_delay(),
             check_interval: default_check_interval(),
             auto_record: default_true(),
+            streamlink_only: default_true(),
         }
     }
 }
@@ -380,4 +384,15 @@ pub enum RecordingTaskStatus {
     Cancelled,
     /// 失败。
     Failed(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LiveRecordConfig;
+
+    #[test]
+    fn legacy_live_record_config_defaults_to_streamlink_only() {
+        let config: LiveRecordConfig = toml::from_str("").expect("空配置应使用录制默认值");
+        assert!(config.streamlink_only);
+    }
 }

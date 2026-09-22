@@ -150,15 +150,6 @@ impl LiveRecorder {
         Self { platform_factory }
     }
 
-    /// 开始录制直播
-    pub async fn start_recording(
-        &self,
-        url: &str,
-        config: RecordConfig,
-    ) -> RecorderResult<RecordingHandle> {
-        self.start_recording_with_cookies(url, config, &[]).await
-    }
-
     /// 开始录制直播（带 Cookie 支持）
     pub async fn start_recording_with_cookies(
         &self,
@@ -327,11 +318,6 @@ impl LiveRecorder {
         })
     }
 
-    /// 检查直播间状态
-    pub async fn check_room_status(&self, url: &str) -> RecorderResult<crate::types::LiveRoomInfo> {
-        self.check_room_status_with_cookies(url, &[]).await
-    }
-
     /// 检查直播间状态（带 Cookie 支持）
     pub async fn check_room_status_with_cookies(
         &self,
@@ -351,11 +337,6 @@ impl LiveRecorder {
             .await?;
 
         Ok(stream_info.room)
-    }
-
-    /// 获取可用流信息
-    pub async fn get_stream_info(&self, url: &str) -> RecorderResult<StreamInfo> {
-        self.get_stream_info_with_cookies(url, &[]).await
     }
 
     /// 获取可用流信息（带 Cookie 支持）

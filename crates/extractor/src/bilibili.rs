@@ -393,7 +393,6 @@ fn parse_playurl_dash_formats(resp: &Value) -> Option<Vec<VideoFormat>> {
     //（否则会出现同一个 format_id 被 UI 选中两次的问题）。
     #[derive(Clone)]
     struct Candidate {
-        qn: u32,
         url: String,
         width: u32,
         height: u32,
@@ -436,7 +435,6 @@ fn parse_playurl_dash_formats(resp: &Value) -> Option<Vec<VideoFormat>> {
         let bandwidth = v.get("bandwidth").and_then(|x| x.as_u64()).unwrap_or(0);
 
         let cand = Candidate {
-            qn,
             url,
             width,
             height,

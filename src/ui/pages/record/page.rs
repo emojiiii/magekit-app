@@ -9,6 +9,7 @@
 
 use crate::app::AppState;
 use chrono::Utc;
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::ActiveTheme;
@@ -20,7 +21,10 @@ use gpui_component::notification::Notification;
 use gpui_component::radio::RadioGroup;
 use gpui_component::switch::Switch;
 use gpui_component::v_flex;
-use live_recorder::{LiveRecorder, RecordConfig, error::RecorderError, recorder::RecordingHandle};
+use live_recorder::{
+    LiveRecorder, RecordConfig, RecordStatus, RecordingBackend, error::RecorderError,
+    recorder::RecordingHandle,
+};
 use magekit_shared::truncate_string;
 use magekit_shared::types::{
     LiveRecordConfig, LiveRecordQuality, LiveRoomStatus, MonitoredRoom, RecordingTask,
@@ -77,7 +81,6 @@ impl Default for RuntimeRoomState {
 /// 录制页面组件
 pub struct RecordingPage {
     app_state: Arc<AppState>,
-    live_recorder: Arc<LiveRecorder>,
     url_input: Entity<InputState>,
 
     /// 持久化的监控房间列表（从 AppConfig 加载）
@@ -324,15 +327,13 @@ impl RecordingPage {
                 .placeholder("输入直播间地址（支持抖音、B站、虎牙、斗鱼、快手、SOOP）")
         });
 
-        // 创建 live_recorder 实例
-        let live_recorder = Arc::new(LiveRecorder::new());
-
         // 从配置加载数据
         let config = app_state.config.blocking_read().clone();
         let monitored_rooms = config.monitored_rooms.clone();
         let record_config = config.live_record.clone();
 
-        // 初始化运行时状态（从缓存恢复标题和封面）
+        // 初始化运行时状态：先显示历史封面，等本次状态刷新拿到新封面后再替换。
+        // 历史 URL 即使已经过期，也会由 img 的 fallback 安全降级为占位图。
         let mut room_states = HashMap::new();
         for room in &monitored_rooms {
             room_states.insert(
@@ -351,7 +352,6 @@ impl RecordingPage {
 
         let page = Self {
             app_state,
-            live_recorder,
             url_input,
             monitored_rooms,
             room_states,
@@ -367,6 +367,37 @@ impl RecordingPage {
         page.start_monitoring_task(cx);
 
         page
+    }
+
+    /// 根据当前配置创建录制器，避免设置页更新后仍沿用缓存页面里的旧后端。
+    fn current_live_recorder(&self) -> Arc<LiveRecorder> {
+        let streamlink_only = self
+            .app_state
+            .config
+            .try_read()
+            .map(|config| config.live_record.streamlink_only)
+            .unwrap_or(self.record_config.streamlink_only);
+        let backend = if streamlink_only {
+            RecordingBackend::Streamlink
+        } else {
+            RecordingBackend::Auto
+        };
+        Arc::new(LiveRecorder::with_backend(backend))
+    }
+
+    /// 返回录制页当前实际使用的引擎，直接展示给用户。
+    fn current_engine_label(&self) -> &'static str {
+        if self
+            .app_state
+            .config
+            .try_read()
+            .map(|config| config.live_record.streamlink_only)
+            .unwrap_or(self.record_config.streamlink_only)
+        {
+            "Streamlink（已禁用原生回退）"
+        } else {
+            "自动选择（Streamlink 不支持时回退原生录制）"
+        }
     }
 
     /// 启动监控任务（定期检查房间状态）
@@ -404,7 +435,7 @@ impl RecordingPage {
     }
 
     /// 检查所有房间状态
-    fn check_all_rooms(&self, cx: &mut Context<Self>) {
+    fn check_all_rooms(&mut self, cx: &mut Context<Self>) {
         let rooms: Vec<_> = self
             .monitored_rooms
             .iter()
@@ -416,11 +447,21 @@ impl RecordingPage {
             return;
         }
 
-        let live_recorder = self.live_recorder.clone();
+        let live_recorder = self.current_live_recorder();
         let runtime = self.app_state.runtime.clone();
         let app_state = self.app_state.clone();
 
-        tracing::debug!("🔍 开始检查 {} 个房间状态...", rooms.len());
+        for room in &rooms {
+            if let Some(state) = self.room_states.get_mut(&room.id) {
+                if !state.is_recording {
+                    state.status = LiveRoomStatus::Checking;
+                }
+                state.last_error = None;
+            }
+        }
+        cx.notify();
+
+        tracing::info!("🔍 开始检查 {} 个房间状态...", rooms.len());
 
         cx.spawn(async move |this, cx| {
             // 读取 Cookie 配置
@@ -429,21 +470,29 @@ impl RecordingPage {
                 config.advanced.cookies.clone()
             };
 
+            // 每个房间独立探测，避免某个慢平台阻塞其它房间的首次刷新。
+            let mut checks = FuturesUnordered::new();
             for room in rooms {
                 let recorder = live_recorder.clone();
                 let url = room.url.clone();
                 let room_id = room.id;
                 let cookies_clone = cookies.clone();
+                let runtime = runtime.clone();
 
-                // 在 tokio runtime 中执行
-                let result = runtime
-                    .spawn(async move {
-                        recorder
-                            .check_room_status_with_cookies(&url, &cookies_clone)
-                            .await
-                    })
-                    .await;
+                checks.push(async move {
+                    // 在 tokio runtime 中执行
+                    let result = runtime
+                        .spawn(async move {
+                            recorder
+                                .check_room_status_with_cookies(&url, &cookies_clone)
+                                .await
+                        })
+                        .await;
+                    (room_id, result)
+                });
+            }
 
+            while let Some((room_id, result)) = checks.next().await {
                 match result {
                     Ok(Ok(room_info)) => {
                         let status = match room_info.status {
@@ -463,7 +512,7 @@ impl RecordingPage {
                         let is_live = status == LiveRoomStatus::Live;
 
                         // 调试日志
-                        tracing::debug!("📦 房间 {} 状态检查结果:", room_id);
+                        tracing::info!("📦 房间 {} 状态刷新: {:?}", room_id, status);
                         tracing::debug!("   - 状态: {:?}", status);
                         tracing::debug!("   - 标题: {:?}", title);
                         tracing::debug!("   - 封面: {:?}", cover_url);
@@ -484,6 +533,7 @@ impl RecordingPage {
                                 if title.is_some() {
                                     state.title = title.clone();
                                 }
+                                // 只有拿到新封面时才替换历史缓存；暂时没有封面或探测失败时保留旧图过渡。
                                 if cover_url.is_some() {
                                     state.cover_url = cover_url.clone();
                                 }
@@ -507,14 +557,14 @@ impl RecordingPage {
                                     room.cached_title = title;
                                     need_save = true;
                                 }
-                                // 同步封面到缓存
+                                // 只有新封面有效时才替换缓存，避免一次无封面响应把历史图清掉。
                                 if cover_url.is_some() && room.cached_cover_url != cover_url {
                                     tracing::debug!(
                                         "🖼️ 更新房间 {} 缓存封面: {:?}",
                                         room_id,
                                         cover_url
                                     );
-                                    room.cached_cover_url = cover_url;
+                                    room.cached_cover_url = cover_url.clone();
                                     need_save = true;
                                 }
                                 // 更新最后直播时间
@@ -556,6 +606,7 @@ impl RecordingPage {
                     }
                     Ok(Err(e)) => {
                         let error = format!("{}", e);
+                        tracing::warn!("⚠️ 房间 {} 状态刷新失败: {}", room_id, error);
                         let _ = this.update(cx, |this, cx| {
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 state.status = LiveRoomStatus::Error(error.clone());
@@ -566,6 +617,7 @@ impl RecordingPage {
                     }
                     Err(e) => {
                         let error = format!("任务执行失败: {}", e);
+                        tracing::warn!("⚠️ 房间 {} 状态检查任务失败: {}", room_id, error);
                         let _ = this.update(cx, |this, cx| {
                             if let Some(state) = this.room_states.get_mut(&room_id) {
                                 state.status = LiveRoomStatus::Error(error.clone());
@@ -586,7 +638,10 @@ impl RecordingPage {
     fn save_config(&self) {
         let mut config = self.app_state.config.blocking_write();
         config.monitored_rooms = self.monitored_rooms.clone();
+        // Streamlink-only 由系统设置页维护，避免录制页缓存的旧配置覆盖用户刚保存的选择。
+        let streamlink_only = config.live_record.streamlink_only;
         config.live_record = self.record_config.clone();
+        config.live_record.streamlink_only = streamlink_only;
 
         // 保存到文件（需要克隆，因为 save_app_config 需要 &AppConfig）
         let config_clone = config.clone();
@@ -706,7 +761,7 @@ impl RecordingPage {
         cx.notify();
 
         // 后台获取房间详细信息
-        let live_recorder = self.live_recorder.clone();
+        let live_recorder = self.current_live_recorder();
         let runtime = self.app_state.runtime.clone();
         let app_state = self.app_state.clone();
 
@@ -912,7 +967,7 @@ impl RecordingPage {
         }
 
         let output_path = self.generate_output_path(&room);
-        let live_recorder = self.live_recorder.clone();
+        let live_recorder = self.current_live_recorder();
         let runtime = self.app_state.runtime.clone();
         let app_state = self.app_state.clone();
         let url = room.url.clone();
@@ -1182,6 +1237,57 @@ impl RecordingPage {
         cx.notify();
     }
 
+    /// 将 worker 的最终状态同步到录制页，不能把进度通道关闭误判为成功。
+    fn finalize_monitored_recording(
+        &mut self,
+        room_id: Uuid,
+        status: RecordStatus,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let error = error.or_else(|| match &status {
+            RecordStatus::Error(message) => Some(message.clone()),
+            _ => None,
+        });
+        let completed = matches!(&status, RecordStatus::Completed | RecordStatus::Stopped);
+        let input_path = self.room_states.get(&room_id).and_then(|state| {
+            state
+                .current_task
+                .as_ref()
+                .map(|task| task.output_path.clone())
+        });
+
+        if let Some(state) = self.room_states.get_mut(&room_id) {
+            state.is_recording = false;
+            state.recording_handle = None;
+            state.last_error = error.clone();
+            if let Some(task) = state.current_task.as_mut() {
+                task.status = match error.as_ref() {
+                    Some(message) => {
+                        magekit_shared::types::RecordingTaskStatus::Failed(message.clone())
+                    }
+                    None if matches!(&status, RecordStatus::Stopped) => {
+                        magekit_shared::types::RecordingTaskStatus::Cancelled
+                    }
+                    None => magekit_shared::types::RecordingTaskStatus::Completed,
+                };
+            }
+        }
+
+        if let Some(message) = error {
+            tracing::error!("❌ 录制失败: room_id={} error={}", room_id, message);
+            self.push_toast(ToastLevel::Error, format!("录制失败：{}", message));
+        } else if completed
+            && let Some(input_path) = input_path
+            && self.transcode_target_path(&input_path).is_some()
+        {
+            self.push_toast(ToastLevel::Info, "录制已完成，后台转码中");
+            self.start_transcode_in_background(room_id, input_path, cx);
+        }
+
+        cx.notify();
+    }
+
     /// 启动进度监控任务，定期获取录制进度并更新 UI
     fn start_progress_monitor(
         &self,
@@ -1212,23 +1318,55 @@ impl RecordingPage {
                     break;
                 }
 
-                // 获取进度
+                // 获取进度；终态到达后继续等待 worker 真正退出，拿到准确错误。
                 let handle = handle.clone();
                 let progress = runtime
                     .spawn(async move {
                         let mut h = handle.lock().await;
-                        h.get_progress().await
+                        let progress = h.get_progress().await;
+                        let terminal = progress
+                            .as_ref()
+                            .map(|value| {
+                                matches!(
+                                    &value.status,
+                                    RecordStatus::Completed
+                                        | RecordStatus::Stopped
+                                        | RecordStatus::Error(_)
+                                )
+                            })
+                            .unwrap_or(true);
+                        let completion_error = if terminal {
+                            h.wait_for_completion()
+                                .await
+                                .err()
+                                .map(|error| error.to_string())
+                        } else {
+                            None
+                        };
+                        (progress, h.status().clone(), completion_error)
                     })
                     .await;
 
                 match progress {
-                    Ok(Some(progress)) => {
+                    Ok((Some(progress), status, completion_error)) => {
+                        if matches!(
+                            &status,
+                            RecordStatus::Completed
+                                | RecordStatus::Stopped
+                                | RecordStatus::Error(_)
+                        ) {
+                            let error = completion_error.or(progress.error.clone());
+                            let _ = this.update(cx, |this, cx| {
+                                this.finalize_monitored_recording(room_id, status, error, cx);
+                            });
+                            break;
+                        }
+
                         let _ = this.update(cx, |this, cx| {
                             if let Some(state) = this.room_states.get_mut(&room_id) {
-                                // 更新录制任务的进度信息
+                                // UI 以本地 start_time 计算已录制时长，避免不同 FFmpeg 版本
+                                // `-progress` 时间字段单位差异/重连导致的时长跳变。
                                 if let Some(ref mut task) = state.current_task {
-                                    // UI 以本地 start_time 计算已录制时长，避免不同 FFmpeg 版本
-                                    // `-progress` 时间字段单位差异/重连导致的时长跳变。
                                     task.duration = chrono::Utc::now()
                                         .signed_duration_since(task.start_time)
                                         .num_seconds()
@@ -1240,36 +1378,33 @@ impl RecordingPage {
                             cx.notify();
                         });
                     }
-                    Ok(None) => {
-                        // 进度通道关闭，录制可能已结束
-                        tracing::info!("📊 进度通道关闭，录制可能已结束: room_id={}", room_id);
+                    Ok((None, status, completion_error)) => {
+                        let error = completion_error.or_else(|| match &status {
+                            RecordStatus::Error(message) => Some(message.clone()),
+                            _ => Some("Streamlink worker 未返回最终状态".to_string()),
+                        });
+                        tracing::error!(
+                            "❌ 录制进度通道关闭: room_id={} error={:?}",
+                            room_id,
+                            error
+                        );
                         let _ = this.update(cx, |this, cx| {
-                            let input_path = this.room_states.get(&room_id).and_then(|s| {
-                                s.current_task.as_ref().map(|task| task.output_path.clone())
-                            });
-
-                            if let Some(state) = this.room_states.get_mut(&room_id) {
-                                state.is_recording = false;
-                                state.recording_handle = None;
-                                state.last_error = None;
-                            }
-
-                            if let Some(input_path) = input_path {
-                                if this.transcode_target_path(&input_path).is_some() {
-                                    this.start_transcode_in_background(room_id, input_path, cx);
-                                } else if let Some(state) = this.room_states.get_mut(&room_id) {
-                                    if let Some(ref mut task) = state.current_task {
-                                        task.status =
-                                            magekit_shared::types::RecordingTaskStatus::Completed;
-                                    }
-                                }
-                            }
-                            cx.notify();
+                            this.finalize_monitored_recording(room_id, status, error, cx);
                         });
                         break;
                     }
                     Err(e) => {
-                        tracing::warn!("⚠️ 获取进度失败: {}", e);
+                        let error = format!("获取录制进度失败：{}", e);
+                        tracing::error!("❌ {}", error);
+                        let _ = this.update(cx, |this, cx| {
+                            this.finalize_monitored_recording(
+                                room_id,
+                                RecordStatus::Error(error.clone()),
+                                Some(error),
+                                cx,
+                            );
+                        });
+                        break;
                     }
                 }
             }
@@ -1297,7 +1432,7 @@ impl RecordingPage {
         }
 
         let output_path = self.generate_output_path(&room);
-        let live_recorder = self.live_recorder.clone();
+        let live_recorder = self.current_live_recorder();
         let runtime = self.app_state.runtime.clone();
         let app_state = self.app_state.clone();
         let url = room.url.clone();
@@ -1464,7 +1599,7 @@ impl RecordingPage {
         }
         cx.notify();
 
-        let live_recorder = self.live_recorder.clone();
+        let live_recorder = self.current_live_recorder();
         let runtime = self.app_state.runtime.clone();
         let url = room.url.clone();
         let app_state = self.app_state.clone();
@@ -1558,10 +1693,10 @@ impl RecordingPage {
                                 need_save = true;
                             }
 
-                            // 同步封面到缓存
+                            // 只有新封面有效时才替换缓存，保留历史封面作为过渡。
                             if cover_url.is_some() && room.cached_cover_url != cover_url {
                                 tracing::info!("🖼️ 更新房间 {} 缓存封面: {:?}", room_id, cover_url);
-                                room.cached_cover_url = cover_url;
+                                room.cached_cover_url = cover_url.clone();
                                 need_save = true;
                             }
 
@@ -2314,7 +2449,20 @@ impl RecordingPage {
                     .flex_shrink_0()
                     // 显示封面图或占位符
                     .when_some(cover_url.clone(), |el, url| {
-                        el.child(img(url).size_full().object_fit(ObjectFit::Cover))
+                        el.child(
+                            img(url)
+                                .size_full()
+                                .object_fit(ObjectFit::Cover)
+                                .with_fallback(|| {
+                                    div()
+                                        .size_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(div().text_2xl().child("📺"))
+                                        .into_any_element()
+                                }),
+                        )
                     })
                     .when(cover_url.is_none(), |el| {
                         el.child(
@@ -2582,6 +2730,7 @@ impl Render for RecordingPage {
         let bg_color = theme.background;
         let title_color = theme.foreground;
         let desc_color = theme.muted_foreground;
+        let engine_label = self.current_engine_label();
 
         // 检查是否有错误需要显示
         if let Some(error) = self.last_add_error.take() {
@@ -2640,7 +2789,13 @@ impl Render for RecordingPage {
                                         rooms.len(),
                                         live_count,
                                         recording_count
-                                    ))),
+                                    )))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(desc_color)
+                                            .child(format!("录制引擎：{engine_label}")),
+                                    ),
                             )
                             .child(
                                 div()

@@ -139,10 +139,30 @@ fn uv_command(uv: &Path, root: &Path) -> Command {
         .env("UV_PYTHON_INSTALL_DIR", root.join("python"))
         .env("UV_PYTHON_INSTALL_REGISTRY", "false")
         .env("UV_PYTHON_INSTALL_BIN", "false")
-        .env("UV_PYTHON_PREFERENCE", "only-managed")
         .stdin(Stdio::null())
         .kill_on_drop(true);
     cmd
+}
+
+fn summarize_stderr(stderr: &[u8]) -> Option<String> {
+    let detail = String::from_utf8_lossy(stderr)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if detail.is_empty() {
+        return None;
+    }
+
+    // 错误摘要可能包含代理 URL，保留诊断信息但去掉 URL 中的凭据部分。
+    let redacted = regex::Regex::new(r"(?i)(https?://)[^/\s:@]+(?::[^@\s]*)?@")
+        .expect("静态凭据脱敏正则必须有效")
+        .replace_all(&detail, "$1[credentials-redacted]@");
+    let redacted = redacted.trim();
+    let summary: String = redacted.chars().take(512).collect();
+    (!summary.is_empty()).then_some(summary)
 }
 
 async fn checked(mut cmd: Command, label: &str) -> RecorderResult<Vec<u8>> {
@@ -150,10 +170,12 @@ async fn checked(mut cmd: Command, label: &str) -> RecorderResult<Vec<u8>> {
         .await
         .map_err(|_| RecorderError::ConfigError(format!("{label}: timed out")))??;
     if !output.status.success() {
-        // Do not forward subprocess output: index/proxy credentials may be included there.
+        let detail = summarize_stderr(&output.stderr)
+            .map(|detail| format!("；详细信息：{detail}"))
+            .unwrap_or_default();
         return Err(RecorderError::ConfigError(format!(
-            "{label} failed (exit {:?}); check network/proxy and available disk space",
-            output.status.code()
+            "{label} failed (exit {:?}); check network/proxy and available disk space{detail}",
+            output.status.code(),
         )));
     }
     Ok(output.stdout)

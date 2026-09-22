@@ -418,6 +418,13 @@ fn build_headers(
                     out.push((canonical_header_name("user-agent"), ua));
                 }
             }
+            "accept-language" => {
+                let language = header_value(headers_ref, "accept-language")
+                    .unwrap_or_else(|| CAPTURE_ACCEPT_LANGUAGE.to_string());
+                if seen.insert("accept-language".into()) {
+                    out.push((canonical_header_name("accept-language"), language));
+                }
+            }
             "referer" => {
                 let referer_val = header_value(headers_ref, "referer")
                     .unwrap_or_else(|| fallback_referer.to_string());

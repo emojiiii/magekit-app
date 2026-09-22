@@ -10,14 +10,6 @@ use std::collections::BTreeMap;
 // 对齐 crawlers/bilibili/web/config.yaml 中的 UA（部分风控/票据可能与 UA 指纹相关）
 const BILIBILI_WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36";
 
-fn max_accept_quality(resp: &Value) -> Option<u32> {
-    resp.get("data")
-        .and_then(|d| d.get("accept_quality"))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.iter().filter_map(|x| x.as_u64()).max())
-        .map(|m| m as u32)
-}
-
 /// Bilibili API 客户端
 pub struct BilibiliApi {
     client: BdClient,

@@ -1,6 +1,6 @@
 use crate::{
     platforms::PlatformFactory,
-    recorder::LiveRecorder as Recorder,
+    recorder::{LiveRecorder as Recorder, RecordingBackend},
     types::{RecordConfig, VideoQuality},
 };
 use magekit_shared::types::PlatformCookie;
@@ -22,6 +22,13 @@ impl LiveRecorderCore {
     pub fn with_factory(factory: PlatformFactory) -> Self {
         Self {
             recorder: Recorder::with_factory(factory),
+        }
+    }
+
+    /// 使用指定后端创建录制器核心。
+    pub fn with_backend(backend: RecordingBackend) -> Self {
+        Self {
+            recorder: Recorder::with_backend(backend),
         }
     }
 

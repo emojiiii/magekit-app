@@ -125,8 +125,24 @@ impl LiveRecorder {
             .open(&path)
             .await?;
         drop(reserved);
+        // SOOP 的插件解析接口偶尔会在第二次调用时卡住。探测阶段已经拿到了
+        // 可用的 HLS 地址，直接复用它可以避免“探测成功、录制阶段却一直连接中”。
+        let stream_url = if info
+            .room
+            .extra
+            .get("streamlink_plugin")
+            .and_then(Value::as_str)
+            == Some("soop")
+        {
+            streamlink_hls_url(&info, &config.quality)
+        } else {
+            None
+        };
+        if stream_url.is_some() {
+            tracing::info!("🎥 Streamlink 复用探测到的 SOOP HLS 地址开始录制");
+        }
         let request = json!({"mode":"record", "url":url, "config":config, "cookies":scoped_cookies(url, cookies),
-                             "output":path, "ffmpeg":ffmpeg});
+                             "output":path, "ffmpeg":ffmpeg, "stream_url":stream_url});
         let start = chrono::Utc::now();
         let initial = RecordProgress {
             status: RecordStatus::Connecting,
@@ -310,6 +326,60 @@ async fn probe(
         }
         _ => Err(RecorderError::RecordingError(message)),
     }
+}
+
+fn streamlink_hls_url(info: &StreamInfo, quality: &crate::types::VideoQuality) -> Option<String> {
+    use crate::types::VideoQuality;
+
+    let preferred = match quality {
+        VideoQuality::Original | VideoQuality::Blue => [
+            VideoQuality::Original,
+            VideoQuality::Blue,
+            VideoQuality::Ultra,
+            VideoQuality::High,
+            VideoQuality::Standard,
+            VideoQuality::Low,
+        ],
+        VideoQuality::Ultra => [
+            VideoQuality::Ultra,
+            VideoQuality::Original,
+            VideoQuality::Blue,
+            VideoQuality::High,
+            VideoQuality::Standard,
+            VideoQuality::Low,
+        ],
+        VideoQuality::High => [
+            VideoQuality::High,
+            VideoQuality::Ultra,
+            VideoQuality::Original,
+            VideoQuality::Blue,
+            VideoQuality::Standard,
+            VideoQuality::Low,
+        ],
+        VideoQuality::Standard => [
+            VideoQuality::Standard,
+            VideoQuality::High,
+            VideoQuality::Ultra,
+            VideoQuality::Original,
+            VideoQuality::Blue,
+            VideoQuality::Low,
+        ],
+        VideoQuality::Low => [
+            VideoQuality::Low,
+            VideoQuality::Standard,
+            VideoQuality::High,
+            VideoQuality::Ultra,
+            VideoQuality::Original,
+            VideoQuality::Blue,
+        ],
+    };
+
+    preferred.iter().find_map(|target| {
+        info.streams
+            .iter()
+            .find(|stream| &stream.quality == target)
+            .and_then(|stream| stream.url.hls_url.clone())
+    })
 }
 
 fn safe_component(value: &str) -> String {
@@ -545,6 +615,10 @@ impl RecordingHandle {
             self.status = update.status.clone();
         }
         result
+    }
+    /// 等待后台 worker 完成，并将 worker 的最终错误同步到句柄状态。
+    pub async fn wait_for_completion(&mut self) -> RecorderResult<()> {
+        self.finish().await
     }
     async fn finish(&mut self) -> RecorderResult<()> {
         if let Some(running) = self.running.take() {

@@ -371,6 +371,7 @@ mod tests {
         let s2 = generate_random_str();
         // 由于使用固定随机值，应该相同
         assert_eq!(s1, s2);
-        assert_eq!(s1.len(), 12);
+        // 这是按字节值拼出的伪字符串，UTF-8 字节长度可能大于字符数量。
+        assert_eq!(s1.chars().count(), 12);
     }
 }

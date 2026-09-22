@@ -1163,7 +1163,12 @@ impl ChannelPage {
                                                             el.child(
                                                                 img(thumb_url)
                                                                     .size_full()
-                                                                    .object_fit(ObjectFit::Cover),
+                                                                    .object_fit(ObjectFit::Cover)
+                                                                    .with_fallback(|| {
+                                                                        div()
+                                                                            .size_full()
+                                                                            .into_any_element()
+                                                                    }),
                                                             )
                                                         },
                                                     )

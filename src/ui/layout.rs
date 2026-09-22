@@ -9,7 +9,7 @@ use gpui::*;
 use gpui_component::TitleBar;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::ScrollableElement;
-use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem};
+use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_component::*;
 use gpui_router::{IntoLayout, NavLink, Outlet, use_location, use_navigate};
 use magekit_shared::types::{Theme as AppTheme, ThemeConfig, ThemeMode};
