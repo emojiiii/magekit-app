@@ -9,7 +9,7 @@ use download::{DownloadClient, DownloadStrategy};
 use magekit_shared::{
     DownloadOptions, PlatformCookie, TaskId, TaskState, TaskStatus, TaskUpdate, VideoInfo,
 };
-use magekit_shared::{UpdateChannel, generate_output_path, normalize_url};
+use magekit_shared::{UpdateChannel, generate_output_path, normalize_url, resolve_yt_dlp_path};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, Semaphore, broadcast, mpsc};
@@ -78,7 +78,8 @@ impl ToolManager {
         let storage = ToolStorage::new_sync()?;
 
         // 获取工具路径
-        let yt_dlp_path = storage.get_tool_path(magekit_shared::ToolType::YtDlp);
+        let yt_dlp_path = resolve_yt_dlp_path()
+            .unwrap_or_else(|| storage.get_tool_path(magekit_shared::ToolType::YtDlp));
         // 优先全局解析器，再兜底存储路径
         let ffmpeg_path = magekit_shared::resolve_ffmpeg_path().or_else(|| {
             let p = storage.get_tool_path(magekit_shared::ToolType::Ffmpeg);
@@ -240,6 +241,14 @@ impl ToolManager {
         let normalized_url = normalize_url(url);
         if normalized_url != url {
             tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+        }
+
+        if video_info.is_some() && platform_hint_from_url(&normalized_url) == Some("youtube") {
+            let yt_dlp_path = resolve_yt_dlp_path()
+                .unwrap_or_else(|| self.storage.get_tool_path(magekit_shared::ToolType::YtDlp));
+            crate::deno_runtime::ensure_for_ytdlp(Some(&yt_dlp_path))
+                .await
+                .map_err(DownloadError::ToolManager)?;
         }
 
         // 每次下载都创建新任务（使用新的 UUID）

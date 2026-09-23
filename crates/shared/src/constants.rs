@@ -4,6 +4,7 @@ use std::time::Duration;
 
 /// 应用名称和版本
 pub const APP_NAME: &str = "MageKit";
+/// 应用版本
 pub const APP_VERSION: &str = "0.1.0";
 
 /// 默认配置文件名
@@ -56,9 +57,13 @@ pub mod tools {
 /// 文件大小单位。
 pub mod file_size {
     //! 按二进制计算的文件大小常量。
+    /// 1 KiB 的字节数。
     pub const KB: u64 = 1024;
+    /// 1 MiB 的字节数。
     pub const MB: u64 = KB * 1024;
+    /// 1 GiB 的字节数。
     pub const GB: u64 = MB * 1024;
+    /// 1 TiB 的字节数。
     pub const TB: u64 = GB * 1024;
 }
 
@@ -75,8 +80,11 @@ pub mod ui {
 
     /// 默认窗口尺寸
     pub const DEFAULT_WINDOW_WIDTH: u32 = 1200;
+    /// 默认窗口高度。
     pub const DEFAULT_WINDOW_HEIGHT: u32 = 800;
+    /// 窗口最小宽度。
     pub const MIN_WINDOW_WIDTH: u32 = 800;
+    /// 窗口最小高度。
     pub const MIN_WINDOW_HEIGHT: u32 = 600;
 
     /// 任务列表每页显示的项目数

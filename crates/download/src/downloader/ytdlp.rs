@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use async_trait::async_trait;
+use magekit_shared::create_tokio_ytdlp_command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -69,7 +70,7 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         // 组装命令
         tracing::info!("🔧 构建 yt-dlp 命令");
         tracing::info!("📁 yt-dlp 路径: {:?}", self.ytdlp_path);
-        let mut cmd = Command::new(&self.ytdlp_path);
+        let mut cmd = create_tokio_ytdlp_command(&self.ytdlp_path, &self.ytdlp_path);
         cmd.arg(request.url.to_string())
             .arg("-o")
             .arg(output_template.to_string_lossy().to_string())

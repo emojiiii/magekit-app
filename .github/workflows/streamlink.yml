@@ -1,0 +1,41 @@
+name: Streamlink recording
+on:
+  pull_request:
+    paths:
+      - 'crates/live_recorder/**'
+      - 'src/ui/pages/tools/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/streamlink.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install FFmpeg for offline media fixtures
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Check the pinned real Streamlink SDK contract (no live-site requests)
+        run: |
+          python3 -m venv .streamlink-smoke
+          .streamlink-smoke/bin/python -m pip install --disable-pip-version-check streamlink==8.6.1
+          .streamlink-smoke/bin/python -c 'from streamlink import Streamlink; s=Streamlink(); name, cls, url=s.resolve_url("https://www.twitch.tv/example", follow_redirect=False); p=cls(s,url); assert name == "twitch"; assert hasattr(p,"title"); s.http.close()'
+      - name: Test adapter, remux, reconnect, cancellation and bundle handling
+        run: python3 -m unittest discover -s crates/live_recorder/tests -p 'test_streamlink_worker.py' -v
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check recorder API and CLI without installing Python tools
+        run: cargo check -p live_recorder --all-targets --locked
+      - name: Check path sanitization
+        run: cargo test -p live_recorder --lib --locked recorder::tests::filename_components_cannot_escape_directory -- --exact
+      - name: Check output template platform
+        run: cargo test -p live_recorder --lib --locked recorder::tests::output_uses_plugin_not_hardcoded_douyin -- --exact

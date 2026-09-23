@@ -4,7 +4,6 @@
 
 mod api;
 mod endpoints;
-mod wbi;
 mod wrid;
 
 pub use api::BilibiliApi;

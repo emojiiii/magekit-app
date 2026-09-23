@@ -3,7 +3,7 @@ use crate::error::{ExtractError, ExtractResult};
 use crate::platform::{Platform, PlatformSupport};
 use magekit_shared::{
     ChannelInfo, ChannelPageResult, ChannelTab, ChannelTabType, ChannelVideoEntry, PlatformCookie,
-    VideoFormat, VideoInfo, create_tokio_command,
+    VideoFormat, VideoInfo, create_tokio_ytdlp_command,
 };
 use serde::Deserialize;
 use std::path::Path;
@@ -166,7 +166,7 @@ pub async fn extract_video_info(
         cookies,
     );
 
-    let mut cmd = create_tokio_command(yt_dlp_path);
+    let mut cmd = create_tokio_ytdlp_command(yt_dlp_path, yt_dlp_path);
     cmd.arg("--dump-json")
         .arg("--no-download")
         .arg(&normalized_url);
@@ -206,7 +206,7 @@ pub async fn extract_channel_info(
         cookies,
     );
 
-    let mut cmd = create_tokio_command(yt_dlp_path);
+    let mut cmd = create_tokio_ytdlp_command(yt_dlp_path, yt_dlp_path);
     cmd.arg("--flat-playlist")
         .arg("--dump-single-json")
         .arg("--no-warnings")
@@ -350,7 +350,7 @@ pub async fn extract_channel_page(
     let cookie_header =
         build_cookie_header(extract_platform_from_url(&request_url).as_deref(), cookies);
 
-    let mut cmd = create_tokio_command(yt_dlp_path);
+    let mut cmd = create_tokio_ytdlp_command(yt_dlp_path, yt_dlp_path);
     cmd.arg("--flat-playlist")
         .arg("--dump-single-json")
         .arg("--no-warnings")

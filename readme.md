@@ -33,7 +33,7 @@ MageKit 是一个功能强大、界面美观的视频下载工具，支持从各
 - 🎨 **主题系统** - 内置多款精美主题，支持亮色/暗色模式切换
 - ⚡ **并发下载** - 支持多任务并发，可自定义并发数量
 - 📋 **任务管理** - 完整的下载历史记录和任务状态跟踪
-- 🔧 **工具管理** - 自动检测、安装和更新 yt-dlp、ffmpeg 等工具
+- 🔧 **工具管理** - 管理 yt-dlp、ffmpeg 与 YouTube EJS 所需的 Deno runtime
 - 🍪 **Cookie 支持** - 支持配置平台 Cookie 以访问会员内容
 - 🌐 **代理设置** - 支持系统代理和自定义 HTTP/SOCKS5 代理
 - 💾 **元数据嵌入** - 自动嵌入视频元数据和缩略图
@@ -67,7 +67,7 @@ https://github.com/emojiiii/magekit-app/releases
 - Windows：`MageKit-vX.Y.Z-windows-x64.exe` 或 `MageKit-vX.Y.Z-windows-x64-portable.zip`
 - Linux：`MageKit-vX.Y.Z-linux-x64.AppImage` 或 `MageKit-vX.Y.Z-linux-x64.tar.gz`
 
-应用启动后会自动检测 `yt-dlp` / `ffmpeg`，未安装时可在“工具”页一键安装/更新。
+应用启动后会自动检测 `yt-dlp` / `ffmpeg`，未安装时可在“工具”页一键安装/更新。首次解析或下载 YouTube 时，如果没有兼容的 Deno runtime，应用会从官方发布源安装；工具页也可查看和更新 Deno。官方 yt-dlp 独立版已内置 EJS 脚本，无需单独安装 EJS 包。
 
 ---
 
@@ -240,7 +240,7 @@ GitHub → Actions → `Release` → `Run workflow`：
 ### 首次启动
 
 1. **启动应用**：运行编译好的可执行文件
-2. **工具检测**：应用会自动检测 yt-dlp 和 ffmpeg，如未安装会提示安装
+2. **工具检测**：应用会自动检测 yt-dlp 和 ffmpeg，如未安装会提示安装；YouTube 解析会自动确保所需的 Deno runtime
 3. **配置设置**：
    - 点击左侧侧边栏的 "设置" 图标
    - 配置默认下载目录
@@ -320,7 +320,7 @@ magekit-app/
 #### `crates/tool_manager` - 工具管理
 
 - 下载任务的调度和执行
-- yt-dlp、ffmpeg 的检测、安装和更新
+- yt-dlp、ffmpeg 的检测、安装和更新，以及 YouTube EJS 所需 Deno runtime 的管理
 - 进程管理和输出解析
 
 #### `crates/download` - 下载执行层
@@ -440,7 +440,7 @@ A: 检查显卡驱动是否支持 OpenGL 3.3+，更新到最新版本驱动程�
 
 ### Q: 下载失败提示工具不可用？
 
-A: 在设置页面检查 yt-dlp 和 ffmpeg 状态，点击安装或更新按钮。
+A: 在工具页面检查 yt-dlp 和 ffmpeg 状态，点击安装或更新按钮。Deno 会在首次解析 YouTube 时自动安装，也可在工具页单独更新。
 
 ### Q: 如何下载需要登录的视频？
 

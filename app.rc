@@ -1,0 +1,2 @@
+#define IDI_MAGEKIT_ICON 101
+IDI_MAGEKIT_ICON ICON "assets/icon.ico"

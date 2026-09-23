@@ -29,10 +29,11 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 url = "2.4"
 
-# GPUI dependencies
-gpui = { version = "*" }
-gpui-component = { version = "*" }
-gpui-component-assets = { version = "*" }
+# GPUI dependencies: keep the compatible release series from Cargo.lock.
+# Upgrade GPUI, components, assets and reqwest_client together after GUI regression testing.
+gpui = { version = "0.2.2" }
+gpui-component = { version = "0.5.0" }
+gpui-component-assets = { version = "0.5.0" }
 reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.5.0" }
 
 # Configuration
@@ -123,6 +124,9 @@ open = "5.3.3"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
+[build-dependencies]
+embed-resource = "=3.0.6"
+
 [profile.dev]
 codegen-units = 16
 debug = "limited"
@@ -133,3 +137,8 @@ resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
+
+# gpui 0.2.2 通过 stacksafe-macro 间接使用 proc-macro-error2；
+# crates.io 版本会触发 Rust 未来不兼容警告，使用仓库内兼容实现。
+[patch.crates-io]
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }

@@ -181,8 +181,8 @@ mod tests {
     #[tokio::test]
     async fn test_scan_all() {
         let client = reqwest::Client::new();
-        let scanner = StaticScanner::new(client);
-        let filter = ResourceFilter::all();
+        let _scanner = StaticScanner::new(client);
+        let _filter = ResourceFilter::all();
         // 注意：这是一个集成测试，需要网络连接
         // 在实际测试中应该使用 mock server
     }

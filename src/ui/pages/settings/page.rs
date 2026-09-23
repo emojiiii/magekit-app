@@ -1,12 +1,14 @@
 //! 设置页面主组件
 
 use super::widgets::{
-    AboutSection, AdvancedSettingsCard, CookieSettingsCard, DownloadSettingsCard, ProxyMode,
-    ProxySettingsCard, ProxyTestStatus, ThemeSettingsCard,
+    AboutSection, AdvancedSettingsCard, CookiePlatformOption, CookieSettingsCard,
+    DownloadSettingsCard, ProxyMode, ProxySettingsCard, ProxyTestStatus, SoopCredentialsCard,
+    ThemeSettingsCard, cookie_platform_identity, cookie_platform_options,
 };
 use crate::app::AppState;
 use gpui::*;
 use gpui_component::input::InputState;
+use gpui_component::select::{SelectEvent, SelectState};
 use gpui_component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
 use magekit_shared::PlatformCookie;
 use magekit_shared::types::Theme as AppTheme;
@@ -33,13 +35,15 @@ pub struct SettingsPage {
 
     // Cookie 设置
     cookies: Vec<PlatformCookie>,
-    cookie_platform_input: Entity<InputState>,
+    cookie_platform_select: Entity<SelectState<Vec<CookiePlatformOption>>>,
+    cookie_custom_platform_input: Entity<InputState>,
     cookie_content_input: Entity<InputState>,
+    soop_username_input: Entity<InputState>,
+    soop_password_input: Entity<InputState>,
 
     // 高级设置
     auto_check_updates: bool,
     debug_mode: bool,
-
     // 是否有未保存的更改
     has_changes: bool,
 }
@@ -81,11 +85,39 @@ impl SettingsPage {
         // 加载 Cookie 配置
         let cookies = config.advanced.cookies.clone();
 
-        // 创建 Cookie 输入框状态
-        let cookie_platform_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("例如: bilibili, youtube"));
+        // 平台下拉选择和自定义域名输入
+        let cookie_platform_select = cx.new(|cx| {
+            SelectState::new(cookie_platform_options(), None, window, cx).searchable(true)
+        });
+        cx.subscribe_in(
+            &cookie_platform_select,
+            window,
+            Self::on_cookie_platform_selected,
+        )
+        .detach();
+        let cookie_custom_platform_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("例如: example.com"));
         let cookie_content_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("粘贴完整的 Cookie 字符串"));
+
+        let soop_username = config.live_record.soop_username.clone();
+        let soop_username_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("SOOP 用户名");
+            if !soop_username.is_empty() {
+                state.insert(&soop_username, window, cx);
+            }
+            state
+        });
+        let soop_password = config.live_record.soop_password.clone();
+        let soop_password_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx)
+                .placeholder("SOOP 密码")
+                .masked(true);
+            if !soop_password.is_empty() {
+                state.insert(&soop_password, window, cx);
+            }
+            state
+        });
 
         Self {
             app_state,
@@ -99,8 +131,11 @@ impl SettingsPage {
             proxy_input,
             proxy_test_status: ProxyTestStatus::Idle,
             cookies,
-            cookie_platform_input,
+            cookie_platform_select,
+            cookie_custom_platform_input,
             cookie_content_input,
+            soop_username_input,
+            soop_password_input,
             auto_check_updates: config.tools.auto_update,
             debug_mode: matches!(
                 config.advanced.log_level,
@@ -156,26 +191,38 @@ impl SettingsPage {
         self.save_settings(cx);
     }
 
-    /// 添加新的 Cookie
+    fn on_cookie_platform_selected(
+        &mut self,
+        _: &Entity<SelectState<Vec<CookiePlatformOption>>>,
+        event: &SelectEvent<Vec<CookiePlatformOption>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(event, SelectEvent::Confirm(Some(_))) {
+            // 切换平台后清空 Cookie 输入，避免把刚粘贴的内容误存到另一个平台。
+            self.cookie_content_input.update(cx, |state, cx| {
+                state.set_value("", window, cx);
+            });
+            cx.notify();
+        }
+    }
+
+    /// 添加 Cookie；同一平台已有配置时直接替换内容。
     fn add_cookie(&mut self, cookie: PlatformCookie, window: &mut Window, cx: &mut Context<Self>) {
-        // 检查是否已存在相同平台的 Cookie
+        let identity = cookie_platform_identity(&cookie.platform);
         if let Some(existing) = self
             .cookies
             .iter_mut()
-            .find(|c| c.platform == cookie.platform)
+            .find(|c| cookie_platform_identity(&c.platform) == identity)
         {
-            // 更新现有的 Cookie
+            // 统一使用下拉选项里的平台名，保留原有启用/禁用状态。
+            existing.platform = cookie.platform;
             existing.cookie = cookie.cookie;
-            existing.enabled = cookie.enabled;
         } else {
-            // 添加新的 Cookie
             self.cookies.push(cookie);
         }
 
-        // 清空输入框
-        self.cookie_platform_input.update(cx, |state, cx| {
-            state.set_value("", window, cx);
-        });
+        // 平台选择保持不变，方便继续替换同一平台 Cookie。
         self.cookie_content_input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
@@ -339,6 +386,8 @@ impl SettingsPage {
         let proxy_mode = self.proxy_mode;
         let proxy_url = self.proxy_url.clone();
         let cookies = self.cookies.clone();
+        let soop_username = self.soop_username_input.read(cx).value().to_string();
+        let soop_password = self.soop_password_input.read(cx).value().to_string();
 
         cx.spawn(async move |_this, _cx| {
             // 获取当前配置并更新
@@ -349,6 +398,8 @@ impl SettingsPage {
                 config.download.embed_metadata = embed_metadata;
                 config.download.embed_thumbnail = embed_thumbnail;
                 config.tools.auto_update = auto_check_updates;
+                config.live_record.soop_username = soop_username.trim().to_string();
+                config.live_record.soop_password = soop_password;
                 // 保存主题名称到配置
                 config.ui.theme = AppTheme::Custom(magekit_shared::types::ThemeConfig {
                     name: theme_name.clone(),
@@ -502,27 +553,49 @@ impl Render for SettingsPage {
                             // Cookie 设置
                             .child({
                                 let cookies = self.cookies.clone();
-                                let platform_input = self.cookie_platform_input.clone();
+                                let platform_select = self.cookie_platform_select.clone();
+                                let custom_platform_input =
+                                    self.cookie_custom_platform_input.clone();
                                 let cookie_input = self.cookie_content_input.clone();
                                 let entity = cx.entity().clone();
                                 let entity2 = cx.entity().clone();
                                 let entity3 = cx.entity().clone();
-                                CookieSettingsCard::new(cookies, platform_input, cookie_input)
-                                    .on_add(move |cookie, window, cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            this.add_cookie(cookie, window, cx);
-                                        });
-                                    })
-                                    .on_delete(move |index, _window, cx| {
-                                        let _ = entity2.update(cx, |this, cx| {
-                                            this.delete_cookie(index, cx);
-                                        });
-                                    })
-                                    .on_toggle(move |index, enabled, _window, cx| {
+                                CookieSettingsCard::new(
+                                    cookies,
+                                    platform_select,
+                                    custom_platform_input,
+                                    cookie_input,
+                                )
+                                .on_add(move |cookie, window, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.add_cookie(cookie, window, cx);
+                                    });
+                                })
+                                .on_delete(move |index, _window, cx| {
+                                    let _ = entity2.update(cx, |this, cx| {
+                                        this.delete_cookie(index, cx);
+                                    });
+                                })
+                                .on_toggle(
+                                    move |index, enabled, _window, cx| {
                                         let _ = entity3.update(cx, |this, cx| {
                                             this.toggle_cookie(index, enabled, cx);
                                         });
-                                    })
+                                    },
+                                )
+                            })
+                            // SOOP 登录信息
+                            .child({
+                                let entity = cx.entity().clone();
+                                SoopCredentialsCard::new(
+                                    self.soop_username_input.clone(),
+                                    self.soop_password_input.clone(),
+                                )
+                                .on_save(move |_window, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.save_settings(cx);
+                                    });
+                                })
                             })
                             // 高级设置
                             .child(

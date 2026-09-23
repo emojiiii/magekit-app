@@ -16,6 +16,7 @@ use super::widgets::{DownloadProgress, ToolHintCard, ToolInfo, ToolInstallState}
 /// 工具管理页面
 pub struct ToolsPage {
     app_state: Arc<AppState>,
+    runtime_controls: Option<Entity<super::streamlink_page::RuntimeControls>>,
     tools: Vec<ToolInfo>,
     is_checking: bool,
     is_checking_updates: bool,
@@ -31,6 +32,7 @@ impl ToolsPage {
 
         let page = Self {
             app_state,
+            runtime_controls: None,
             tools,
             is_checking: false,
             is_checking_updates: false,
@@ -55,6 +57,15 @@ impl ToolsPage {
         .detach();
 
         page
+    }
+
+    pub(super) fn set_runtime_controls(
+        &mut self,
+        controls: Entity<super::streamlink_page::RuntimeControls>,
+        cx: &mut Context<Self>,
+    ) {
+        self.runtime_controls = Some(controls);
+        cx.notify();
     }
 
     fn check_tools_status(&mut self, cx: &mut Context<Self>) {
@@ -488,6 +499,10 @@ impl Render for ToolsPage {
                                     .gap(px(12.0))
                                     .children(self.render_tool_cards(cx)),
                             )
+                            // YouTube 与直播录制运行环境
+                            .when_some(self.runtime_controls.clone(), |el, controls| {
+                                el.child(controls)
+                            })
                             // 关于工具
                             .child(ToolHintCard),
                     ),

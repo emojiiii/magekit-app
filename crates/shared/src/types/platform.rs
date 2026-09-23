@@ -143,7 +143,7 @@ pub struct ChannelVideoEntry {
 }
 
 /// 直播录制配置。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LiveRecordConfig {
     /// 录制输出路径（相对于下载路径 + `/record`）。
     #[serde(default = "default_record_path")]
@@ -175,6 +175,40 @@ pub struct LiveRecordConfig {
     /// 全局自动录制开关（仅影响“检测到开播后自动开始录制”行为，不影响手动录制）。
     #[serde(default = "default_true")]
     pub auto_record: bool,
+    /// 兼容旧配置的字段；当前录制器始终使用 Streamlink。
+    #[serde(default = "default_true")]
+    pub streamlink_only: bool,
+    /// Streamlink SOOP 插件登录账号，可用于需要登录权限的房间。
+    #[serde(default)]
+    pub soop_username: String,
+    /// Streamlink SOOP 插件登录密码。
+    #[serde(default)]
+    pub soop_password: String,
+}
+
+impl std::fmt::Debug for LiveRecordConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let password = if self.soop_password.is_empty() {
+            "<empty>"
+        } else {
+            "<redacted>"
+        };
+        f.debug_struct("LiveRecordConfig")
+            .field("output_base_path", &self.output_base_path)
+            .field("record_format", &self.record_format)
+            .field("transcode_format", &self.transcode_format)
+            .field("auto_transcode", &self.auto_transcode)
+            .field("segment_duration", &self.segment_duration)
+            .field("quality", &self.quality)
+            .field("retry_count", &self.retry_count)
+            .field("reconnect_delay", &self.reconnect_delay)
+            .field("check_interval", &self.check_interval)
+            .field("auto_record", &self.auto_record)
+            .field("streamlink_only", &self.streamlink_only)
+            .field("soop_username", &self.soop_username)
+            .field("soop_password", &password)
+            .finish()
+    }
 }
 
 fn default_record_path() -> PathBuf {
@@ -215,6 +249,9 @@ impl Default for LiveRecordConfig {
             reconnect_delay: default_reconnect_delay(),
             check_interval: default_check_interval(),
             auto_record: default_true(),
+            streamlink_only: default_true(),
+            soop_username: String::new(),
+            soop_password: String::new(),
         }
     }
 }
@@ -276,7 +313,7 @@ pub struct MonitoredRoom {
     /// 缓存的房间标题。
     #[serde(default)]
     pub cached_title: Option<String>,
-    /// 缓存的封面图 URL。
+    /// 缓存的封面图资源地址（HTTP(S) URL 或本地缓存路径）。
     #[serde(default)]
     pub cached_cover_url: Option<String>,
 }
@@ -380,4 +417,15 @@ pub enum RecordingTaskStatus {
     Cancelled,
     /// 失败。
     Failed(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LiveRecordConfig;
+
+    #[test]
+    fn legacy_live_record_config_defaults_to_streamlink_only() {
+        let config: LiveRecordConfig = toml::from_str("").expect("空配置应使用录制默认值");
+        assert!(config.streamlink_only);
+    }
 }

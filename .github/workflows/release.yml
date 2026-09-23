@@ -378,7 +378,9 @@ jobs:
           
           cp AppDir/magekit.desktop AppDir/usr/share/applications/
           
-          if [ -f "assets/icon.png" ]; then
+          if [ -f "assets/icon-256.png" ]; then
+            cp assets/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png
+          elif [ -f "assets/icon.png" ]; then
             cp assets/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/magekit.png
           else
             convert -size 256x256 xc:'#4A90D9' \

@@ -8,16 +8,106 @@ use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
-use gpui_component::{IconName, Sizable};
+use gpui_component::select::{Select, SelectItem, SelectState};
+use gpui_component::{Disableable, IconName, Sizable};
 use magekit_shared::PlatformCookie;
 use std::rc::Rc;
+
+pub const CUSTOM_COOKIE_PLATFORM: &str = "__custom_domain__";
+
+#[derive(Clone)]
+pub struct CookiePlatformOption {
+    label: SharedString,
+    key: String,
+}
+
+impl CookiePlatformOption {
+    fn new(label: &str, key: &str) -> Self {
+        Self {
+            label: label.to_owned().into(),
+            key: key.to_owned(),
+        }
+    }
+}
+
+impl SelectItem for CookiePlatformOption {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.key
+    }
+}
+
+pub fn cookie_platform_options() -> Vec<CookiePlatformOption> {
+    [
+        ("抖音", "douyin"),
+        ("Bilibili", "bilibili"),
+        ("YouTube", "youtube"),
+        ("X / Twitter", "twitter"),
+        ("Instagram", "instagram"),
+        ("TikTok", "tiktok"),
+        ("微博", "weibo"),
+        ("小红书", "xiaohongshu"),
+        ("斗鱼", "douyu"),
+        ("虎牙", "huya"),
+        ("Twitch", "twitch"),
+        ("SOOP 韩国", "sooplive"),
+        ("SOOP Global", "soop_global"),
+        ("AfreecaTV", "afreeca"),
+        ("自定义域名…", CUSTOM_COOKIE_PLATFORM),
+    ]
+    .into_iter()
+    .map(|(label, key)| CookiePlatformOption::new(label, key))
+    .collect()
+}
+
+/// 将常见旧平台名和域名配置映射到同一标识，避免更新时重复添加。
+pub fn cookie_platform_identity(platform: &str) -> String {
+    let raw = platform
+        .trim()
+        .to_ascii_lowercase()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_owned();
+    let value = raw
+        .split(|character| matches!(character, '/' | '?' | '#'))
+        .next()
+        .unwrap_or_default()
+        .trim_start_matches("www.")
+        .trim_start_matches('.')
+        .to_owned();
+
+    match value.as_str() {
+        "douyin" | "douyin.com" | "iesdouyin.com" => "douyin".into(),
+        "bilibili" | "bilibili.com" | "b23.tv" => "bilibili".into(),
+        "youtube" | "youtube.com" | "youtu.be" => "youtube".into(),
+        "twitter" | "x" | "twitter.com" | "x.com" => "twitter".into(),
+        "instagram" | "instagram.com" => "instagram".into(),
+        "tiktok" | "tiktok.com" => "tiktok".into(),
+        "weibo" | "weibo.com" => "weibo".into(),
+        "xiaohongshu" | "xiaohongshu.com" | "xhs.link" => "xiaohongshu".into(),
+        "douyu" | "douyu.com" => "douyu".into(),
+        "huya" | "huya.com" => "huya".into(),
+        "twitch" | "twitch.tv" => "twitch".into(),
+        "soop" | "sooplive" | "sooplive.co.kr" => "sooplive".into(),
+        "soop_global" | "sooplive.com" => "soop_global".into(),
+        "afreeca" | "afreecatv.com" => "afreeca".into(),
+        _ => value,
+    }
+}
 
 /// Cookie 设置卡片
 pub struct CookieSettingsCard {
     /// Cookie 列表
     cookies: Vec<PlatformCookie>,
-    /// 平台输入框
-    platform_input: Entity<InputState>,
+    /// 平台下拉选择
+    platform_select: Entity<SelectState<Vec<CookiePlatformOption>>>,
+    /// 自定义平台域名输入框
+    custom_platform_input: Entity<InputState>,
     /// Cookie 输入框
     cookie_input: Entity<InputState>,
     /// 添加回调
@@ -31,12 +121,14 @@ pub struct CookieSettingsCard {
 impl CookieSettingsCard {
     pub fn new(
         cookies: Vec<PlatformCookie>,
-        platform_input: Entity<InputState>,
+        platform_select: Entity<SelectState<Vec<CookiePlatformOption>>>,
+        custom_platform_input: Entity<InputState>,
         cookie_input: Entity<InputState>,
     ) -> Self {
         Self {
             cookies,
-            platform_input,
+            platform_select,
+            custom_platform_input,
             cookie_input,
             on_add: None,
             on_delete: None,
@@ -71,7 +163,8 @@ impl IntoElement for CookieSettingsCard {
 
     fn into_element(self) -> Self::Element {
         let cookies = self.cookies;
-        let platform_input = self.platform_input;
+        let platform_select = self.platform_select;
+        let custom_platform_input = self.custom_platform_input;
         let cookie_input = self.cookie_input;
         let on_add = self.on_add;
         let on_delete = self.on_delete;
@@ -81,7 +174,8 @@ impl IntoElement for CookieSettingsCard {
             // 使用闭包渲染内部内容
             CookieSettingsInner {
                 cookies,
-                platform_input,
+                platform_select,
+                custom_platform_input,
                 cookie_input,
                 on_add,
                 on_delete,
@@ -95,7 +189,8 @@ impl IntoElement for CookieSettingsCard {
 #[derive(IntoElement)]
 struct CookieSettingsInner {
     cookies: Vec<PlatformCookie>,
-    platform_input: Entity<InputState>,
+    platform_select: Entity<SelectState<Vec<CookiePlatformOption>>>,
+    custom_platform_input: Entity<InputState>,
     cookie_input: Entity<InputState>,
     on_add: Option<Box<dyn Fn(PlatformCookie, &mut Window, &mut App) + 'static>>,
     on_delete: Option<Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
@@ -111,11 +206,27 @@ impl RenderOnce for CookieSettingsInner {
         let muted_color = theme.muted_foreground;
 
         let cookies = self.cookies;
-        let platform_input = self.platform_input;
+        let platform_select = self.platform_select;
+        let custom_platform_input = self.custom_platform_input;
         let cookie_input = self.cookie_input;
         let on_add = self.on_add;
         let on_delete = self.on_delete;
         let on_toggle = self.on_toggle;
+        let selected_platform = platform_select.read(cx).selected_value().cloned();
+        let custom_platform_selected = selected_platform.as_deref() == Some(CUSTOM_COOKIE_PLATFORM);
+        let soop_korea_selected = selected_platform.as_deref() == Some("sooplive");
+        let target_platform = match selected_platform.as_deref() {
+            Some(CUSTOM_COOKIE_PLATFORM) => {
+                custom_platform_input.read(cx).value().trim().to_owned()
+            }
+            Some(platform) => platform.to_owned(),
+            None => String::new(),
+        };
+        let is_update = !target_platform.is_empty()
+            && cookies.iter().any(|cookie| {
+                cookie_platform_identity(&cookie.platform)
+                    == cookie_platform_identity(&target_platform)
+            });
 
         Section::new_with_icon("平台 Cookie", IconName::Inbox).child(
             div()
@@ -134,7 +245,7 @@ impl RenderOnce for CookieSettingsInner {
                             div()
                                 .text_sm()
                                 .text_color(muted_color)
-                                .child("为需要登录的平台配置 Cookie，以访问受限内容。Cookie 可从浏览器开发者工具中获取。")
+                        .child("选择平台后粘贴 Cookie。已有平台会显示「更新 Cookie」，保存后替换原值；其他平台可选择自定义域名。SOOP Global Cookie 请选择对应选项。")
                         )
                         // 添加新 Cookie 区域
                         .child(
@@ -147,7 +258,7 @@ impl RenderOnce for CookieSettingsInner {
                                 .bg(theme.background)
                                 .border_1()
                                 .border_color(border_color)
-                                // 平台输入
+                                // 平台选择
                                 .child(
                                     div()
                                         .flex()
@@ -158,14 +269,28 @@ impl RenderOnce for CookieSettingsInner {
                                                 .text_sm()
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(title_color)
-                                                .child("平台名称")
+                                                .child("平台")
                                         )
-                                        .child(
-                                            Input::new(&platform_input)
-                                                .small()
-                                                .cleanable(true)
-                                        )
+                                        .child(Select::new(&platform_select)
+                                            .small()
+                                            .w_full()
+                                            .placeholder("选择平台")
+                                            .search_placeholder("搜索平台"))
                                 )
+                                .when(custom_platform_selected, |this| {
+                                    this.child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(4.0))
+                                            .child(div().text_sm().child("自定义平台域名"))
+                                            .child(
+                                                Input::new(&custom_platform_input)
+                                                    .small()
+                                                    .cleanable(true),
+                                            ),
+                                    )
+                                })
                                 // Cookie 输入
                                 .child(
                                     div()
@@ -184,6 +309,14 @@ impl RenderOnce for CookieSettingsInner {
                                                 .small()
                                                 .cleanable(true)
                                         )
+                                        .when(soop_korea_selected, |this| {
+                                            this.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(muted_color)
+                                                    .child("SOOP 登录接口使用 sooplive.com；韩国 Cookie 也会用于该平台的官方认证接口"),
+                                            )
+                                        })
                                 )
                                 // 添加按钮
                                 .child(
@@ -191,16 +324,21 @@ impl RenderOnce for CookieSettingsInner {
                                         .flex()
                                         .justify_end()
                                         .child({
-                                            let platform_input_clone = platform_input.clone();
                                             let cookie_input_clone = cookie_input.clone();
+                                            let platform = target_platform.clone();
                                             let mut btn = Button::new("add-cookie")
                                                 .small()
                                                 .primary()
-                                                .icon(IconName::Plus)
-                                                .label("添加");
+                                                .icon(if is_update { IconName::Check } else { IconName::Plus })
+                                                .label(if is_update { "更新 Cookie" } else { "添加 Cookie" })
+                                                .disabled(
+                                                    platform.is_empty()
+                                                        || (custom_platform_selected
+                                                            && !platform.contains('.'))
+                                                        || cookie_input.read(cx).value().trim().is_empty(),
+                                                );
                                             if let Some(handler) = on_add {
                                                 btn = btn.on_click(move |_ev, window, cx| {
-                                                    let platform = platform_input_clone.read(cx).value().to_string();
                                                     let cookie = cookie_input_clone.read(cx).value().to_string();
                                                     if !platform.trim().is_empty() && !cookie.trim().is_empty() {
                                                         let new_cookie = PlatformCookie::new(
@@ -271,7 +409,7 @@ impl RenderOnce for CookieSettingsInner {
                                     div()
                                         .text_xs()
                                         .text_color(muted_color)
-                                        .child("💡 常用平台名称: bilibili, youtube, twitter, instagram")
+                                        .child("💡 常见平台可直接选择；自定义选项填写域名，例如 example.com")
                                 )
                                 .child(
                                     div()

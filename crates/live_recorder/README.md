@@ -1,18 +1,18 @@
 # Live Recorder
 
-可扩展的直播录制工具，支持多平台直播流录制并提供 CLI / 库两种使用方式。
+提供 CLI / 库两种直播录制方式：抖音继续使用稳定的 Rust 原生录制流程，其他平台交给 Streamlink 插件。
 
 ## 支持的平台
 
-- ✅ 抖音
-- ✅ Bilibili
-- ✅ 斗鱼 / 虎牙 / 快手 / SOOP（对应 `platforms/*` 实现）
-- 🚧 其余平台可通过新增 `PlatformHandler` 扩展
+- 抖音 URL 使用原有 Rust 原生录制器。
+- Bilibili、斗鱼、虎牙、SOOP 等其他平台由当前 Streamlink 版本内置插件决定。
+- 快手及没有 Streamlink 插件的平台不受支持；Streamlink 失败时不会回退到旧平台处理器。
+- 旧的 `platforms/*` 处理器仍保留为独立兼容模块，`LiveRecorder` 仅对抖音调用原生录制器。
 
 ## 核心 API
 
 - `LiveRecorder` / `LiveRecorderCore`
-  - `new()` / `with_factory(PlatformFactory)`
+  - `new()` / `with_soop_credentials(username, password)`
   - `start_recording(url, RecordConfig)` → `RecordingHandle`
   - `check_room_status(url)`、`get_stream_info(url)`
   - 便捷录制：`quick_record(url, output_template)`
@@ -21,8 +21,9 @@
   - `max_duration`、`proxy`、`headers` 等
 - `RecordingHandle`
   - `get_progress()`、`wait()`、`stop()`（见 `recorder.rs`）
-- 扩展接口
-  - 实现 `platforms::PlatformHandler` 可接入新平台
+- SOOP 认证
+  - 公开房间通常可匿名访问；遇到登录限制时可配置 Global Cookie（平台名 `soop_global`）或调用 `with_soop_credentials`。
+  - 19+ 房间仍要求已完成成人认证且具备房间观看权限的账号。
 
 ## 快速开始
 
@@ -72,26 +73,11 @@ cargo run -- --url https://live.douyin.com/123456 \
 ## 错误与依赖
 
 - 错误类型：`RecorderError`（房间不存在、流不可用、认证失败、限流等）
-- 主要依赖：`tokio`、`reqwest`、`serde`、`xbogus`、`tracing`、`clap`
+- 抖音沿用原生录制流程；其他平台由 Streamlink 插件取流，媒体管线使用 FFmpeg `-c copy`。
 
-## 扩展新平台
+## 平台支持与边界
 
-实现 `PlatformHandler` trait，声明 `platform_name`、`supported_url_patterns`，并实现 `extract_room_id` / `get_stream_info`，即可通过 `PlatformFactory` 注册。
-
-## 优点
-
-- 平台处理抽象清晰，可独立扩展新平台。
-- 支持代理、质量选择、路径模板，覆盖常见录制需求。
-- 异步流式下载，进度可订阅，CLI/库复用同一核心。
-
-## 局限 / 风险
-
-- 录制流程仍依赖外部 ffmpeg，缺少启动前的可用性检测。
-- 各平台实现成熟度不一致，缺少集成测试保障。
-- `RecordConfig` 部分字段缺少文档/示例（如自定义 headers）。
-
-## 改进建议
-
-- 在启动录制前检查 ffmpeg、输出目录可写性，并给出友好错误。
-- 为主流平台添加端到端测试与回归用例，避免协议变更导致静默失败。
-- 增加 WebSocket/事件流接口，便于 UI 实时显示录制状态与错误。
+- 抖音的解析、状态检查、取流和录制均走原生处理器；其他平台由 Streamlink 解析和录制，支持范围随 Streamlink 版本变化。
+- 快手及没有 Streamlink 插件的平台不受支持，也不会回退到其他原生处理器。
+- 仓库仍保留旧的 `platforms/*` 公开模块，供现有调用方兼容；`LiveRecorder` 只对抖音走原生录制器。
+- Streamlink 后端暂不支持 `segment_duration` 和弹幕保存；抖音仍按原生录制器现有行为处理。

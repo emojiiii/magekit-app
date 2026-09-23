@@ -286,6 +286,33 @@ impl DouyinHandler {
             .join("&")
     }
 
+    fn image_url_from_value(value: &serde_json::Value) -> Option<String> {
+        if let Some(value) = value.as_str() {
+            let value = value.trim();
+            if value.starts_with("//") {
+                return Some(format!("https:{value}"));
+            }
+            if value.starts_with("https://") || value.starts_with("http://") {
+                return Some(value.to_string());
+            }
+            return None;
+        }
+        if let Some(values) = value.as_array() {
+            return values.iter().find_map(Self::image_url_from_value);
+        }
+        let object = value.as_object()?;
+        ["url_list", "urls", "url", "src", "uri"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(Self::image_url_from_value))
+    }
+
+    fn avatar_url(data: &serde_json::Value) -> Option<String> {
+        let user = data.get("user")?;
+        ["avatar_thumb", "avatar_medium", "avatar_large", "avatar"]
+            .iter()
+            .find_map(|key| user.get(*key).and_then(Self::image_url_from_value))
+    }
+
     /// 解析流URL
     fn parse_stream_urls(
         json_data: &serde_json::Value,
@@ -324,7 +351,8 @@ impl DouyinHandler {
                 status: LiveStatus::Offline,
                 start_time: None,
                 viewer_count: None,
-                cover_url: None,
+                // 离线接口通常不返回直播封面，使用用户头像避免卡片一直显示空占位。
+                cover_url: Self::avatar_url(data),
                 extra: HashMap::new(),
             };
 
@@ -380,26 +408,15 @@ impl DouyinHandler {
             // 1. cover 是一个对象，包含 url_list 数组
             // 2. cover 直接是字符串
             // 3. cover 是数组（旧版本）
-            cover_url: room_info.get("cover").and_then(|c| {
-                // 尝试作为对象获取 url_list
-                if let Some(obj) = c.as_object() {
-                    obj.get("url_list")
-                        .and_then(|ul| ul.as_array())
-                        .and_then(|arr| arr.first())
-                        .and_then(|url| url.as_str())
-                        .map(|s| s.to_string())
-                } else if let Some(arr) = c.as_array() {
-                    // 尝试作为数组获取第一个元素
-                    arr.first()
-                        .and_then(|url| url.as_str())
-                        .map(|s| s.to_string())
-                } else if let Some(s) = c.as_str() {
-                    // 直接是字符串
-                    Some(s.to_string())
-                } else {
-                    None
-                }
-            }),
+            cover_url: room_info
+                .get("cover")
+                .and_then(Self::image_url_from_value)
+                .or_else(|| {
+                    ["cover_url", "share_cover", "live_cover"]
+                        .iter()
+                        .find_map(|key| room_info.get(*key).and_then(Self::image_url_from_value))
+                })
+                .or_else(|| Self::avatar_url(data)),
             extra: HashMap::new(),
         };
 

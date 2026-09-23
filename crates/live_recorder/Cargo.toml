@@ -35,3 +35,6 @@ regex = "1"
 # Local dependencies
 xbogus = { path = "../xbogus" }
 platform-api = { path = "../platform_api" }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

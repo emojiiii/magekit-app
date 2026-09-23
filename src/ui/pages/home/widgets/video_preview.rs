@@ -558,7 +558,16 @@ impl RenderOnce for VideoPreviewReady {
                                     img(url)
                                         .w(px(220.0))
                                         .h(px(124.0))
-                                        .object_fit(ObjectFit::Cover),
+                                        .object_fit(ObjectFit::Cover)
+                                        .with_fallback(|| {
+                                            div()
+                                                .size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(div().text_3xl().child("🎬"))
+                                                .into_any_element()
+                                        }),
                                 )
                             })
                             .when(thumbnail_url.is_none(), |el| {

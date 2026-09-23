@@ -1,0 +1,6 @@
+*.rs text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+docs/streamlink.md text eol=lf
