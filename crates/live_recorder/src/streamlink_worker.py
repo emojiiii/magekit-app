@@ -756,14 +756,58 @@ def classify(error):
     return FAILED, "Streamlink failed to resolve/read the stream; check network, room URL and plugin version"
 
 
+def source_diagnostic(error, stage, code):
+    """Keep only safe error facts; Streamlink exceptions can include signed URLs."""
+    name = type(error).__name__
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", name):
+        name = "Exception"
+    status = None
+    for candidate in (error, getattr(error, "__cause__", None),
+                      getattr(error, "__context__", None)):
+        if candidate is None:
+            continue
+        response = getattr(candidate, "response", None)
+        value = getattr(response, "status_code", None)
+        if value is None:
+            value = getattr(candidate, "status_code", None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            status = value
+            break
+    if status is None:
+        # Some Streamlink exceptions retain only a text HTTP status. Extract the
+        # number, never the surrounding URL or response body.
+        match = re.search(r"\b(?:HTTP\s*(?:error|status|code)?\s*[:=]?\s*|"
+                          r"status\s*code\s*[:=]?\s*)([1-5][0-9]{2})\b|"
+                          r"\b([1-5][0-9]{2})\s+(?:Client|Server)\s+Error\b",
+                          str(error), re.I)
+        if match:
+            status = int(match.group(1) or match.group(2))
+    if code == AUTH or status in (401, 403):
+        reason = "auth"
+    elif code == TIMEOUT or "timeout" in name.lower():
+        reason = "timeout"
+    elif code == UNSUPPORTED:
+        reason = "plugin"
+    elif status == 429 or (status is not None and status >= 500):
+        reason = "network"
+    elif isinstance(error, (ConnectionError, OSError)):
+        reason = "network"
+    else:
+        reason = "source_failed"
+    return {"stage": stage, "reason": reason, "exception": name,
+            "http_status": status}
+
+
 def pull(request):
     if os.name != "nt":
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     session = None
     source = None
+    stage = "resolve"
     try:
         session, name, plugin = resolve(request)
         quality = request.get("config", {}).get("quality", "Original")
+        stage = "select"
         source_stream = (
             soop_selected_stream(plugin, quality, request.get("soop_quality_offset", 0),
                                  request.get("soop_hint"))
@@ -778,20 +822,39 @@ def pull(request):
                 print("MAGEKIT_QUALITY:" + json.dumps(selected_quality, ensure_ascii=True),
                       file=sys.stderr, flush=True)
             print("MAGEKIT_STAGE:selected", file=sys.stderr, flush=True)
+        stage = "open"
         source = source_stream.open()
         if name == "soop":
             print("MAGEKIT_STAGE:opened", file=sys.stderr, flush=True)
+        stage = "read"
         while True:
             chunk = source.read(16 * 1024)
             if not chunk:
                 return 0
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
+    except Exception as error:
+        code, message = classify(error)
+        detail = source_diagnostic(error, stage, code)
+        summary = f"Streamlink {stage}: {detail['exception']}"
+        if detail["http_status"] is not None:
+            summary += f", HTTP {detail['http_status']}"
+        summary += f"; {message}"
+        print("MAGEKIT_ERROR:" + json.dumps({"code": code, "message": summary,
+                                             **detail}, ensure_ascii=True),
+              file=sys.stderr, flush=True)
+        return code
     finally:
         if source is not None:
-            source.close()
+            try:
+                source.close()
+            except Exception:
+                pass
         if session is not None:
-            session.http.close()
+            try:
+                session.http.close()
+            except Exception:
+                pass
 
 
 def command(arguments, **kwargs):
@@ -884,11 +947,16 @@ def record_direct_ts(request):
     selected_quality = [None]
     source = None
     terminal, message = "completed", None
+    completion_reason = "unknown"
     maximum = config.get("max_duration")
     timeout = max(20, int(config.get("timeout", 30)))
     retries = max(0, min(100, int(config.get("retry_count", 3))))
+    reconnect_delay = max(1, min(60, int(config.get("reconnect_delay", 10))))
     first_media_deadline = started + min(90, max(65, timeout * 2 + 15))
     stage = "open output file"
+    failure_stage, failure_reason, failure_status = "record", "unknown", None
+    attempt = 0
+    reconnect_failures = 0
 
     def progress(state):
         nonlocal last_size, last_report
@@ -907,7 +975,11 @@ def record_direct_ts(request):
             f"target exists={output.exists()})"
         )
         with output.open("ab") as target:
-            for attempt in range(retries + 1):
+            # Retry count limits consecutive failures, not the lifetime of a
+            # live recording. A healthy connection can run for hours before a
+            # transient CDN/HLS failure requires another reconnect.
+            while True:
+                failure_stage, failure_reason, failure_status = "record", "unknown", None
                 if stop.is_set():
                     terminal = "stopped"
                     break
@@ -938,6 +1010,7 @@ def record_direct_ts(request):
                 source_started = time.monotonic()
                 source_stage = ["resolving", source_started]
                 source_messages = []
+                source_error = [None]
 
                 def drain_source_errors():
                     try:
@@ -971,6 +1044,7 @@ def record_direct_ts(request):
                                     detail = event.get("message")
                                     if isinstance(detail, str):
                                         source_messages.append(detail[:512])
+                                    source_error[0] = event
                     except (OSError, ValueError):
                         pass
 
@@ -982,6 +1056,7 @@ def record_direct_ts(request):
                 done = threading.Event()
                 pump_errors = []
                 last_data = [time.monotonic()]
+                first_data = [None]
 
                 def pump():
                     try:
@@ -991,6 +1066,8 @@ def record_direct_ts(request):
                             target.flush()
                             total_input[0] += len(chunk)
                             last_data[0] = time.monotonic()
+                            if first_data[0] is None:
+                                first_data[0] = last_data[0]
                     except (OSError, ValueError) as error:
                         pump_errors.append(type(error).__name__)
                     finally:
@@ -999,6 +1076,7 @@ def record_direct_ts(request):
                 pump_thread = threading.Thread(target=pump, daemon=True)
                 pump_thread.start()
                 interrupted = False
+                timed_out = False
                 stage = "read media stream"
                 while not done.wait(0.25):
                     now = time.monotonic()
@@ -1031,10 +1109,10 @@ def record_direct_ts(request):
                     except subprocess.TimeoutExpired:
                         pass
                 terminate(source)
-                stderr_thread.join(timeout=3)
-                if stderr_thread.is_alive():
-                    source.stderr.close()
-                    stderr_thread.join(timeout=1)
+                # Do not close a buffered pipe while another thread is blocked
+                # reading it. On Windows that close can block indefinitely if
+                # an orphaned FFmpeg child still holds the stderr write handle.
+                stderr_thread.join(timeout=1)
                 source_message = " ".join(source_messages)
                 if not done.wait(5):
                     raise RuntimeError("Media stream pump failed to stop")
@@ -1043,38 +1121,93 @@ def record_direct_ts(request):
 
                 if interrupted:
                     break
+                received = total_input[0] - attempt_input
+                if (received >= 512 * 1024 or
+                        (first_data[0] is not None
+                         and last_data[0] - first_data[0] >= 10)):
+                    reconnect_failures = 0
+                detail = source_error[0] if isinstance(source_error[0], dict) else {}
+                failure_stage = detail.get("stage", "read")
+                failure_reason = detail.get("reason", "timeout" if timed_out else "source_failed")
+                failure_status = detail.get("http_status")
                 if pump_errors:
+                    failure_stage, failure_reason = "write", "io"
                     raise RuntimeError("Media stream pump failed; existing output is preserved")
-                if code in (AUTH, UNSUPPORTED, TIMEOUT):
+                if code == UNSUPPORTED:
+                    failure_stage, failure_reason = "resolve", "plugin"
+                    raise RuntimeError(source_message or "Streamlink plugin does not support this room")
+                if code == OFFLINE:
+                    if total_input[0] > 0:
+                        # The room went offline after a valid recording.
+                        completion_reason = "offline"
+                        break
+                    failure_stage, failure_reason = "resolve", "offline"
+                    raise RuntimeError("SOOP 当前没有可用直播流，房间可能已下播")
+                if code == 0 and received > 0:
+                    # A clean EOF from Streamlink is terminal. Re-resolving the
+                    # same HLS playlist may replay its final segments.
+                    break
+                if code in (AUTH, TIMEOUT) and total_input[0] == 0:
                     stale_prepared = (used_prepared and total_input[0] == 0
-                                      and code in (AUTH, TIMEOUT) and attempt < retries)
+                                      and retries > 0)
                     if not stale_prepared:
                         raise RuntimeError(source_message or "Stream access/plugin error; check login permissions and plugin version")
-                if code == OFFLINE and total_input[0] == attempt_input and attempt > 0:
-                    raise RuntimeError("SOOP 当前没有可用直播流，房间可能已下播或所选清晰度授权失败")
-                if total_input[0] > 0 and code in (0, OFFLINE):
-                    break
                 if total_input[0] == 0 and time.monotonic() + 20 >= first_media_deadline:
+                    failure_stage, failure_reason = "read", "no_media"
                     raise RuntimeError("SOOP 连接超时：所选清晰度未收到媒体片段")
                 if total_input[0] == 0 and attempt >= min(retries, 1):
+                    failure_stage, failure_reason = "read", "no_media"
                     raise RuntimeError(source_message or "SOOP 已重试所选清晰度，仍未收到媒体片段；请检查直播播放权限或网络")
-                if attempt == retries:
+                reconnect_failures += 1
+                if reconnect_failures > retries:
+                    if code == 0 and total_input[0] > 0 and received == 0:
+                        failure_stage, failure_reason = "read", "no_media"
+                        raise RuntimeError("Streamlink 重连后没有新片段；已保留录制内容，直播可能已结束")
                     raise RuntimeError(source_message or "Stream ended/stalled and the reconnect budget was exhausted")
 
                 stage = "wait before reconnect"
+                emit(kind="diagnostic", event="retry", stage=failure_stage,
+                     reason=failure_reason, attempt=attempt + 1,
+                     duration_secs=int(time.monotonic() - started),
+                     bytes=total_input[0], exit_code=code, http_status=failure_status)
                 progress("connecting")
-                until = time.monotonic() + min(30, 2 ** attempt)
+                # The configured delay applies to a stream that was already
+                # recording. Keep the first startup retry short.
+                delay = reconnect_delay if total_input[0] > 0 else min(2, reconnect_delay)
+                until = time.monotonic() + delay
                 while time.monotonic() < until and not stop.wait(0.25):
                     if maximum is not None and time.monotonic() - started >= maximum:
                         break
+                attempt += 1
 
         if total_input[0] == 0 and terminal != "stopped":
             raise RuntimeError("No media was recorded")
     except Exception as error:
         terminal = "error"
         message = safe_recording_error(error, stage)
+        if failure_reason == "unknown":
+            if stage.startswith(("create output directory", "open output file")):
+                failure_stage, failure_reason = "write", "io"
+            elif stage in ("start Streamlink source process",
+                           "send request to Streamlink source process",
+                           "collect Streamlink source result"):
+                failure_stage, failure_reason = "record", "process"
+            elif stage == "read media stream":
+                failure_stage = "read"
+                failure_reason = "io" if isinstance(error, OSError) else "unknown"
+            elif stage == "report connection progress":
+                failure_stage = "monitor"
+        emit(kind="diagnostic", event="error", stage=failure_stage,
+             reason=failure_reason, attempt=attempt + 1,
+             duration_secs=int(time.monotonic() - started), bytes=total_input[0],
+             http_status=failure_status)
     finally:
         terminate(source)
+    if terminal != "error":
+        emit(kind="diagnostic", event="stopped" if terminal == "stopped" else "finished",
+             stage="finish", reason=completion_reason,
+             attempt=attempt + 1, duration_secs=int(time.monotonic() - started),
+             bytes=total_input[0])
     progress(terminal)
     emit(kind="finished", status=terminal, message=message,
          duration=int(time.monotonic() - started), size=last_size, speed=0)
@@ -1107,6 +1240,7 @@ def record(request):
     maximum = config.get("max_duration")
     timeout = max(20, int(config.get("timeout", 30)))
     retries = max(0, min(100, int(config.get("retry_count", 3))))
+    reconnect_delay = max(1, min(60, int(config.get("reconnect_delay", 10))))
     done = threading.Event()
     pump_errors = []
     pump_thread = None
@@ -1206,7 +1340,8 @@ def record(request):
                 raise RuntimeError(source_message or "Stream ended/stalled and the reconnect budget was exhausted")
             # An EOF is not a byte-range resume. Resolve a fresh plugin/session on the next attempt.
             progress("connecting")
-            until = time.monotonic() + min(30, 2 ** attempt)
+            until = time.monotonic() + (reconnect_delay if total_input[0] > 0
+                                        else min(2, reconnect_delay))
             while time.monotonic() < until and not stop.wait(0.25):
                 if maximum is not None and time.monotonic() - started >= maximum:
                     break

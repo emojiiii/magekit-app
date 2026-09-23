@@ -137,8 +137,15 @@ pub struct RecordConfig {
     pub headers: HashMap<String, String>,
     /// 重试次数
     pub retry_count: u32,
+    /// 断流后重连延迟（秒）
+    #[serde(default = "default_reconnect_delay")]
+    pub reconnect_delay: u64,
     /// 连接超时时间（秒）
     pub timeout: u64,
+}
+
+fn default_reconnect_delay() -> u64 {
+    10
 }
 
 impl Default for RecordConfig {
@@ -160,6 +167,7 @@ impl Default for RecordConfig {
             proxy: None,
             headers,
             retry_count: 3,
+            reconnect_delay: default_reconnect_delay(),
             timeout: 30,
         }
     }

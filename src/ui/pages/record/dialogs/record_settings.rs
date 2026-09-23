@@ -181,7 +181,7 @@ impl RecordSettingsDialog {
             .trim()
             .parse::<u64>()
             .unwrap_or(10)
-            .max(5);
+            .clamp(1, 60);
 
         let output_base_path = self
             .output_path_input

@@ -1254,8 +1254,8 @@ impl RecordingPage {
             },
             segment_duration: self.record_config.segment_duration,
             retry_count: self.record_config.retry_count,
-            // 录制的网络 IO 超时（秒）：避免短暂抖动导致误判断流
-            timeout: self.record_config.reconnect_delay.max(30),
+            reconnect_delay: self.record_config.reconnect_delay,
+            timeout: 30,
             max_duration: None,
             include_danmaku: false,
             proxy: None,
@@ -1826,8 +1826,8 @@ impl RecordingPage {
             },
             segment_duration: self.record_config.segment_duration,
             retry_count: self.record_config.retry_count,
-            // 录制的网络 IO 超时（秒）：避免短暂抖动导致误判断流
-            timeout: self.record_config.reconnect_delay.max(30),
+            reconnect_delay: self.record_config.reconnect_delay,
+            timeout: 30,
             max_duration: None,
             include_danmaku: false,
             proxy: None,
@@ -2172,7 +2172,7 @@ impl RecordingPage {
         });
         let reconnect_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("30")
+                .placeholder("10")
                 .default_value(config.reconnect_delay.to_string())
         });
         let path_input = cx.new(|cx| {
@@ -2690,7 +2690,7 @@ impl RecordingPage {
                                     let retry = retry_input.read(cx).text().to_string()
                                         .trim().parse::<u32>().unwrap_or(3).max(1);
                                     let reconnect = reconnect_input.read(cx).text().to_string()
-                                        .trim().parse::<u64>().unwrap_or(30).max(5);
+                                        .trim().parse::<u64>().unwrap_or(10).clamp(1, 60);
                                     let path = path_input.read(cx).text().to_string().trim().to_string();
                                     // 更新配置
                                     let _ = this.update(cx, |page, cx| {

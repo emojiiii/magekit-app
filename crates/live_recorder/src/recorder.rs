@@ -197,27 +197,56 @@ impl LiveRecorder {
         let (tx, rx) = watch::channel(initial.clone());
         let (stop, stop_rx) = oneshot::channel();
         let cleanup_path = path.clone();
+        let diagnostic_room_id = soop_broadcast_id(url);
+        if let Some(room_id) = diagnostic_room_id.as_deref() {
+            tracing::info!(target: "magekit_record_diagnostics", event = "start", stage = "record", room_id);
+        } else {
+            tracing::info!(target: "magekit_record_diagnostics", event = "start", stage = "record");
+        }
         let task = tokio::spawn(async move {
             let mut latest = initial;
             let result = supervise(runtime, request, stop_rx, &tx, &mut latest).await;
+            // 只清理没有媒体数据的常规文件；有数据的部分录制始终保留。
+            let output_metadata = tokio::fs::symlink_metadata(&cleanup_path).await.ok();
+            let is_reserved_file = output_metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.is_file());
+            let recorded_bytes = if is_reserved_file {
+                output_metadata
+                    .as_ref()
+                    .map_or(latest.size, |metadata| metadata.len())
+            } else {
+                latest.size
+            };
+            if is_reserved_file && recorded_bytes == 0 {
+                if let Err(cleanup_error) = tokio::fs::remove_file(&cleanup_path).await {
+                    tracing::warn!("⚠️ 无法清理空录制占位文件: {cleanup_error}");
+                }
+            }
             if let Err(ref error) = result {
                 let mut error_message = match error {
                     RecorderError::RecordingError(message) => message.clone(),
                     other => other.to_string(),
                 };
-                // 启动时先独占创建目标文件，避免路径冲突；如果 worker 在写入媒体前失败，
-                // 删除这个空占位文件。已有数据的部分录制保留下来供用户恢复/检查。
-                if let Ok(metadata) = tokio::fs::metadata(&cleanup_path).await {
-                    if metadata.is_file() && metadata.len() == 0 {
-                        if let Err(cleanup_error) = tokio::fs::remove_file(&cleanup_path).await {
-                            tracing::warn!("⚠️ 无法清理空录制占位文件: {cleanup_error}");
-                        }
-                    } else if metadata.is_file() {
-                        error_message.push_str(&format!(
-                            "；已保留部分录制文件（{:.1} MiB）",
-                            metadata.len() as f64 / (1024.0 * 1024.0)
-                        ));
-                    }
+                if is_reserved_file && recorded_bytes > 0 {
+                    error_message.push_str(&format!(
+                        "；已保留部分录制文件（{:.1} MiB）",
+                        recorded_bytes as f64 / (1024.0 * 1024.0)
+                    ));
+                }
+                let reason = safe_recording_error_reason(error);
+                if let Some(room_id) = diagnostic_room_id.as_deref() {
+                    tracing::error!(
+                        target: "magekit_record_diagnostics",
+                        event = "error", stage = "record", reason, room_id,
+                        bytes = recorded_bytes, duration_secs = latest.duration,
+                    );
+                } else {
+                    tracing::error!(
+                        target: "magekit_record_diagnostics",
+                        event = "error", stage = "record", reason,
+                        bytes = recorded_bytes, duration_secs = latest.duration,
+                    );
                 }
                 tracing::error!("❌ Streamlink 录制后台失败: {error_message}");
                 latest.status = RecordStatus::Error(error_message.clone());
@@ -471,6 +500,23 @@ fn is_soop_url(value: &str) -> bool {
         .ok()
         .and_then(|parsed| parsed.host_str().map(str::to_owned))
         .is_some_and(|host| is_soop_host(&host))
+}
+
+/// 仅将 SOOP 地址末段的纯数字播号用于关联诊断事件，不持久化主播名或完整地址。
+fn soop_broadcast_id(value: &str) -> Option<String> {
+    let parsed = url::Url::parse(value).ok()?;
+    if !parsed.host_str().is_some_and(is_soop_host) {
+        return None;
+    }
+    let last = parsed
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .last()?;
+    if last.len() <= 18 && last.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(last.to_owned())
+    } else {
+        None
+    }
 }
 
 async fn probe(
@@ -773,6 +819,116 @@ async fn cleanup_group(pid: Option<u32>) {
     }
 }
 
+/// 诊断文件只接收有限枚举和数值，绝不把 worker 的任意文本写入磁盘。
+fn log_worker_diagnostic(value: &Value, room_id: Option<&str>) {
+    let event = match value["event"].as_str() {
+        Some("start") => "start",
+        Some("retry") => "retry",
+        Some("error") => "error",
+        Some("finished") => "finished",
+        Some("stopped") => "stopped",
+        Some("worker_error") => "worker_error",
+        _ => "worker_error",
+    };
+    let stage = match value["stage"].as_str() {
+        Some("probe") => "probe",
+        Some("resolve") => "resolve",
+        Some("select") => "select",
+        Some("open") => "open",
+        Some("read") => "read",
+        Some("write") => "write",
+        Some("record") => "record",
+        Some("monitor") => "monitor",
+        Some("finish") => "finish",
+        _ => "record",
+    };
+    let reason = match value["reason"].as_str() {
+        Some("auth") => "auth",
+        Some("timeout") => "timeout",
+        Some("offline") => "offline",
+        Some("network") => "network",
+        Some("plugin") => "plugin",
+        Some("io") => "io",
+        Some("process") => "process",
+        Some("stalled") => "stalled",
+        Some("no_media") => "no_media",
+        Some("source_failed") => "source_failed",
+        _ => "unknown",
+    };
+    let attempt = value["attempt"]
+        .as_u64()
+        .filter(|v| *v <= 1_000)
+        .unwrap_or(0);
+    let bytes = value["bytes"]
+        .as_u64()
+        .filter(|v| *v <= 1_000_000_000_000_000)
+        .unwrap_or(0);
+    let duration_secs = value["duration_secs"]
+        .as_u64()
+        .filter(|v| *v <= 366 * 24 * 60 * 60)
+        .unwrap_or(0);
+    let exit_code = value["exit_code"]
+        .as_i64()
+        .filter(|v| i32::try_from(*v).is_ok());
+    let http_status = value["http_status"]
+        .as_u64()
+        .filter(|v| (100..=599).contains(v));
+
+    if let Some(room_id) = room_id {
+        match (exit_code, http_status) {
+            (Some(exit_code), Some(http_status)) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, room_id, attempt, bytes, duration_secs, exit_code, http_status,
+            ),
+            (Some(exit_code), None) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, room_id, attempt, bytes, duration_secs, exit_code,
+            ),
+            (None, Some(http_status)) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, room_id, attempt, bytes, duration_secs, http_status,
+            ),
+            (None, None) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, room_id, attempt, bytes, duration_secs,
+            ),
+        }
+    } else {
+        match (exit_code, http_status) {
+            (Some(exit_code), Some(http_status)) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, attempt, bytes, duration_secs, exit_code, http_status,
+            ),
+            (Some(exit_code), None) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, attempt, bytes, duration_secs, exit_code,
+            ),
+            (None, Some(http_status)) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, attempt, bytes, duration_secs, http_status,
+            ),
+            (None, None) => tracing::info!(
+                target: "magekit_record_diagnostics",
+                event, stage, reason, attempt, bytes, duration_secs,
+            ),
+        }
+    }
+}
+
+fn safe_recording_error_reason(error: &RecorderError) -> &'static str {
+    match error {
+        RecorderError::AuthenticationFailed(_) | RecorderError::AuthenticationRequired(_) => "auth",
+        RecorderError::NetworkTimeout | RecorderError::RecordingStartupTimeout { .. } => "timeout",
+        RecorderError::StreamNotAvailable(_) => "offline",
+        RecorderError::HttpError(_) | RecorderError::ProxyError(_) => "network",
+        RecorderError::IoError(_) => "io",
+        RecorderError::RecordingStalled { .. } => "stalled",
+        RecorderError::FFmpegNotFound => "process",
+        RecorderError::RecordingError(_) => "source_failed",
+        _ => "unknown",
+    }
+}
+
 async fn supervise(
     runtime: RuntimeInfo,
     request: Value,
@@ -780,6 +936,7 @@ async fn supervise(
     progress: &watch::Sender<RecordProgress>,
     latest: &mut RecordProgress,
 ) -> RecorderResult<()> {
+    let diagnostic_room_id = request["url"].as_str().and_then(soop_broadcast_id);
     let mut child = streamlink_runtime::worker(&runtime)?.spawn()?;
     let pid = child.id();
     let mut guard = ProcessGuard(pid);
@@ -805,6 +962,10 @@ async fn supervise(
                     heartbeat = Instant::now();
                     let event: Value = serde_json::from_str(&line)
                         .map_err(|_| RecorderError::RecordingError("Invalid Streamlink progress response".into()))?;
+                    if event["kind"] == "diagnostic" {
+                        log_worker_diagnostic(&event, diagnostic_room_id.as_deref());
+                        continue;
+                    }
                     let message = event["message"].as_str().map(str::to_owned);
                     if let Some(quality) = event["quality"].as_str()
                         && quality.len() <= 160

@@ -9,8 +9,15 @@ use gpui::*;
 use gpui_component::{Root, TitleBar};
 use gpui_router::init as router_init;
 use std::{path::PathBuf, sync::Arc};
+use tracing_subscriber::{
+    Layer,
+    filter::{LevelFilter, filter_fn},
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 
 mod app;
+mod diagnostic_log;
 mod theme;
 mod ui;
 
@@ -18,13 +25,27 @@ use app::{AppState, GlobalAppState};
 use ui::MainWindow;
 
 fn main() -> Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+    // 终端保留开发日志，磁盘只接收白名单录制诊断事件。
+    let terminal_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_thread_ids(false)
         .with_thread_names(false)
+        .with_filter(LevelFilter::INFO);
+    let file_layer = match diagnostic_log::DiagnosticLogLayer::new() {
+        Ok(layer) => Some(layer.with_filter(filter_fn(|metadata| {
+            metadata.target() == diagnostic_log::TARGET && *metadata.level() <= tracing::Level::INFO
+        }))),
+        Err(error) => {
+            eprintln!("无法创建录制诊断日志: {error}");
+            None
+        }
+    };
+    tracing_subscriber::registry()
+        .with(terminal_layer)
+        .with(file_layer)
         .init();
+
+    tracing::info!(target: diagnostic_log::TARGET, event = "app_start");
 
     tracing::debug!("🚀 MageKit 视频下载器启动");
 
