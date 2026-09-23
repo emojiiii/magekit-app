@@ -40,7 +40,7 @@ impl RenderOnce for AboutSection {
                         .child(AboutItem::new_with_icon(
                             IconName::CircleCheck,
                             "版本",
-                            env!("CARGO_PKG_VERSION"),
+                            magekit_shared::constants::APP_VERSION,
                             muted_color,
                             title_color,
                         ))

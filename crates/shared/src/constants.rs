@@ -5,7 +5,10 @@ use std::time::Duration;
 /// 应用名称和版本
 pub const APP_NAME: &str = "MageKit";
 /// 应用版本
-pub const APP_VERSION: &str = "0.1.0";
+pub const APP_VERSION: &str = match option_env!("MAGEKIT_RELEASE_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 /// 默认配置文件名
 pub const CONFIG_FILE_NAME: &str = "config.toml";

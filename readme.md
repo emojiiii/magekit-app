@@ -209,29 +209,11 @@ cargo clippy
 
 ## 🚢 发版流程（维护者）
 
-本项目的发版由 GitHub Actions 工作流驱动：`.github/workflows/release.yml`。
+代码合并到 `main` 后，[Release workflow](.github/workflows/release.yml) 自动发版；无需手动创建 tag 或运行工作流。只有文档改动、或最后一次提交带有 `[skip release]` 时跳过。工作流串行计算版本，三平台构建和产物检查全部通过后才创建 tag 与 GitHub Release。
 
-### 方式 A：推送 Tag 自动发版
+版本以最近已发布的 `vX.Y.Z` 为起点：包含 `BREAKING CHANGE` 或 `feat!` 的提交升大版本，`feat` 升小版本，其余改动升补丁版本。未使用约定式前缀的中文提交仍会进入更新日志。每版更新日志按新功能、问题修复等分类，写入 GitHub Release 说明，并附上 `MageKit-vX.Y.Z-CHANGELOG.md` 文件。
 
-推送 `v*` tag 会触发 Release workflow，构建三端产物并创建 GitHub Release：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-### 方式 B：Actions 一键发版（自动 bump + 自动生成 release notes）
-
-GitHub → Actions → `Release` → `Run workflow`：
-
-- `version` 留空（会基于最新 `v*` tag 自动计算新版本）
-- `bump` 选择 `patch/minor/major`
-
-工作流会：计算新版本号 → 构建 macOS/Windows/Linux 产物 → 创建对应 tag → 创建 GitHub Release → 上传 assets，并基于提交信息生成本次 release notes。
-
-发布产物会作为 GitHub Release 的 Assets 长期保存；Actions Artifacts 仅用于流水线中转（可能会过期）。
-
-> 注意：若创建 Release/tag 失败，请在仓库 Settings → Actions → General 将 `Workflow permissions` 设为允许写入（Read and write permissions）。
+发布产物在 GitHub Release 中长期保存；Actions Artifacts 仅用于流水线中转。发布失败可在 Actions 中重新运行失败的任务。发布任务需要 `contents: write` 权限。
 
 ---
 
@@ -305,8 +287,8 @@ magekit-app/
 ├── docs/                  # 文档与说明
 ├── Cargo.toml             # Workspace 与根 crate 配置
 ├── Cargo.lock
-├── readme.md
-└── CHANGELOG.md
+├── scripts/release.py     # 自动版本与更新日志
+└── readme.md
 ```
 
 ### 模块说明
@@ -471,7 +453,7 @@ A: 可以在设置中配置代理服务器，或调整并发下载数量。
 
 - 项目主页: [GitHub](https://github.com/emojiiii/magekit-app)
 - 问题反馈: [Issues](https://github.com/emojiiii/magekit-app/issues)
-- 更新日志: [CHANGELOG.md](CHANGELOG.md)
+- 更新日志: [GitHub Releases](https://github.com/emojiiii/magekit-app/releases)
 
 ---
 
