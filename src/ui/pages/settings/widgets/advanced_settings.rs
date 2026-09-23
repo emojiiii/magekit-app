@@ -12,7 +12,6 @@ use gpui_component::{Icon, IconName};
 pub struct AdvancedSettingsData {
     pub auto_check_updates: bool,
     pub debug_mode: bool,
-    pub streamlink_only: bool,
 }
 
 impl Default for AdvancedSettingsData {
@@ -20,7 +19,6 @@ impl Default for AdvancedSettingsData {
         Self {
             auto_check_updates: true,
             debug_mode: false,
-            streamlink_only: true,
         }
     }
 }
@@ -31,20 +29,17 @@ pub struct AdvancedSettingsCard {
     settings: AdvancedSettingsData,
     on_toggle_updates: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     on_toggle_debug: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
-    on_toggle_streamlink_only: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
 }
 
 impl AdvancedSettingsCard {
-    pub fn new(auto_check_updates: bool, debug_mode: bool, streamlink_only: bool) -> Self {
+    pub fn new(auto_check_updates: bool, debug_mode: bool) -> Self {
         Self {
             settings: AdvancedSettingsData {
                 auto_check_updates,
                 debug_mode,
-                streamlink_only,
             },
             on_toggle_updates: None,
             on_toggle_debug: None,
-            on_toggle_streamlink_only: None,
         }
     }
 
@@ -63,21 +58,12 @@ impl AdvancedSettingsCard {
         self.on_toggle_debug = Some(Box::new(handler));
         self
     }
-
-    pub fn on_streamlink_only_change(
-        mut self,
-        handler: impl Fn(&bool, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_toggle_streamlink_only = Some(Box::new(handler));
-        self
-    }
 }
 
 impl RenderOnce for AdvancedSettingsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let auto_check = self.settings.auto_check_updates;
         let debug_mode = self.settings.debug_mode;
-        let streamlink_only = self.settings.streamlink_only;
 
         let theme = cx.theme();
         let card_bg = theme.secondary;
@@ -114,18 +100,6 @@ impl RenderOnce for AdvancedSettingsCard {
                                 .icon(IconName::Inspector)
                                 .checked(debug_mode)
                                 .when_some(self.on_toggle_debug, |el, handler| {
-                                    el.on_toggle(move |checked, window, cx| {
-                                        handler(&checked, window, cx)
-                                    })
-                                }),
-                        )
-                        // Streamlink-only 录制
-                        .child(
-                            SettingsToggleItem::new("streamlink-only", "仅使用 Streamlink 录制")
-                                .description("关闭旧的原生录制回退，录制页始终使用 Streamlink")
-                                .icon(IconName::Globe)
-                                .checked(streamlink_only)
-                                .when_some(self.on_toggle_streamlink_only, |el, handler| {
                                     el.on_toggle(move |checked, window, cx| {
                                         handler(&checked, window, cx)
                                     })

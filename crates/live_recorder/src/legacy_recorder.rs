@@ -145,11 +145,6 @@ impl LiveRecorder {
         }
     }
 
-    /// 使用自定义平台工厂创建录制器
-    pub fn with_factory(platform_factory: PlatformFactory) -> Self {
-        Self { platform_factory }
-    }
-
     /// 开始录制直播（带 Cookie 支持）
     pub async fn start_recording_with_cookies(
         &self,

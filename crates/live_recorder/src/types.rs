@@ -84,7 +84,7 @@ pub struct LiveRoomInfo {
     pub start_time: Option<DateTime<Utc>>,
     /// 观看人数
     pub viewer_count: Option<u64>,
-    /// 直播封面图URL
+    /// 直播封面资源地址（HTTP(S) URL 或本地缓存路径）
     pub cover_url: Option<String>,
     /// 平台特定的额外信息
     pub extra: HashMap<String, serde_json::Value>,

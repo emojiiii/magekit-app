@@ -1,5 +1,6 @@
 //! An application-owned Python runtime. Published environments are never modified in place.
 use crate::error::{RecorderError, RecorderResult};
+use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -183,13 +184,62 @@ async fn checked(mut cmd: Command, label: &str) -> RecorderResult<Vec<u8>> {
 
 /// First installation pins Streamlink. No network requests after a usable install exists.
 pub async fn ensure() -> RecorderResult<RuntimeInfo> {
-    install(false).await
+    let info = install(false).await?;
+    ensure_worker_script(&info).await?;
+    Ok(info)
 }
 
 /// Resolve the newest compatible 8.x release in a NEW environment, then publish it.
 /// Existing recording/probe processes retain their previous Python path.
 pub async fn update() -> RecorderResult<RuntimeInfo> {
-    install(true).await
+    let info = install(true).await?;
+    ensure_worker_script(&info).await?;
+    Ok(info)
+}
+
+fn worker_script_path(info: &RuntimeInfo) -> RecorderResult<PathBuf> {
+    let environment = info
+        .python
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| RecorderError::ConfigError("Invalid managed Python path".into()))?;
+    let digest = hex::encode(Md5::digest(include_bytes!("streamlink_worker.py")));
+    Ok(environment.join(format!("magekit_worker_{digest}.py")))
+}
+
+async fn ensure_worker_script(info: &RuntimeInfo) -> RecorderResult<()> {
+    let path = worker_script_path(info)?;
+    let source = include_bytes!("streamlink_worker.py");
+    match tokio::fs::read(&path).await {
+        Ok(existing) if existing == source => return Ok(()),
+        Ok(_) => {
+            return Err(RecorderError::ConfigError(
+                "Managed Streamlink worker file does not match this application version".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    // Stage first so another process can never observe a partially written Python script.
+    let staged = path.with_file_name(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)
+        .await?;
+    file.write_all(source).await?;
+    file.sync_all().await?;
+    drop(file);
+    if let Err(error) = tokio::fs::rename(&staged, &path).await {
+        let _ = tokio::fs::remove_file(&staged).await;
+        // A second application process may have published the same immutable worker.
+        if tokio::fs::read(&path).await.ok().as_deref() == Some(source) {
+            return Ok(());
+        }
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 async fn install(upgrade: bool) -> RecorderResult<RuntimeInfo> {
@@ -245,9 +295,11 @@ async fn install(upgrade: bool) -> RecorderResult<RuntimeInfo> {
     result
 }
 
-pub(crate) fn worker(info: &RuntimeInfo) -> Command {
+pub(crate) fn worker(info: &RuntimeInfo) -> RecorderResult<Command> {
+    let script = worker_script_path(info)?;
     let mut cmd = magekit_shared::create_tokio_command(&info.python);
-    cmd.args(["-I", "-u", "-c", include_str!("streamlink_worker.py")])
+    cmd.args(["-I", "-u"])
+        .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -256,5 +308,5 @@ pub(crate) fn worker(info: &RuntimeInfo) -> Command {
     {
         cmd.process_group(0);
     }
-    cmd
+    Ok(cmd)
 }

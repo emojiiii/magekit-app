@@ -24,6 +24,8 @@ tracing = { workspace = true }
 toml = { workspace = true }
 tempfile = "3"
 urlencoding = "2.1"
+sha2 = "0.10"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 # 异步运行时和进程管理
 async-trait = "0.1"

@@ -1,8 +1,6 @@
 use clap::Parser;
 use live_recorder::recorder::LiveRecorder;
-use live_recorder::{
-    RecordConfig, RecordStatus, RecordingBackend, VideoQuality, streamlink_runtime,
-};
+use live_recorder::{RecordConfig, RecordStatus, VideoQuality, streamlink_runtime};
 use tracing::{info, level_filters::LevelFilter};
 
 #[derive(Parser)]
@@ -22,8 +20,6 @@ struct Arguments {
     proxy: Option<String>,
     #[arg(long)]
     check: bool,
-    #[arg(long, value_parser = ["auto", "streamlink", "native"])]
-    backend: Option<String>,
     #[arg(long)]
     duration: Option<u64>,
     #[arg(long, default_value_t = 3)]
@@ -46,12 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", serde_json::to_string_pretty(&result)?);
         return Ok(());
     }
-    let recorder = match arguments.backend.as_deref() {
-        Some("native") => LiveRecorder::with_backend(RecordingBackend::Native),
-        Some("streamlink") => LiveRecorder::with_backend(RecordingBackend::Streamlink),
-        Some("auto") => LiveRecorder::with_backend(RecordingBackend::Auto),
-        _ => LiveRecorder::new(),
-    };
+    let recorder = LiveRecorder::new();
     let url = arguments.url.ok_or("缺少直播间 URL")?;
     if arguments.check {
         println!(

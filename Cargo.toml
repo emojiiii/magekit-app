@@ -124,6 +124,9 @@ open = "5.3.3"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
+[build-dependencies]
+embed-resource = "=3.0.6"
+
 [profile.dev]
 codegen-units = 16
 debug = "limited"

@@ -48,6 +48,87 @@ pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::pro
     tokio::process::Command::new(program)
 }
 
+/// 解析 Deno 可执行文件：优先 MageKit 私有工具目录，其次系统 PATH。
+#[cfg(feature = "tools")]
+pub fn resolve_deno_path() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "deno.exe" } else { "deno" };
+    if let Ok(dir) = get_tools_dir() {
+        let candidate = dir.join("deno").join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    which::which("deno").ok()
+}
+
+/// 解析某个 yt-dlp 可执行文件可使用的 Deno runtime。
+///
+/// 优先使用 MageKit 管理的 Deno，其次查找同目录 runtime 和系统 PATH。
+#[cfg(feature = "tools")]
+pub fn resolve_deno_path_for_ytdlp(yt_dlp_path: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "deno.exe" } else { "deno" };
+    if let Ok(dir) = get_tools_dir() {
+        let candidate = dir.join("deno").join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    if let Some(candidate) = yt_dlp_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.join(name))
+        .filter(|candidate| candidate.is_file())
+    {
+        return Some(candidate);
+    }
+    which::which("deno").ok()
+}
+
+/// 创建带 Deno 搜索路径的 yt-dlp 子进程命令（同步 Command）。
+#[cfg(feature = "tools")]
+pub fn create_ytdlp_command<S: AsRef<std::ffi::OsStr>>(program: S, yt_dlp_path: &Path) -> Command {
+    let mut command = create_command(program);
+    add_deno_to_std_ytdlp_path(&mut command, yt_dlp_path);
+    command
+}
+
+/// 创建带 Deno 搜索路径的 yt-dlp 子进程命令（Tokio Command）。
+#[cfg(feature = "tools")]
+pub fn create_tokio_ytdlp_command<S: AsRef<std::ffi::OsStr>>(
+    program: S,
+    yt_dlp_path: &Path,
+) -> tokio::process::Command {
+    let mut command = create_tokio_command(program);
+    add_deno_to_tokio_ytdlp_path(&mut command, yt_dlp_path);
+    command
+}
+
+#[cfg(feature = "tools")]
+fn deno_augmented_path(yt_dlp_path: &Path) -> Option<std::ffi::OsString> {
+    let deno_dir = resolve_deno_path_for_ytdlp(yt_dlp_path)?
+        .parent()?
+        .to_path_buf();
+    let mut paths = vec![deno_dir.clone()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing).filter(|path| path != &deno_dir));
+    }
+    std::env::join_paths(paths).ok()
+}
+
+#[cfg(feature = "tools")]
+fn add_deno_to_std_ytdlp_path(command: &mut Command, yt_dlp_path: &Path) {
+    if let Some(path) = deno_augmented_path(yt_dlp_path) {
+        command.env("PATH", path);
+    }
+}
+
+#[cfg(feature = "tools")]
+fn add_deno_to_tokio_ytdlp_path(command: &mut tokio::process::Command, yt_dlp_path: &Path) {
+    if let Some(path) = deno_augmented_path(yt_dlp_path) {
+        command.env("PATH", path);
+    }
+}
+
 /// 格式化文件大小为人类可读的字符串
 pub fn format_file_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];

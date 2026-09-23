@@ -2,7 +2,7 @@ use crate::error::{DownloadError, DownloadResult};
 use magekit_extractor::MediaExtractor;
 use magekit_shared::{
     ChannelInfo, ChannelPageResult, DownloadOptions, PlatformCookie, TaskId, VideoInfo,
-    create_tokio_command, utils::generate_output_path,
+    create_tokio_command, create_tokio_ytdlp_command, utils::generate_output_path,
 };
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -74,6 +74,7 @@ impl VideoDownloader {
         url: &str,
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<VideoInfo> {
+        self.ensure_youtube_runtime(url).await?;
         tracing::info!("🔍 获取视频信息，URL: {}", url);
 
         let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
@@ -81,6 +82,15 @@ impl VideoDownloader {
             .get_video_info(url, cookies)
             .await
             .map_err(|e| DownloadError::extraction_failed(url, e.to_string()))
+    }
+
+    async fn ensure_youtube_runtime(&self, url: &str) -> DownloadResult<()> {
+        if extract_platform_from_url(url).as_deref() == Some("youtube") {
+            crate::deno_runtime::ensure_for_ytdlp(Some(&self.yt_dlp_path))
+                .await
+                .map_err(DownloadError::ToolManager)?;
+        }
+        Ok(())
     }
 
     /// 获取频道/播放列表的所有视频信息
@@ -101,6 +111,7 @@ impl VideoDownloader {
         url: &str,
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<ChannelInfo> {
+        self.ensure_youtube_runtime(url).await?;
         tracing::info!("📺 获取频道/播放列表信息，URL: {}", url);
 
         let extractor = MediaExtractor::new(self.yt_dlp_path.clone());
@@ -118,6 +129,7 @@ impl VideoDownloader {
         count: usize,
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<ChannelPageResult> {
+        self.ensure_youtube_runtime(url).await?;
         tracing::info!(
             "📄 分页获取频道/作者信息，URL: {} cursor={:?} count={}",
             url,
@@ -321,7 +333,8 @@ impl VideoDownloader {
         progress_tx: &mpsc::Sender<DownloadProgress>,
         cookies: Option<&[PlatformCookie]>,
     ) -> DownloadResult<PathBuf> {
-        let mut cmd = create_tokio_command(&self.yt_dlp_path);
+        self.ensure_youtube_runtime(url).await?;
+        let mut cmd = create_tokio_ytdlp_command(&self.yt_dlp_path, &self.yt_dlp_path);
 
         // 基本参数
         let output_template = options.output_path.join(

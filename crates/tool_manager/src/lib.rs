@@ -47,6 +47,8 @@
 
 /// 配置管理模块
 pub mod config;
+/// Deno JavaScript runtime 管理模块（用于 yt-dlp YouTube EJS）。
+pub mod deno_runtime;
 /// Download 库适配器
 mod download_adapter;
 /// 视频下载器模块

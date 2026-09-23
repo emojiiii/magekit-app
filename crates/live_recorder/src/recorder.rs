@@ -1,16 +1,16 @@
-//! Streamlink-first facade preserving the existing GUI/CLI recording API.
+//! 按平台分流的录制 facade：抖音走原生录制器，其余平台走 Streamlink。
 use crate::{
     error::{RecorderError, RecorderResult},
     legacy_recorder,
-    platforms::PlatformFactory,
     streamlink_runtime::{self, RuntimeInfo},
-    types::{LiveRoomInfo, RecordConfig, RecordProgress, RecordStatus, StreamInfo},
+    types::{LiveRoomInfo, RecordConfig, RecordProgress, RecordStatus, StreamInfo, VideoQuality},
 };
 use magekit_shared::types::PlatformCookie;
+use md5::{Digest, Md5};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Output, Stdio},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -18,17 +18,11 @@ use tokio::{
     sync::{oneshot, watch},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RecordingBackend {
-    #[default]
-    Auto,
-    Streamlink,
-    Native,
-}
-
 pub struct LiveRecorder {
-    native: legacy_recorder::LiveRecorder,
-    backend: RecordingBackend,
+    douyin_native: legacy_recorder::LiveRecorder,
+    soop_username: Option<String>,
+    soop_password: Option<String>,
+    proxy: Option<String>,
 }
 
 impl Default for LiveRecorder {
@@ -39,26 +33,57 @@ impl Default for LiveRecorder {
 
 impl LiveRecorder {
     pub fn new() -> Self {
-        let backend = match std::env::var("MAGEKIT_RECORDER_BACKEND").as_deref() {
-            Ok("native" | "legacy") => RecordingBackend::Native,
-            Ok("streamlink") => RecordingBackend::Streamlink,
-            _ => RecordingBackend::Auto,
-        };
-        Self::with_backend(backend)
-    }
-
-    pub fn with_backend(backend: RecordingBackend) -> Self {
         Self {
-            native: legacy_recorder::LiveRecorder::new(),
-            backend,
+            douyin_native: legacy_recorder::LiveRecorder::new(),
+            soop_username: None,
+            soop_password: None,
+            proxy: None,
         }
     }
 
-    /// Custom factories retain their original semantics (including test/mock handlers).
-    pub fn with_factory(factory: PlatformFactory) -> Self {
-        Self {
-            native: legacy_recorder::LiveRecorder::with_factory(factory),
-            backend: RecordingBackend::Native,
+    /// 配置 Streamlink SOOP 插件登录；留空时使用匿名访问或 Cookie。
+    pub fn with_soop_credentials(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        let username = username.into();
+        let password = password.into();
+        if !username.trim().is_empty() && !password.is_empty() {
+            self.soop_username = Some(username);
+            self.soop_password = Some(password);
+        }
+        self
+    }
+
+    /// 将应用代理设置传给 Streamlink worker。
+    pub fn with_proxy(mut self, proxy: Option<String>) -> Self {
+        self.proxy = proxy;
+        self
+    }
+
+    fn apply_proxy(&self, config: &mut RecordConfig) {
+        if self.proxy.is_some() {
+            config.proxy = self.proxy.clone();
+        }
+    }
+
+    async fn cache_douyin_room_cover(&self, url: &str, room: &mut LiveRoomInfo) {
+        let Some(image_url) = room.cover_url.as_deref() else {
+            return;
+        };
+        if Path::new(image_url).is_file() {
+            return;
+        }
+        if let Some(path) = cache_douyin_image(image_url, url, self.proxy.as_deref()).await {
+            room.cover_url = Some(path.to_string_lossy().into_owned());
+        }
+    }
+
+    fn soop_credentials(&self) -> Value {
+        match (&self.soop_username, &self.soop_password) {
+            (Some(username), Some(password)) => json!({"username": username, "password": password}),
+            _ => Value::Null,
         }
     }
 
@@ -76,36 +101,34 @@ impl LiveRecorder {
         config: RecordConfig,
         cookies: &[PlatformCookie],
     ) -> RecorderResult<RecordingHandle> {
-        if self.backend == RecordingBackend::Native {
-            return self
-                .native
-                .start_recording_with_cookies(url, config, cookies)
-                .await
-                .map(RecordingHandle::native);
-        }
+        self.start_recording_with_cookies_and_hint(url, config, cookies, None)
+            .await
+    }
+
+    /// 录制页可复用最近一次房态检查得到的 SOOP 频道元数据，跳过重复查询。
+    pub async fn start_recording_with_cookies_and_hint(
+        &self,
+        url: &str,
+        mut config: RecordConfig,
+        cookies: &[PlatformCookie],
+        soop_hint: Option<Value>,
+    ) -> RecorderResult<RecordingHandle> {
         let normalized = room_url(url)?;
         let url = normalized.as_str();
-        let runtime = streamlink_runtime::ensure().await?;
-        let info = match probe(&runtime, url, &config, cookies).await {
-            Ok(info) => info,
-            Err(RecorderError::UnsupportedPlatform(_))
-                if self.backend == RecordingBackend::Auto =>
-            {
-                return self
-                    .native
-                    .start_recording_with_cookies(url, config, cookies)
-                    .await
-                    .map(RecordingHandle::native);
-            }
-            Err(e) => return Err(e), // Authentication, offline and network errors are NOT fallback signals.
-        };
-        if info.room.status != crate::types::LiveStatus::Live {
-            return Err(RecorderError::StreamNotAvailable("直播间未开播".into()));
+        if is_douyin_url(url) {
+            let handle = self
+                .douyin_native
+                .start_recording_with_cookies(url, config, cookies)
+                .await?;
+            return Ok(RecordingHandle::native(handle));
         }
+
+        let runtime = streamlink_runtime::ensure().await?;
+        let credentials = self.soop_credentials();
+        self.apply_proxy(&mut config);
         if config.segment_duration.is_some() || config.include_danmaku {
             return Err(RecorderError::ConfigError(
-                "Streamlink 暂不支持定时分文件或弹幕；请关闭这些选项，或显式使用 native 后端"
-                    .into(),
+                "当前录制后端暂未实现定时分文件或弹幕录制，请关闭相关选项".into(),
             ));
         }
         if !["ts", "mp4", "mkv", "flv"].contains(&config.format.as_str()) {
@@ -113,8 +136,33 @@ impl LiveRecorder {
                 "Streamlink 支持 ts/mp4/mkv/flv 输出".into(),
             ));
         }
+        validate_output_extension(Path::new(&config.output_path_template), &config.format)?;
         let ffmpeg = magekit_shared::resolve_ffmpeg_path().ok_or(RecorderError::FFmpegNotFound)?;
-        let path = output_path(&info.room, &config)?;
+        // 录制页已经生成了唯一的绝对文件路径。SOOP 全量 probe 会逐个请求
+        // 所有清晰度的授权信息，而且 worker 开始拉流时还要再解析一次；GUI
+        // 录制直接交给 worker 按所选清晰度解析，避免启动前等待数十秒。
+        // 使用模板路径的库调用仍保留原 probe，以便拿到主播名等替换字段。
+        let fast_soop_path = if is_soop_url(url) {
+            concrete_output_path(&config)
+        } else {
+            None
+        };
+        let info = if fast_soop_path.is_some() {
+            None
+        } else {
+            let info = probe(&runtime, url, &config, cookies, &credentials, false, false).await?;
+            if info.room.status != crate::types::LiveStatus::Live {
+                return Err(RecorderError::StreamNotAvailable("直播间未开播".into()));
+            }
+            Some(info)
+        };
+        let path = match (fast_soop_path, info.as_ref()) {
+            (Some(path), _) => path,
+            (None, Some(info)) => output_path(&info.room, &config)?,
+            (None, None) => {
+                unreachable!("probe result is present when no concrete SOOP path exists")
+            }
+        };
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -125,24 +173,18 @@ impl LiveRecorder {
             .open(&path)
             .await?;
         drop(reserved);
-        // SOOP 的插件解析接口偶尔会在第二次调用时卡住。探测阶段已经拿到了
-        // 可用的 HLS 地址，直接复用它可以避免“探测成功、录制阶段却一直连接中”。
-        let stream_url = if info
-            .room
-            .extra
-            .get("streamlink_plugin")
-            .and_then(Value::as_str)
-            == Some("soop")
-        {
-            streamlink_hls_url(&info, &config.quality)
-        } else {
-            None
-        };
-        if stream_url.is_some() {
-            tracing::info!("🎥 Streamlink 复用探测到的 SOOP HLS 地址开始录制");
+        // SOOP 的 HLS 流还携带插件生成的 aid 请求参数；不能只复用裸 HLS URL，
+        // 否则重建流时会丢掉认证参数，导致预检成功但录制拉片段失败。
+        let direct_ts = is_soop_url(url) && config.format == "ts";
+        if direct_ts {
+            tracing::info!("🎥 SOOP 使用 Streamlink 插件流对象直写 TS，保留播放授权参数");
         }
+        // 将 PathBuf 显式转换成 Unicode 字符串传给 Python，避免跨语言路径编码差异。
+        let output_path = path.to_string_lossy().into_owned();
         let request = json!({"mode":"record", "url":url, "config":config, "cookies":scoped_cookies(url, cookies),
-                             "output":path, "ffmpeg":ffmpeg, "stream_url":stream_url});
+                             "soop_credentials":credentials,
+                             "output":output_path, "ffmpeg":ffmpeg, "direct_ts":direct_ts,
+                             "soop_hint":soop_hint});
         let start = chrono::Utc::now();
         let initial = RecordProgress {
             status: RecordStatus::Connecting,
@@ -154,12 +196,32 @@ impl LiveRecorder {
         };
         let (tx, rx) = watch::channel(initial.clone());
         let (stop, stop_rx) = oneshot::channel();
+        let cleanup_path = path.clone();
         let task = tokio::spawn(async move {
             let mut latest = initial;
             let result = supervise(runtime, request, stop_rx, &tx, &mut latest).await;
             if let Err(ref error) = result {
-                latest.status = RecordStatus::Error(error.to_string());
-                latest.error = Some(error.to_string());
+                let mut error_message = match error {
+                    RecorderError::RecordingError(message) => message.clone(),
+                    other => other.to_string(),
+                };
+                // 启动时先独占创建目标文件，避免路径冲突；如果 worker 在写入媒体前失败，
+                // 删除这个空占位文件。已有数据的部分录制保留下来供用户恢复/检查。
+                if let Ok(metadata) = tokio::fs::metadata(&cleanup_path).await {
+                    if metadata.is_file() && metadata.len() == 0 {
+                        if let Err(cleanup_error) = tokio::fs::remove_file(&cleanup_path).await {
+                            tracing::warn!("⚠️ 无法清理空录制占位文件: {cleanup_error}");
+                        }
+                    } else if metadata.is_file() {
+                        error_message.push_str(&format!(
+                            "；已保留部分录制文件（{:.1} MiB）",
+                            metadata.len() as f64 / (1024.0 * 1024.0)
+                        ));
+                    }
+                }
+                tracing::error!("❌ Streamlink 录制后台失败: {error_message}");
+                latest.status = RecordStatus::Error(error_message.clone());
+                latest.error = Some(error_message);
                 latest.speed = 0;
                 let _ = tx.send(latest);
             }
@@ -177,6 +239,62 @@ impl LiveRecorder {
         })
     }
 
+    /// 在后台为手动录制预取 SOOP 所选清晰度的播放授权；仅返回到本次运行内存。
+    pub async fn prepare_soop_stream_with_cookies(
+        &self,
+        url: &str,
+        quality: VideoQuality,
+        cookies: &[PlatformCookie],
+        mut soop_hint: Value,
+    ) -> RecorderResult<Value> {
+        let normalized = room_url(url)?;
+        let url = normalized.as_str();
+        if !is_soop_url(url) || !soop_hint.is_object() {
+            return Err(RecorderError::ConfigError("SOOP 预热参数无效".into()));
+        }
+        let runtime = streamlink_runtime::ensure().await?;
+        let mut config = RecordConfig {
+            quality,
+            timeout: 20,
+            ..RecordConfig::default()
+        };
+        self.apply_proxy(&mut config);
+        let request = json!({"mode":"prepare", "url":url, "config":config,
+                             "cookies":scoped_cookies(url, cookies),
+                             "soop_credentials":self.soop_credentials(), "soop_hint":soop_hint});
+        let mut command = streamlink_runtime::worker(&runtime)?;
+        let mut child = command.spawn()?;
+        let pid = child.id();
+        let mut guard = ProcessGuard(pid);
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| RecorderError::RecordingError("SOOP 预热 worker 缺少输入管道".into()))?;
+        input.write_all(format!("{}\n", request).as_bytes()).await?;
+        drop(input);
+        let output = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output()).await;
+        cleanup_group(pid).await;
+        guard.0 = None;
+        let output = output.map_err(|_| RecorderError::NetworkTimeout)??;
+        if !output.status.success() {
+            return Err(RecorderError::RecordingError(
+                "SOOP 播放流预热未完成".into(),
+            ));
+        }
+        let event = output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+            .find(|value| value["kind"] == "prepared")
+            .ok_or_else(|| RecorderError::RecordingError("SOOP 预热响应无效".into()))?;
+        let prepared = event["prepared"].clone();
+        if !prepared.is_object() {
+            return Err(RecorderError::RecordingError("SOOP 预热响应无效".into()));
+        }
+        soop_hint["prepared"] = prepared;
+        Ok(soop_hint)
+    }
+
     pub async fn check_room_status(&self, url: &str) -> RecorderResult<LiveRoomInfo> {
         self.check_room_status_with_cookies(url, &[]).await
     }
@@ -185,26 +303,57 @@ impl LiveRecorder {
         url: &str,
         cookies: &[PlatformCookie],
     ) -> RecorderResult<LiveRoomInfo> {
-        if self.backend == RecordingBackend::Native {
-            return self
-                .native
-                .check_room_status_with_cookies(url, cookies)
-                .await;
-        }
+        self.check_room_status_with_cookies_and_cover(url, cookies, true)
+            .await
+    }
+
+    /// 检查直播间状态；`fetch_cover` 为 false 时跳过额外的直播页封面请求。
+    pub async fn check_room_status_with_cookies_and_cover(
+        &self,
+        url: &str,
+        cookies: &[PlatformCookie],
+        fetch_cover: bool,
+    ) -> RecorderResult<LiveRoomInfo> {
         let normalized = room_url(url)?;
         let url = normalized.as_str();
-        let runtime = streamlink_runtime::ensure().await?;
-        match probe(&runtime, url, &RecordConfig::default(), cookies).await {
-            Ok(info) => Ok(info.room),
-            Err(RecorderError::UnsupportedPlatform(_))
-                if self.backend == RecordingBackend::Auto =>
-            {
-                self.native
-                    .check_room_status_with_cookies(url, cookies)
-                    .await
+        if is_douyin_url(url) {
+            let mut room = self
+                .douyin_native
+                .check_room_status_with_cookies(url, cookies)
+                .await?;
+            if fetch_cover {
+                self.cache_douyin_room_cover(url, &mut room).await;
+            } else {
+                // 首次获取后沿用状态缓存中的本地封面，避免每轮轮询都请求图片 CDN。
+                room.cover_url = None;
             }
-            Err(error) => Err(error),
+            return Ok(room);
         }
+
+        let runtime = streamlink_runtime::ensure().await?;
+        let credentials = self.soop_credentials();
+        let mut config = RecordConfig::default();
+        // SOOP 房态查询只需频道元数据，不需要逐个解析清晰度；给状态探测更短的网络超时。
+        if url
+            .parse::<url::Url>()
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::to_owned))
+            .is_some_and(|host| is_soop_host(&host))
+        {
+            config.timeout = 10;
+        }
+        self.apply_proxy(&mut config);
+        probe(
+            &runtime,
+            url,
+            &config,
+            cookies,
+            &credentials,
+            fetch_cover,
+            true,
+        )
+        .await
+        .map(|info| info.room)
     }
     pub async fn get_stream_info(&self, url: &str) -> RecorderResult<StreamInfo> {
         self.get_stream_info_with_cookies(url, &[]).await
@@ -214,21 +363,36 @@ impl LiveRecorder {
         url: &str,
         cookies: &[PlatformCookie],
     ) -> RecorderResult<StreamInfo> {
-        if self.backend == RecordingBackend::Native {
-            return self.native.get_stream_info_with_cookies(url, cookies).await;
-        }
         let normalized = room_url(url)?;
         let url = normalized.as_str();
-        let runtime = streamlink_runtime::ensure().await?;
-        match probe(&runtime, url, &RecordConfig::default(), cookies).await {
-            Err(RecorderError::UnsupportedPlatform(_))
-                if self.backend == RecordingBackend::Auto =>
-            {
-                self.native.get_stream_info_with_cookies(url, cookies).await
-            }
-            result => result,
+        if is_douyin_url(url) {
+            let mut info = self
+                .douyin_native
+                .get_stream_info_with_cookies(url, cookies)
+                .await?;
+            self.cache_douyin_room_cover(url, &mut info.room).await;
+            return Ok(info);
         }
+
+        let runtime = streamlink_runtime::ensure().await?;
+        let credentials = self.soop_credentials();
+        let mut config = RecordConfig::default();
+        self.apply_proxy(&mut config);
+        probe(&runtime, url, &config, cookies, &credentials, true, false).await
     }
+}
+
+fn is_douyin_url(value: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    host == "douyin.com"
+        || host.ends_with(".douyin.com")
+        || host == "iesdouyin.com"
+        || host.ends_with(".iesdouyin.com")
 }
 
 fn room_url(value: &str) -> RecorderResult<String> {
@@ -258,6 +422,8 @@ fn scoped_cookies<'a>(url: &str, cookies: &'a [PlatformCookie]) -> Vec<&'a Platf
                 return false;
             }
             let key = cookie.platform.trim().to_ascii_lowercase();
+            let soop_global_cookie = key == "soop_global";
+            let soop_korean_cookie = matches!(key.as_str(), "soop" | "sooplive");
             let domain = match key.as_str() {
                 "douyin" => "douyin.com".to_owned(),
                 "bilibili" => "bilibili.com".to_owned(),
@@ -283,9 +449,28 @@ fn scoped_cookies<'a>(url: &str, cookies: &'a [PlatformCookie]) -> Vec<&'a Platf
                     parsed.host_str().unwrap_or("").to_owned()
                 }
             };
-            domain.contains('.') && (host == domain || host.ends_with(&format!(".{domain}")))
+            let matches_domain = host == domain || host.ends_with(&format!(".{domain}"));
+            // Streamlink 的 SOOP 插件即使处理韩国房间，也会把认证和直播 API
+            // 请求发往 sooplive.com。允许用户明确选择的 SOOP Cookie 进入该插件，
+            // worker 会将 Cookie 限定在 SOOP 自有域名，不会发往其它平台。
+            let soop_plugin_auth =
+                (soop_global_cookie || soop_korean_cookie) && is_soop_host(&host);
+            domain.contains('.') && (matches_domain || soop_plugin_auth)
         })
         .collect()
+}
+
+fn is_soop_host(host: &str) -> bool {
+    ["sooplive.com", "sooplive.co.kr", "afreecatv.com"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+fn is_soop_url(value: &str) -> bool {
+    url::Url::parse(value)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .is_some_and(|host| is_soop_host(&host))
 }
 
 async fn probe(
@@ -293,10 +478,24 @@ async fn probe(
     url: &str,
     config: &RecordConfig,
     cookies: &[PlatformCookie],
+    soop_credentials: &Value,
+    fetch_cover: bool,
+    status_only: bool,
 ) -> RecorderResult<StreamInfo> {
-    let request = json!({"mode":"probe", "url":url, "config":config, "cookies":scoped_cookies(url, cookies),
+    let cover_cache = if fetch_cover {
+        Some(cover_cache_path(url)?)
+    } else {
+        None
+    };
+    let request = json!({"mode":"probe", "url":url, "config":config, "fetch_cover":fetch_cover,
+                         "status_only":status_only,
+                         "cover_cache_path":cover_cache,
+                         "cookies":scoped_cookies(url, cookies),
+                         "soop_credentials":soop_credentials,
                          "ffmpeg":magekit_shared::resolve_ffmpeg_path()});
-    let mut child = streamlink_runtime::worker(runtime).spawn()?;
+    let mut command = streamlink_runtime::worker(runtime)?;
+    command.stderr(Stdio::piped());
+    let mut child = command.spawn()?;
     let pid = child.id();
     let mut guard = ProcessGuard(pid);
     let mut input = child
@@ -309,8 +508,18 @@ async fn probe(
     cleanup_group(pid).await;
     guard.0 = None;
     let output = output.map_err(|_| RecorderError::NetworkTimeout)??;
-    let event: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|_| RecorderError::RecordingError("Invalid Streamlink probe response".into()))?;
+    let event = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+        .rev()
+        .find_map(|line| {
+            serde_json::from_slice::<Value>(line)
+                .ok()
+                .filter(|event| event["kind"].is_string())
+        })
+        .ok_or_else(|| RecorderError::RecordingError(invalid_probe_response(&output)))?;
     let message = event["message"]
         .as_str()
         .unwrap_or("Streamlink probe failed")
@@ -328,58 +537,117 @@ async fn probe(
     }
 }
 
-fn streamlink_hls_url(info: &StreamInfo, quality: &crate::types::VideoQuality) -> Option<String> {
-    use crate::types::VideoQuality;
+fn invalid_probe_response(output: &Output) -> String {
+    let exit_code = output.status.code();
+    let exception = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let prefix = line.trim().split_once(':')?.0;
+            let kind = prefix.rsplit('.').next()?.trim();
+            (!kind.is_empty()
+                && kind
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_'))
+            .then(|| kind.to_owned())
+        });
+    let exception = exception
+        .map(|kind| format!(", Python exception: {kind}"))
+        .unwrap_or_default();
+    format!(
+        "Invalid Streamlink probe response (exit code: {exit_code:?}, stdout: {} bytes{exception})",
+        output.stdout.len()
+    )
+}
 
-    let preferred = match quality {
-        VideoQuality::Original | VideoQuality::Blue => [
-            VideoQuality::Original,
-            VideoQuality::Blue,
-            VideoQuality::Ultra,
-            VideoQuality::High,
-            VideoQuality::Standard,
-            VideoQuality::Low,
-        ],
-        VideoQuality::Ultra => [
-            VideoQuality::Ultra,
-            VideoQuality::Original,
-            VideoQuality::Blue,
-            VideoQuality::High,
-            VideoQuality::Standard,
-            VideoQuality::Low,
-        ],
-        VideoQuality::High => [
-            VideoQuality::High,
-            VideoQuality::Ultra,
-            VideoQuality::Original,
-            VideoQuality::Blue,
-            VideoQuality::Standard,
-            VideoQuality::Low,
-        ],
-        VideoQuality::Standard => [
-            VideoQuality::Standard,
-            VideoQuality::High,
-            VideoQuality::Ultra,
-            VideoQuality::Original,
-            VideoQuality::Blue,
-            VideoQuality::Low,
-        ],
-        VideoQuality::Low => [
-            VideoQuality::Low,
-            VideoQuality::Standard,
-            VideoQuality::High,
-            VideoQuality::Ultra,
-            VideoQuality::Original,
-            VideoQuality::Blue,
-        ],
+fn cover_cache_path(url: &str) -> RecorderResult<PathBuf> {
+    let app_data = magekit_shared::utils::get_app_data_dir()
+        .map_err(|e| RecorderError::ConfigError(e.to_string()))?;
+    let directory = app_data.join("live_covers");
+    std::fs::create_dir_all(&directory)?;
+    let key = hex::encode(Md5::digest(url.as_bytes()));
+    Ok(directory.join(format!("{key}.img")))
+}
+
+fn is_douyin_image_url(value: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(value) else {
+        return false;
     };
-
-    preferred.iter().find_map(|target| {
-        info.streams
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && ["douyinpic.com", "byteimg.com"]
             .iter()
-            .find(|stream| &stream.quality == target)
-            .and_then(|stream| stream.url.hls_url.clone())
-    })
+            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+async fn cache_douyin_image(
+    image_url: &str,
+    room_url: &str,
+    proxy: Option<&str>,
+) -> Option<PathBuf> {
+    if !is_douyin_image_url(image_url) {
+        return None;
+    }
+    let path = cover_cache_path(image_url).ok()?;
+    if tokio::fs::metadata(&path)
+        .await
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+    {
+        return Some(path);
+    }
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36");
+    if let Some(proxy_url) = proxy.and_then(|value| crate::proxy::resolve_proxy_url(Some(value))) {
+        let proxy = reqwest::Proxy::all(proxy_url).ok()?;
+        builder = builder.no_proxy().proxy(proxy);
+    }
+    let client = builder.build().ok()?;
+    let response = client
+        .get(image_url)
+        .header(reqwest::header::REFERER, room_url)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > 8 * 1024 * 1024)
+    {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    let valid_image = bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(b"\xff\xd8\xff")
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || (bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"));
+    if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 || !valid_image {
+        return None;
+    }
+
+    let staged = path.with_file_name(format!(
+        "{}.{}.tmp",
+        path.file_name()?.to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+    tokio::fs::write(&staged, &bytes).await.ok()?;
+    if tokio::fs::rename(&staged, &path).await.is_err() {
+        let _ = tokio::fs::remove_file(&staged).await;
+        if tokio::fs::metadata(&path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+        {
+            return Some(path);
+        }
+        return None;
+    }
+    Some(path)
 }
 
 fn safe_component(value: &str) -> String {
@@ -427,16 +695,33 @@ fn output_path(room: &LiveRoomInfo, config: &RecordConfig) -> RecorderResult<Pat
             &chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f").to_string(),
         );
     let path = PathBuf::from(path);
-    if path.extension().and_then(|v| v.to_str()) != Some(config.format.as_str()) {
-        return Err(RecorderError::ConfigError(
-            "输出文件扩展名必须与录制格式一致".into(),
-        ));
-    }
+    validate_output_extension(&path, &config.format)?;
     Ok(if path.is_absolute() {
         path
     } else {
         std::env::current_dir()?.join(path)
     })
+}
+
+fn concrete_output_path(config: &RecordConfig) -> Option<PathBuf> {
+    let raw = &config.output_path_template;
+    if raw.contains('{') || raw.contains('}') {
+        return None;
+    }
+    let path = PathBuf::from(raw);
+    if !path.is_absolute() || validate_output_extension(&path, &config.format).is_err() {
+        return None;
+    }
+    Some(path)
+}
+
+fn validate_output_extension(path: &Path, format: &str) -> RecorderResult<()> {
+    if path.extension().and_then(|v| v.to_str()) != Some(format) {
+        return Err(RecorderError::ConfigError(
+            "输出文件扩展名必须与录制格式一致".into(),
+        ));
+    }
+    Ok(())
 }
 
 // Fallback for cancellation of the Rust future itself (runtime shutdown/task abort).
@@ -495,7 +780,7 @@ async fn supervise(
     progress: &watch::Sender<RecordProgress>,
     latest: &mut RecordProgress,
 ) -> RecorderResult<()> {
-    let mut child = streamlink_runtime::worker(&runtime).spawn()?;
+    let mut child = streamlink_runtime::worker(&runtime)?.spawn()?;
     let pid = child.id();
     let mut guard = ProcessGuard(pid);
     let result = async {
@@ -506,6 +791,8 @@ async fn supervise(
         let mut stopping: Option<Instant> = None;
         let mut heartbeat = Instant::now();
         let mut finished = false;
+        let mut output_verified = false;
+        let mut selected_quality: Option<String> = None;
         loop {
             tokio::select! {
                 _ = &mut stop, if stopping.is_none() => {
@@ -519,6 +806,13 @@ async fn supervise(
                     let event: Value = serde_json::from_str(&line)
                         .map_err(|_| RecorderError::RecordingError("Invalid Streamlink progress response".into()))?;
                     let message = event["message"].as_str().map(str::to_owned);
+                    if let Some(quality) = event["quality"].as_str()
+                        && quality.len() <= 160
+                        && selected_quality.as_deref() != Some(quality)
+                    {
+                        tracing::info!("🎞️ Streamlink 录制实际选档: {quality}");
+                        selected_quality = Some(quality.to_owned());
+                    }
                     latest.status = match event["status"].as_str() {
                         Some("recording") => RecordStatus::Recording,
                         Some("connecting") => RecordStatus::Connecting,
@@ -528,10 +822,31 @@ async fn supervise(
                         _ => return Err(RecorderError::RecordingError(message.unwrap_or_else(|| "Unexpected worker response".into()))),
                     };
                     latest.duration = event["duration"].as_u64().unwrap_or(latest.duration);
-                    latest.size = event["size"].as_u64().unwrap_or(latest.size);
+                    let reported_size = event["size"].as_u64().unwrap_or(latest.size);
+                    if !output_verified && reported_size > 0 {
+                        let expected_path = request["output"].as_str().ok_or_else(|| {
+                            RecorderError::RecordingError("录制输出路径无效".into())
+                        })?;
+                        let actual_size = tokio::fs::metadata(expected_path)
+                            .await
+                            .map(|metadata| metadata.len())
+                            .unwrap_or(0);
+                        if actual_size < reported_size {
+                            return Err(RecorderError::RecordingError(
+                                "worker 报告已收到媒体，但目标文件未写入相应数据；请检查输出路径编码或权限".into(),
+                            ));
+                        }
+                        output_verified = true;
+                    }
+                    latest.size = reported_size;
                     latest.speed = event["speed"].as_u64().unwrap_or(0);
                     latest.error = if matches!(latest.status, RecordStatus::Error(_)) { message } else { None };
-                    finished |= event["kind"] == "finished";
+                    if event["kind"] == "finished" {
+                        finished = true;
+                        // worker 的控制线程仍在读取 stdin。收到终态后主动发送 EOF，
+                        // 避免 Python 在退出时带着阻塞的 daemon 线程结束进程。
+                        let _ = input.shutdown().await;
+                    }
                     let _ = progress.send(latest.clone());
                 }
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {
@@ -588,6 +903,7 @@ impl RecordingHandle {
             completion_error: None,
         }
     }
+
     /// Returns ONLY after media subprocesses have stopped and the output has been finalized.
     pub async fn stop(&mut self) -> RecorderResult<()> {
         match self.running.as_mut() {
@@ -621,6 +937,7 @@ impl RecordingHandle {
         self.finish().await
     }
     async fn finish(&mut self) -> RecorderResult<()> {
+        let mut completion_result = None;
         if let Some(running) = self.running.take() {
             let result = match running {
                 Running::Native(handle) => handle.wait().await,
@@ -639,11 +956,19 @@ impl RecordingHandle {
                 }
             };
             if let Err(error) = result {
-                self.completion_error = Some(error.to_string());
-                self.status = RecordStatus::Error(error.to_string());
+                let message = match &error {
+                    RecorderError::RecordingError(message) => message.clone(),
+                    other => other.to_string(),
+                };
+                self.completion_error = Some(message.clone());
+                self.status = RecordStatus::Error(message);
+                completion_result = Some(error);
             } else if !matches!(self.status, RecordStatus::Stopped) {
                 self.status = RecordStatus::Completed;
             }
+        }
+        if let Some(error) = completion_result {
+            return Err(error);
         }
         match &self.completion_error {
             Some(message) => Err(RecorderError::RecordingError(message.clone())),
@@ -663,12 +988,17 @@ impl RecordingHandle {
 
 impl Drop for RecordingHandle {
     fn drop(&mut self) {
-        if let Some(Running::Streamlink { stop, .. }) = self.running.as_mut() {
-            if let Some(stop) = stop.take() {
-                let _ = stop.send(());
+        match self.running.as_mut() {
+            Some(Running::Native(_)) => {
+                // Dropping the native handle closes its stop sender, ending its receive loop.
             }
+            Some(Running::Streamlink { stop, .. }) => {
+                if let Some(stop) = stop.take() {
+                    let _ = stop.send(());
+                }
+            }
+            None => {}
         }
-        // Dropping a native handle closes its original stop sender as before.
     }
 }
 

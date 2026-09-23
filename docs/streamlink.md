@@ -2,8 +2,7 @@
 
 ## 本次改动
 
-默认使用 Streamlink 解析与读取它支持的直播插件；只有 **NoPlugin / 不支持该 URL** 才自动回退原生后端。
-认证失败、网络错误、未开播不会被悄悄吞掉并回退。旧实现原样保存在 `legacy_recorder.rs`，不再与新进程管理代码混在一起。
+直播录制按平台分流：抖音继续使用原来的 Rust 原生录制器，其他平台交给 Streamlink 插件。Streamlink 没有对应插件、账号没有观看权限或网络请求失败时会直接返回错误，不会回退到原生录制器。快手不在当前支持范围内。
 `LiveRecorder` 的原有启动、查询、进度、停止和等待接口保留，现有 GUI 监控/录制入口继续使用这些接口。
 
 ```text
@@ -11,14 +10,15 @@ Rust GPUI / CLI
   ├─ 工具页：安装、更新/修复、状态刷新
   ├─ uv 运行环境管理：私有 Python 3.12 + 独立 Streamlink 环境
   └─ LiveRecorder facade
-       ├─ Streamlink 支持：Python supervisor
-       │    ├─ 每次连接启动新的 Streamlink pull 子进程
-       │    ├─ FFmpeg copy → MPEG-TS 标准化
-       │    └─ 常驻 FFmpeg copy → TS / MP4 / MKV / FLV 文件
-       └─ 不支持：原生平台处理器 / 原有录制后端
+       ├─ 抖音域名：原有 Rust 原生录制流程
+       └─ 其他平台：Streamlink 支持时交给 Python supervisor
+            ├─ 每次连接启动新的 Streamlink pull 子进程
+            ├─ FFmpeg copy → MPEG-TS 标准化
+            ├─ 常驻 FFmpeg copy → TS / MP4 / MKV / FLV 文件
+            └─ 无对应插件：明确报不支持，不调用其他原生平台处理器
 ```
 
-这是 Rust 管理 Python 子进程，而不是把 Python 库编译成 Rust。正常录制增加了 Python 适配进程和 TS 标准化进程，换取跨容器重连、可取消任务和清晰的升级边界；两段 FFmpeg 都使用 `-c copy`，不主动重编码。部分 Streamlink 协议还可能启动自己的内部 muxer。
+Streamlink 分支由 Rust 管理 Python 子进程，而不是把 Python 库编译成 Rust。该分支增加了 Python 适配进程和 TS 标准化进程，换取跨容器重连、可取消任务和清晰的升级边界；两段 FFmpeg 都使用 `-c copy`，不主动重编码。抖音分支沿用原录制链路。部分 Streamlink 协议还可能启动自己的内部 muxer。
 
 ## 构建与内嵌 uv
 
@@ -95,7 +95,7 @@ cargo run -p live_recorder -- 'https://www.twitch.tv/example' -f ts --duration 6
 `max_duration` 是包含连接/重连时间的任务时长上限；结束时仍会等待管线排空和文件收尾。
 
 进度通过有界的 latest-value watch 通道传递，未消费的进度不会无限堆积。开始时间保持稳定，结束时保留实际文件大小。
-GUI 的 `stop().await` 和 CLI 的 Ctrl+C 都等待子进程结束、文件写完后才返回；原生后端的包装层也补上了等待原任务完成这一步。
+GUI 的 `stop().await` 和 CLI 的 Ctrl+C 都等待子进程结束、文件写完后才返回。
 正常停止先结束取流、排空管线并关闭输出；超时才清理进程树/Unix 进程组，并把无法保证收尾的情况报告为错误。
 关闭进度通道会退出 CLI 监控循环，不再无限空转。句柄被丢弃也会发送停止信号。
 
@@ -111,30 +111,15 @@ Cookie 经 stdin JSON 传递，不进入进程命令行、不写临时 Cookie �
 普通自定义请求头和代理仍通过 `RecordConfig` 传入；Cookie 请求头转换成域内 cookie jar，而不是全局发送给所有 CDN。
 全局 Authorization / Proxy-Authorization / Host 头会被明确拒绝，不能用它们代替插件认证。
 
-SOOP 韩国 `sooplive.co.kr` 与 Global `sooplive.com` 的 Cookie 不混用。`sooplive` / `soop` 别名仅指向韩国域；Global 请配置 `sooplive.com` 或 `soop_global`。
-切换 Streamlink 不会自动取得登录、订阅或其他观看权限。SOOP 的受限房间、地区差异、具体 Cookie 是否被插件接受必须用有权限的账号实测。
+SOOP Cookie 可用，但公开房间通常不需要登录。韩国 `sooplive.co.kr` 与 Global `sooplive.com` Cookie 仍按各自域名隔离；`sooplive` / `soop` 别名指向韩国域，Global Cookie 可将平台名称设为 `soop_global`。Streamlink 8.6.1 的插件会把认证检查发往 `.sooplive.com`，因此这个明确的 Global 别名也会用于韩国房间的认证检查，但 Cookie 仍绑定在 `.sooplive.com`，不会发给韩国站点或其他域名。插件源码：[Streamlink SOOP 插件](https://github.com/streamlink/streamlink/blob/8.6.1/src/streamlink/plugins/soop.py)。
+用户名和密码是可选登录方式；配置的凭据经 worker stdin 传递，不进命令行或日志，但保存在 MageKit 本地配置文件中。若房间要求登录，可使用有效的 Global Cookie 或账号密码。19+ 房间仍要求账号本身完成成人认证并拥有该房间的观看权限；应用不能代替账号完成认证或绕过房间权限。
 此适配器不加载用户侧加载插件，不持久化 Streamlink 插件缓存，也不自动启动浏览器来处理挑战。
 
-## 兼容与回退
+## 兼容范围
 
-- 本期 Streamlink 后端实现 TS、MP4、MKV、FLV；具体编码必须被目标容器支持，不会为了兼容而偷偷重编码。
-- `segment_duration`、弹幕保存暂未迁移，启用时明确提示关闭选项或使用原生后端，不静默忽略。
-- 原 GUI 平台分类和提示文案仍以旧平台集合为主；未知平台能否解析取决于 Streamlink 插件，平台封面等字段不保证齐全。
-
-需要对照旧后端时，在启动应用前设置：
-
-```powershell
-$env:MAGEKIT_RECORDER_BACKEND = 'native'
-cargo run --bin magekit
-```
-
-```bash
-MAGEKIT_RECORDER_BACKEND=native cargo run --bin magekit
-cargo run -p live_recorder -- --backend native 'https://your-room-url' -o recording.ts -f ts
-```
-
-`auto` 为默认值；`streamlink` 强制使用 Streamlink、不回退。
-自定义 `PlatformFactory` 保持原有原生处理器语义，便于现有调用和测试继续工作。
+- Streamlink 后端实现 TS、MP4、MKV、FLV；具体编码必须被目标容器支持，不会为了兼容而偷偷重编码。抖音仍使用原来的原生录制流程。
+- `segment_duration`、弹幕保存尚未由 Streamlink 后端实现；其他 Streamlink 平台启用时会明确报错。抖音继续按原生录制器现有行为处理。
+- GUI 的分流范围包括抖音原生录制，以及 Bilibili、斗鱼、虎牙、SOOP 等 Streamlink 插件平台；快手和没有插件的平台会报不支持。平台封面等字段不保证齐全。
 
 ## Rust 依赖审查
 

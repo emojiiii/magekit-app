@@ -375,7 +375,7 @@ impl Render for RecordSettingsDialog {
                                     .gap_2()
                                     .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("分段时长（秒，可选）"))
                                     .child(Input::new(&self.segment_input))
-                                    .child(div().text_xs().text_color(muted).child("用于分段存储/合并（实现依赖录制策略）")),
+                                    .child(div().text_xs().text_color(muted).child("当前录制后端暂未实现分段保存")),
                             )
                             .child(
                                 div()

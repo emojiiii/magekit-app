@@ -1,5 +1,7 @@
 target/
 py_demo/
 crawlers/
+__pycache__/
+*.py[cod]
 # 本地 E2E 测试 Cookie（包含敏感信息，不提交）
 crates/extractor/tests/cookie.json
