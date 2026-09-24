@@ -18,6 +18,8 @@ use tracing_subscriber::{
 
 mod app;
 mod diagnostic_log;
+#[cfg(windows)]
+mod process_job;
 mod theme;
 mod ui;
 
@@ -48,6 +50,17 @@ fn main() -> Result<()> {
     tracing::info!(target: diagnostic_log::TARGET, event = "app_start");
 
     tracing::debug!("🚀 MageKit 视频下载器启动");
+
+    // Windows 不会在父进程退出时自动结束子进程。把应用及其后代放进
+    // Kill-on-close Job，确保 GUI 关闭或异常退出时一并结束 Python/FFmpeg。
+    #[cfg(windows)]
+    let process_job = match process_job::ApplicationJob::attach() {
+        Ok(job) => Some(job),
+        Err(error) => {
+            tracing::warn!("⚠️ 无法创建子进程清理作业对象: {error}");
+            None
+        }
+    };
 
     // 注册图标资源
     let app = Application::new().with_assets(gpui_component_assets::Assets);
@@ -128,6 +141,13 @@ fn main() -> Result<()> {
 
         tracing::info!("✅ GUI 已启动");
     });
+
+    #[cfg(windows)]
+    {
+        // Job 也包含 MageKit 自身；让系统在进程退出时关闭句柄，
+        // 避免这里主动关闭后立即强制结束当前进程。
+        std::mem::forget(process_job);
+    }
 
     Ok(())
 }

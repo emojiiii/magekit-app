@@ -1,5 +1,14 @@
 # 进度记录
 
+## 2026-09-24：退出后 Python 残留
+
+- 开始梳理进程创建与 GUI 生命周期；尚未修改程序代码。
+- 确认现存 Python 进程没有 MageKit worker 标识；确认 Windows 子进程树清理依赖父 PID，准备改用 Job Object。
+- 在 GUI 入口增加 Windows 应用级 Kill-on-close Job，新增进程树回归测试。`cargo test --locked --bin magekit process_job::tests` 通过 2 项；`cargo check --locked --bin magekit`、`cargo fmt --all -- --check` 和 `git diff --check` 通过。
+- 未运行实际直播探测或录制；当前无法把系统现有 Python 进程认作 MageKit 残留，因此没有结束任何现有进程。
+- `cargo build --locked --bin magekit` 通过，已生成更新的 `target/debug/magekit.exe`。
+
+
 ## 2026-09-23：SOOP 原画与预热（完成）
 
 - 核对 `문채원♡` 当前可用档位、成品 MP4 与直播源：原画实际提供 1920×1080，历史成品为 1280×720。

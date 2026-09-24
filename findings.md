@@ -1,5 +1,17 @@
 # 调研记录
 
+## 2026-09-24：Python 进程残留
+
+- 工作区干净；已有历史规划文件，采用追加本轮记录。
+- Python 主要由 `live_recorder` 托管 Streamlink 环境启动，`recorder.rs` 有录制任务 Drop 守卫，仍需核对探测 worker 与嵌套 pull worker 的所有权。
+- 当前系统有多组 Python 进程，但命令行没有指向 `magekit_worker_*.py` 或 MageKit 工具目录；不能仅凭进程名认定是本程序残留，更不能批量结束。
+- Windows worker 是 venv `python.exe`，可能再启动实际解释器；录制 worker 还会启动 pull Python/FFmpeg。`kill_on_drop` 仅杀直接子进程，`taskkill /T` 依赖父 PID 存活；超时/异常退出时父 PID 可能先消失，孙进程随即失去清理路径。
+- 初步考虑对每个 Rust 启动的 Streamlink worker 单独建 Job，但 Windows venv launcher 可能在 Rust 分配 Job 前已启动解释器孙进程，存在启动竞态。
+- 实现时改用应用级 Job：在任何 GUI 子进程启动前把 MageKit 自身加入 Job，避免 venv Python 启动时在 Rust 为其单独分配 Job 之前已产生解释器孙进程的竞态。Job 将覆盖应用启动的 Python、FFmpeg 等子进程；最后一个句柄随 MageKit 进程退出由 Windows 关闭。
+- 因为 Job 包含 MageKit 自身，`app.run()` 返回后不主动 Drop 句柄，以免在 `main` 收尾阶段被 Job 立即结束；句柄保留到 Windows 正常清理进程句柄。
+- Windows 行为测试证实当前进程可加入嵌套 Job，且关闭 Job 会在 1 秒内结束测试的父 PowerShell 和由它启动的孙 PowerShell。实际 GUI 房态/录制进程未启动复核，避免触发用户自动录制。
+
+
 ## 2026-09-23：SOOP 画质与连接延迟
 
 - `문채원♡` 当前频道元数据返回 `sd/360p`、`hd/540p`、`hd4k/720p`、`original/1080p`；设置为 `Original`。现存自动 remux 的 MP4 是 1280×720，`-c copy` 不会改变分辨率。历史任务没有记录实际 preset，不能断定当时是降档重试还是设置曾改变。
