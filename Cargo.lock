@@ -2699,9 +2699,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-router"
-version = "0.2.7"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acbaabcb35218a1ea59a1e8e83b54609dd27c7a40b5dc691abf21f3d8ebf838a"
+checksum = "80bf5c725e7648d9d4082e39a58a5a41562fecb26d210710498171af8f1e54bc"
 dependencies = [
  "gpui",
  "gpui-router-macros",
@@ -2712,9 +2712,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-router-macros"
-version = "0.2.7"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59c6c7f1218478fa57494b30acdf2000d526f210f3c4abc978c1fde7e7849bbc"
+checksum = "d59a4854468fd9d5e977b0a2c56666cb0fccd0d65b696c19ba740a0237eb6401"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5142,9 +5142,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.103"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee95bc4ef87b8d5ba32e8b7714ccc834865276eab0aed5c9958d00ec45f49e8"
+checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
