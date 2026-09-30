@@ -21,7 +21,7 @@ MageKit 是一个基于 Rust 的跨平台桌面应用（GPUI），提供视频�
 | ------------------ | ------------ | ----------------------------- |
 | **Rust**           | 2024 edition | 主要编程语言                  |
 | **GPUI**           | latest       | Zed 编辑器的 GUI 框架         |
-| **gpui-component** | latest       | GPUI 组件库（按钮、输入框等） |
+| **gpui-kit** | latest       | GPUI 组件库（按钮、输入框等） |
 | **gpui-router**    | 0.2.7        | 页面路由系统                  |
 | **yt-dlp**         | 外部工具     | 视频下载核心                  |
 | **ffmpeg**         | 外部工具     | 视频/音频处理                 |
@@ -205,9 +205,9 @@ cx.spawn(async move |this, cx| {
 
 ### 主题
 
-主题文件位于 `themes/`，启动时通过 `gpui_component::ThemeRegistry::watch_dir(...)` 监听目录并热加载。
+主题文件位于 `themes/`，启动时通过 `gpui_kit::component::ThemeRegistry::watch_dir(...)` 监听目录并热加载。
 
-UI 使用 gpui-component 的主题系统：
+UI 使用 gpui-kit 的主题系统：
 
 ```rust
 let theme = cx.theme();

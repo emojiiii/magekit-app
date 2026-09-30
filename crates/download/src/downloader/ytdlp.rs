@@ -4,7 +4,6 @@ use std::process::Stdio;
 use async_trait::async_trait;
 use magekit_shared::create_tokio_ytdlp_command;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::DownloadRequest;
@@ -51,8 +50,15 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<DownloadOutcome> {
+        crate::utils::validate_request(&request)?;
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         tracing::info!("🎬 YtDlpDownloader::download() 开始执行");
-        tracing::info!("  ├─ URL: {}", request.url);
+        tracing::info!(
+            "  ├─ URL: {}",
+            magekit_shared::redact_url_for_log(request.url.as_str())
+        );
         tracing::info!("  ├─ full_path: {:?}", request.output.full_path);
         tracing::info!("  ├─ directory: {:?}", request.output.directory);
         tracing::info!("  └─ template: {:?}", request.output.template);
@@ -71,8 +77,7 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         tracing::info!("🔧 构建 yt-dlp 命令");
         tracing::info!("📁 yt-dlp 路径: {:?}", self.ytdlp_path);
         let mut cmd = create_tokio_ytdlp_command(&self.ytdlp_path, &self.ytdlp_path);
-        cmd.arg(request.url.to_string())
-            .arg("-o")
+        cmd.arg("-o")
             .arg(output_template.to_string_lossy().to_string())
             .arg("--newline")
             .arg("--progress")
@@ -82,19 +87,20 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         tracing::info!("📝 添加 headers: {} 个", request.extra.headers.len());
         for (k, v) in &request.extra.headers {
             cmd.arg("--add-header").arg(format!("{}: {}", k, v));
-            tracing::debug!("  header: {}: {}", k, v);
+            tracing::debug!("  header: {}", k);
         }
         if let Some(cookie) = &request.extra.cookie {
             cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
-            tracing::debug!("  cookie: {}", cookie);
+            tracing::debug!("  已添加 Cookie（值不记录）");
         }
 
         // 透传自定义参数（key = "ytdlp"）
         if let Some(args) = request.extra.tool_args.get("ytdlp") {
-            tracing::info!("📝 添加额外参数: {:?}", args);
+            tracing::info!("📝 添加额外参数: {} 项", args.len());
             cmd.args(args);
         }
 
+        cmd.arg("--").arg(request.url.as_str());
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -129,18 +135,20 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         let mut stderr_line_buf = Vec::new();
 
         tracing::info!("📊 开始读取 yt-dlp 输出...");
-        loop {
+        let mut stdout_eof = false;
+        let mut stderr_eof = false;
+        while !stdout_eof || !stderr_eof {
             tokio::select! {
                 _ = cancel.cancelled() => {
                     tracing::warn!("⚠️ 下载被取消");
                     let _ = child.kill().await;
                     return Err(DownloadError::Canceled);
                 }
-                result = stdout.read_until(b'\n', &mut stdout_buf) => {
+                result = stdout.read_until(b'\n', &mut stdout_buf), if !stdout_eof => {
                     match result {
                         Ok(0) => {
                             tracing::info!("📊 yt-dlp stdout 结束，共读取 {} 行", line_count);
-                            break;
+                            stdout_eof = true;
                         }
                         Ok(_) => {
                             // 使用 lossy conversion 处理非 UTF-8 字节
@@ -200,13 +208,13 @@ impl crate::downloader::Downloader for YtDlpDownloader {
                         Err(e) => {
                             tracing::error!("❌ 读取 yt-dlp stdout 失败: {}", e);
                             callback.on_log(LogLine { source: LogSource::Stdout, line: format!("read stdout error: {}", e) });
-                            break;
+                            return Err(DownloadError::Internal(format!("yt-dlp read stdout: {e}")));
                         }
                     }
                 }
-                result = stderr.read_until(b'\n', &mut stderr_line_buf) => {
+                result = stderr.read_until(b'\n', &mut stderr_line_buf), if !stderr_eof => {
                     match result {
-                        Ok(0) => {}
+                        Ok(0) => { stderr_eof = true; }
                         Ok(_) => {
                             let line = String::from_utf8_lossy(&stderr_line_buf).to_string();
                             stderr_line_buf.clear();
@@ -230,7 +238,7 @@ impl crate::downloader::Downloader for YtDlpDownloader {
                         }
                         Err(e) => {
                             tracing::error!("❌ 读取 yt-dlp stderr 失败: {}", e);
-                            stderr_buf.push_str(&format!("read stderr error: {}\n", e));
+                            return Err(DownloadError::Internal(format!("yt-dlp read stderr: {e}")));
                         }
                     }
                 }
@@ -238,10 +246,14 @@ impl crate::downloader::Downloader for YtDlpDownloader {
         }
 
         tracing::info!("⏳ 等待 yt-dlp 进程退出...");
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| DownloadError::Internal(format!("wait yt-dlp failed: {}", e)))?;
+        let status = tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = child.kill().await;
+                return Err(DownloadError::Canceled);
+            }
+            status = child.wait() => status
+                .map_err(|e| DownloadError::Internal(format!("wait yt-dlp failed: {}", e)))?,
+        };
 
         tracing::info!("🏁 yt-dlp 进程已退出，状态码: {:?}", status.code());
 
@@ -374,7 +386,7 @@ async fn maybe_transcode_youtube_to_h264_mp4(
 
     let total_duration_secs = probe_duration_secs_best_effort(ffmpeg_path, input_path).await;
 
-    let mut cmd = Command::new(ffmpeg_path);
+    let mut cmd = magekit_shared::create_tokio_command(ffmpeg_path);
     cmd.arg("-hide_banner")
         .arg("-y")
         .arg("-i")
@@ -591,7 +603,7 @@ async fn probe_codecs_best_effort(
 
 async fn probe_duration_secs_best_effort(ffmpeg_path: &PathBuf, input_path: &Path) -> Option<f64> {
     let ffprobe = resolve_ffprobe_path(ffmpeg_path);
-    let out = Command::new(&ffprobe)
+    let out = magekit_shared::create_tokio_command(&ffprobe)
         .arg("-v")
         .arg("error")
         .arg("-show_entries")
@@ -634,7 +646,7 @@ async fn probe_codecs_with_ffprobe(
 ) -> Option<(Option<String>, Option<String>)> {
     let ffprobe = resolve_ffprobe_path(ffmpeg_path);
 
-    let v = Command::new(&ffprobe)
+    let v = magekit_shared::create_tokio_command(&ffprobe)
         .arg("-v")
         .arg("error")
         .arg("-select_streams")
@@ -652,7 +664,7 @@ async fn probe_codecs_with_ffprobe(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let a = Command::new(&ffprobe)
+    let a = magekit_shared::create_tokio_command(&ffprobe)
         .arg("-v")
         .arg("error")
         .arg("-select_streams")
@@ -677,7 +689,7 @@ async fn probe_codecs_with_ffmpeg(
     ffmpeg_path: &PathBuf,
     input_path: &Path,
 ) -> (Option<String>, Option<String>) {
-    let out = Command::new(ffmpeg_path)
+    let out = magekit_shared::create_tokio_command(ffmpeg_path)
         .arg("-hide_banner")
         .arg("-i")
         .arg(input_path.to_string_lossy().to_string())
@@ -730,6 +742,7 @@ fn build_output_template(request: &DownloadRequest) -> DownloadResult<PathBuf> {
         .template
         .clone()
         .unwrap_or_else(|| "%(title)s.%(ext)s".to_string());
+    crate::utils::validate_output_template(&tmpl)?;
     let result = request.output.directory.join(tmpl);
     tracing::info!("✅ 使用 directory + template: {:?}", result);
     Ok(result)

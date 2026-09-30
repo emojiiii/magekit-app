@@ -2,13 +2,67 @@ use crate::error::{ToolManagerError, ToolManagerResult};
 use crate::storage::ToolStorage;
 use futures_util::StreamExt;
 use magekit_shared::{
-    ToolType, UpdateChannel, create_tokio_command, get_temp_dir, resolve_ffmpeg_path,
-    resolve_yt_dlp_path,
+    ToolType, UpdateChannel, create_tokio_command, resolve_ffmpeg_path, resolve_yt_dlp_path,
 };
-use serde::Deserialize;
-use std::sync::Arc;
+use sha2::{Digest, Sha256};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+
+const MAX_YTDLP_SIZE: u64 = 128 * 1024 * 1024;
+const MAX_CHECKSUM_SIZE: usize = 64 * 1024;
+static YTDLP_INSTALL_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn release_repository(channel: &UpdateChannel) -> ToolManagerResult<&'static str> {
+    match channel {
+        UpdateChannel::Stable => Ok("yt-dlp/yt-dlp"),
+        UpdateChannel::Nightly => Ok("yt-dlp/yt-dlp-nightly-builds"),
+        UpdateChannel::Custom(_) => Err(ToolManagerError::config(
+            "Custom update channel is not supported",
+        )),
+    }
+}
+
+fn asset_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "yt-dlp_macos"
+    } else if cfg!(all(windows, target_arch = "aarch64")) {
+        "yt-dlp_arm64.exe"
+    } else if cfg!(all(windows, target_arch = "x86")) {
+        "yt-dlp_x86.exe"
+    } else if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp"
+    }
+}
+
+fn checksum_for_asset(manifest: &str, asset: &str) -> ToolManagerResult<String> {
+    let mut matches = manifest.lines().filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        let hash = fields.next()?;
+        let name = fields.next()?.trim_start_matches('*');
+        (name == asset
+            && fields.next().is_none()
+            && hash.len() == 64
+            && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| hash.to_ascii_lowercase())
+    });
+    let hash = matches.next().ok_or_else(|| {
+        ToolManagerError::installation_failed(
+            "yt-dlp",
+            "Official SHA-256 checksum is missing or invalid",
+        )
+    })?;
+    if matches.next().is_some() {
+        return Err(ToolManagerError::installation_failed(
+            "yt-dlp",
+            "Duplicate SHA-256 entries",
+        ));
+    }
+    Ok(hash)
+}
 
 /// 下载进度回调类型
 pub type ProgressCallback = Arc<dyn Fn(u64, u64, u64) + Send + Sync>;
@@ -127,130 +181,120 @@ impl ToolUpdater {
         self.download_yt_dlp_with_progress(channel, None).await
     }
 
-    /// 下载yt-dlp (带进度回调)
+    /// 验证同一发布版本的 SHA-256 后再原子替换，失败不破坏现有工具。
     async fn download_yt_dlp_with_progress(
         &self,
-        _channel: UpdateChannel,
+        channel: UpdateChannel,
         progress_callback: Option<ProgressCallback>,
     ) -> ToolManagerResult<()> {
-        // 直接使用最新版本的下载 URL（避免 GitHub API 限流）
-        let download_url = self.get_direct_yt_dlp_url();
-        let temp_dir = get_temp_dir().map_err(|e| ToolManagerError::internal(e.to_string()))?;
-        let temp_file = temp_dir.join("yt-dlp");
-
-        tracing::info!("Downloading yt-dlp from: {}", download_url);
-
-        // 创建带 User-Agent 的客户端
+        let _guard = YTDLP_INSTALL_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let repository = release_repository(&channel)?;
+        let version = self
+            .get_latest_yt_dlp_version(channel)
+            .await?
+            .ok_or_else(|| {
+                ToolManagerError::installation_failed("yt-dlp", "Release version is unavailable")
+            })?;
+        let asset = asset_name();
+        let release_base = format!("https://github.com/{repository}/releases/download/{version}");
         let client = reqwest::Client::builder()
             .user_agent("MageKit/1.0")
-            .build()
-            .map_err(|e| {
-                ToolManagerError::internal(format!("Failed to create HTTP client: {}", e))
-            })?;
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(180))
+            .build()?;
 
-        // 发送请求
-        let response = client
-            .get(&download_url)
+        let mut checksums = client
+            .get(format!("{release_base}/SHA2-256SUMS"))
             .send()
-            .await
-            .map_err(ToolManagerError::Network)?;
+            .await?
+            .error_for_status()?;
+        let mut manifest = Vec::new();
+        while let Some(chunk) = checksums.chunk().await? {
+            if manifest.len().saturating_add(chunk.len()) > MAX_CHECKSUM_SIZE {
+                return Err(ToolManagerError::installation_failed(
+                    "yt-dlp",
+                    "Checksum manifest exceeds size limit",
+                ));
+            }
+            manifest.extend_from_slice(&chunk);
+        }
+        let manifest = std::str::from_utf8(&manifest).map_err(|_| {
+            ToolManagerError::installation_failed("yt-dlp", "Invalid checksum manifest encoding")
+        })?;
+        let expected_hash = checksum_for_asset(manifest, asset)?;
 
-        if !response.status().is_success() {
+        let response = client
+            .get(format!("{release_base}/{asset}"))
+            .send()
+            .await?
+            .error_for_status()?;
+        let total_size = response.content_length().unwrap_or(0);
+        if total_size > MAX_YTDLP_SIZE {
             return Err(ToolManagerError::installation_failed(
                 "yt-dlp",
-                format!(
-                    "HTTP {}: {}",
-                    response.status(),
-                    response.status().canonical_reason().unwrap_or("Unknown")
-                ),
+                "Release asset exceeds size limit",
             ));
         }
-
-        // 获取文件总大小
-        let total_size = response.content_length().unwrap_or(0);
-        tracing::info!("Total size: {} bytes", total_size);
-
-        // 创建临时文件
-        let mut file = tokio::fs::File::create(&temp_file).await.map_err(|e| {
-            ToolManagerError::file_operation_failed("create temp file", e.to_string())
-        })?;
-
-        // 流式下载并报告进度
-        let mut downloaded: u64 = 0;
+        fs::create_dir_all(self.storage.tools_dir()).await?;
+        // 唯一、受保护、同文件系统的暂存文件，避免共享 /tmp 文件竞态及跨设备 rename。
+        let staged = tempfile::Builder::new()
+            .prefix(".yt-dlp-stage-")
+            .tempfile_in(self.storage.tools_dir())?;
+        let mut file = tokio::fs::File::from_std(staged.reopen()?);
+        let mut hasher = Sha256::new();
+        let mut downloaded = 0u64;
         let mut stream = response.bytes_stream();
         let mut last_progress_time = std::time::Instant::now();
-        let mut last_downloaded: u64 = 0;
-
+        let mut last_downloaded = 0;
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(ToolManagerError::Network)?;
-            file.write_all(&chunk).await.map_err(|e| {
-                ToolManagerError::file_operation_failed("write chunk", e.to_string())
-            })?;
-
-            downloaded += chunk.len() as u64;
-
-            // 每 100ms 更新一次进度
-            let now = std::time::Instant::now();
-            let elapsed = now.duration_since(last_progress_time);
-            if elapsed.as_millis() >= 100 {
-                let speed = if elapsed.as_secs_f64() > 0.0 {
-                    ((downloaded - last_downloaded) as f64 / elapsed.as_secs_f64()) as u64
-                } else {
-                    0
-                };
-
-                if let Some(ref callback) = progress_callback {
+            let chunk = chunk?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            if downloaded > MAX_YTDLP_SIZE {
+                return Err(ToolManagerError::installation_failed(
+                    "yt-dlp",
+                    "Release asset exceeds size limit",
+                ));
+            }
+            hasher.update(&chunk);
+            file.write_all(&chunk).await?;
+            let elapsed = last_progress_time.elapsed();
+            if elapsed >= Duration::from_millis(100) {
+                let speed = ((downloaded - last_downloaded) as f64 / elapsed.as_secs_f64()) as u64;
+                if let Some(callback) = &progress_callback {
                     callback(downloaded, total_size, speed);
                 }
-
-                last_progress_time = now;
+                last_progress_time = std::time::Instant::now();
                 last_downloaded = downloaded;
             }
         }
-
-        // 下载完成，通知 UI 进入安装阶段
-        // 使用 speed = u64::MAX 作为特殊标记，表示进入安装阶段
-        if let Some(ref callback) = progress_callback {
-            callback(downloaded, total_size, u64::MAX);
+        if downloaded == 0 || format!("{:x}", hasher.finalize()) != expected_hash {
+            return Err(ToolManagerError::installation_failed(
+                "yt-dlp",
+                "Release asset SHA-256 verification failed",
+            ));
         }
-
-        tracing::info!("Downloaded {} bytes, starting installation...", downloaded);
-
-        // 刷新文件
-        file.flush()
-            .await
-            .map_err(|e| ToolManagerError::file_operation_failed("flush file", e.to_string()))?;
+        file.flush().await?;
+        file.sync_all().await?;
         drop(file);
-
-        // 设置执行权限（Unix系统）
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&temp_file)
-                .await
-                .map_err(|e| {
-                    ToolManagerError::file_operation_failed("get file metadata", e.to_string())
-                })?
-                .permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&temp_file, perms).await.map_err(|e| {
-                ToolManagerError::file_operation_failed("set file permissions", e.to_string())
-            })?;
+            fs::set_permissions(staged.path(), std::fs::Permissions::from_mode(0o755)).await?;
         }
-
-        // 移动到最终位置
+        if let Some(callback) = &progress_callback {
+            callback(downloaded, total_size, u64::MAX);
+        }
         let final_path = self.storage.get_tool_path(ToolType::YtDlp);
-        if let Some(parent) = final_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                ToolManagerError::file_operation_failed("create tools directory", e.to_string())
-            })?;
-        }
-
-        fs::rename(&temp_file, &final_path).await.map_err(|e| {
-            ToolManagerError::file_operation_failed("move yt-dlp to final location", e.to_string())
+        staged.persist(&final_path).map_err(|error| {
+            ToolManagerError::file_operation_failed(
+                "publish verified yt-dlp",
+                error.error.to_string(),
+            )
         })?;
-
-        tracing::info!("yt-dlp installed successfully at: {:?}", final_path);
+        tracing::info!("✅ Verified yt-dlp {version} installed at {:?}", final_path);
         Ok(())
     }
 
@@ -332,142 +376,37 @@ impl ToolUpdater {
         }
     }
 
-    /// 获取 yt-dlp 直接下载 URL (避免 GitHub API 限流)
-    fn get_direct_yt_dlp_url(&self) -> String {
-        // 使用 GitHub releases 的直接下载链接
-        // macOS: yt-dlp_macos (通用二进制，支持 Intel 和 Apple Silicon)
-        // Linux: yt-dlp
-        // Windows: yt-dlp.exe
-
-        #[cfg(target_os = "macos")]
-        {
-            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos".to_string()
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp".to_string()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe".to_string()
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-        {
-            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp".to_string()
-        }
-    }
-
-    /// 获取yt-dlp下载URL
-    #[allow(dead_code)]
-    async fn get_yt_dlp_download_url(&self, channel: UpdateChannel) -> ToolManagerResult<String> {
-        match channel {
-            UpdateChannel::Stable => {
-                // 获取最新稳定版
-                let api_url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
-                self.get_yt_dlp_release_url(api_url).await
-            }
-            UpdateChannel::Nightly => {
-                // 获取最新预发布版
-                let api_url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases";
-                self.get_yt_dlp_nightly_url(api_url).await
-            }
-            UpdateChannel::Custom(_) => {
-                // 自定义版本暂时不支持
-                Err(ToolManagerError::config(
-                    "Custom update channel not yet supported".to_string(),
-                ))
-            }
-        }
-    }
-
-    /// 获取yt-dlp最新版本信息
+    /// 从官方 release 重定向读取版本，并绑定准确仓库及安全 tag。
     async fn get_latest_yt_dlp_version(
         &self,
         channel: UpdateChannel,
     ) -> ToolManagerResult<Option<String>> {
-        match channel {
-            UpdateChannel::Stable => self.get_latest_yt_dlp_version_from_github_redirect().await,
-            // Nightly/Custom 暂不支持准确的“最新版本”解析
-            UpdateChannel::Nightly | UpdateChannel::Custom(_) => Ok(None),
-        }
-    }
-
-    /// 通过 GitHub releases/latest 的重定向解析最新版本号（避免 GitHub API 限流）。
-    async fn get_latest_yt_dlp_version_from_github_redirect(
-        &self,
-    ) -> ToolManagerResult<Option<String>> {
+        let repository = release_repository(&channel)?;
         let client = reqwest::Client::builder()
             .user_agent("MageKit/1.0")
-            .build()
-            .map_err(|e| {
-                ToolManagerError::internal(format!("Failed to create HTTP client: {}", e))
-            })?;
-
-        let resp = client
-            .get("https://github.com/yt-dlp/yt-dlp/releases/latest")
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        let response = client
+            .get(format!("https://github.com/{repository}/releases/latest"))
             .send()
-            .await
-            .map_err(ToolManagerError::Network)?;
-
-        if !resp.status().is_success() {
+            .await?
+            .error_for_status()?;
+        let url = response.url();
+        let prefix = format!("/{repository}/releases/tag/");
+        let tag = url.path().strip_prefix(&prefix).filter(|tag| {
+            !tag.is_empty()
+                && tag
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        });
+        if url.scheme() != "https" || url.host_str() != Some("github.com") || tag.is_none() {
             return Err(ToolManagerError::version_check_failed(
                 "yt-dlp",
-                format!("HTTP {}", resp.status()),
+                "Invalid official release redirect",
             ));
         }
-
-        // 例：/yt-dlp/yt-dlp/releases/tag/2025.12.10
-        let path = resp.url().path();
-        let tag = path
-            .split("/tag/")
-            .nth(1)
-            .and_then(|s| s.split('/').next())
-            .map(|s| s.to_string());
-
-        Ok(tag)
-    }
-
-    /// 从GitHub API获取发布下载URL
-    async fn get_yt_dlp_release_url(&self, api_url: &str) -> ToolManagerResult<String> {
-        let response = reqwest::get(api_url)
-            .await
-            .map_err(|e| ToolManagerError::process_failed("GitHub API request", e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(ToolManagerError::internal(format!(
-                "GitHub API request failed: {}",
-                response.status()
-            )));
-        }
-
-        let release_info: GitHubRelease = response
-            .json()
-            .await
-            .map_err(|e| ToolManagerError::internal(format!("Failed to parse JSON: {}", e)))?;
-
-        // 查找适合当前平台的二进制文件
-        let binary_name = if cfg!(windows) {
-            "yt-dlp.exe"
-        } else {
-            "yt-dlp"
-        };
-
-        for asset in release_info.assets {
-            if asset.name.contains(binary_name) {
-                return Ok(asset.browser_download_url);
-            }
-        }
-
-        Err(ToolManagerError::installation_failed(
-            "yt-dlp",
-            "No suitable binary found for current platform".to_string(),
-        ))
-    }
-
-    /// 获取夜间构建版本URL
-    async fn get_yt_dlp_nightly_url(&self, _api_url: &str) -> ToolManagerResult<String> {
-        // 夜间构建通常在不同的URL
-        Ok("https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest".to_string())
+        Ok(tag.map(str::to_owned))
     }
 
     /// 比较版本号
@@ -577,16 +516,31 @@ pub struct ToolUpdate {
     pub latest: String,
 }
 
-/// GitHub API返回的发布信息
-#[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    name: String,
-    assets: Vec<GitHubAsset>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
+    #[test]
+    fn checksum_selects_exact_asset_and_rejects_invalid_manifests() {
+        let hash = "a".repeat(64);
+        let manifest = format!("{hash}  yt-dlp.exe\n{hash} *yt-dlp\n");
+        assert_eq!(checksum_for_asset(&manifest, "yt-dlp").unwrap(), hash);
+        assert!(checksum_for_asset(&manifest, "yt-dlp_macos").is_err());
+        assert!(checksum_for_asset("invalid yt-dlp", "yt-dlp").is_err());
+        assert!(checksum_for_asset(&format!("{hash} yt-dlp\n{hash} yt-dlp"), "yt-dlp").is_err());
+        assert!(checksum_for_asset(&format!("{hash} yt-dlp.sig"), "yt-dlp").is_err());
+    }
+
+    #[test]
+    fn release_channels_never_silently_install_stable() {
+        assert_eq!(
+            release_repository(&UpdateChannel::Stable).unwrap(),
+            "yt-dlp/yt-dlp"
+        );
+        assert_eq!(
+            release_repository(&UpdateChannel::Nightly).unwrap(),
+            "yt-dlp/yt-dlp-nightly-builds"
+        );
+        assert!(release_repository(&UpdateChannel::Custom("attacker".into())).is_err());
+    }
 }

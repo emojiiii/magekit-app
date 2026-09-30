@@ -42,11 +42,11 @@ impl CaptureFilterType {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::All => "全部资源",
-            Self::Video => "仅视频",
-            Self::Audio => "仅音频",
-            Self::Image => "仅图片",
-            Self::Media => "视频+音频",
+            Self::All => crate::i18n::tr("全部资源"),
+            Self::Video => crate::i18n::tr("仅视频"),
+            Self::Audio => crate::i18n::tr("仅音频"),
+            Self::Image => crate::i18n::tr("仅图片"),
+            Self::Media => crate::i18n::tr("视频+音频"),
         }
     }
 }

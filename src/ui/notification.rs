@@ -3,8 +3,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -542,7 +542,11 @@ impl Render for ProgressOverlay {
                     })
                     // 取消按钮
                     .when(cancellable, |this| {
-                        this.child(Button::new("cancel-progress").ghost().label("取消"))
+                        this.child(
+                            Button::new("cancel-progress")
+                                .ghost()
+                                .label(crate::i18n::tr("取消")),
+                        )
                     }),
             )
             .into_any_element()
@@ -575,8 +579,8 @@ impl ConfirmDialog {
             visible: false,
             title: title.into(),
             message: message.into(),
-            confirm_label: "确定".to_string(),
-            cancel_label: "取消".to_string(),
+            confirm_label: crate::i18n::tr("确定").to_string(),
+            cancel_label: crate::i18n::tr("取消").to_string(),
             is_danger: false,
             on_confirm: None,
             on_cancel: None,
@@ -589,8 +593,8 @@ impl ConfirmDialog {
             visible: false,
             title: title.into(),
             message: message.into(),
-            confirm_label: "确定删除".to_string(),
-            cancel_label: "取消".to_string(),
+            confirm_label: crate::i18n::tr("确定删除").to_string(),
+            cancel_label: crate::i18n::tr("取消").to_string(),
             is_danger: true,
             on_confirm: None,
             on_cancel: None,
@@ -815,9 +819,19 @@ impl Render for ErrorPanel {
                     .gap_2()
                     .justify_end()
                     .when(has_retry, |this| {
-                        this.child(Button::new("error-retry").outline().small().label("重试"))
+                        this.child(
+                            Button::new("error-retry")
+                                .outline()
+                                .small()
+                                .label(crate::i18n::tr("重试")),
+                        )
                     })
-                    .child(Button::new("error-close").ghost().small().label("关闭")),
+                    .child(
+                        Button::new("error-close")
+                            .ghost()
+                            .small()
+                            .label(crate::i18n::tr("关闭")),
+                    ),
             )
             .into_any_element()
     }

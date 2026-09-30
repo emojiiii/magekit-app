@@ -36,3 +36,6 @@ regex = "1"
 
 # 日志
 tracing = { workspace = true }
+
+# 每次嗅探使用独立的、生命周期受控的浏览器 profile
+tempfile = "3"

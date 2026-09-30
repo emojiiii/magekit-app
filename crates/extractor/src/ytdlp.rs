@@ -159,7 +159,10 @@ pub async fn extract_video_info(
 ) -> ExtractResult<VideoInfo> {
     // 🔧 规范化 URL
     let normalized_url = normalize_url(url);
-    tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+    tracing::info!(
+        "🔧 规范化 URL: {}",
+        magekit_shared::redact_url_for_log(&normalized_url)
+    );
 
     let cookie_header = build_cookie_header(
         extract_platform_from_url(&normalized_url).as_deref(),
@@ -167,14 +170,13 @@ pub async fn extract_video_info(
     );
 
     let mut cmd = create_tokio_ytdlp_command(yt_dlp_path, yt_dlp_path);
-    cmd.arg("--dump-json")
-        .arg("--no-download")
-        .arg(&normalized_url);
+    cmd.arg("--dump-json").arg("--no-download");
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
     }
 
+    cmd.arg("--").arg(&normalized_url);
     let output = cmd
         .output()
         .await
@@ -199,7 +201,10 @@ pub async fn extract_channel_info(
 ) -> ExtractResult<ChannelInfo> {
     // 🔧 规范化 URL
     let normalized_url = normalize_url(url);
-    tracing::info!("🔧 URL 规范化: {} -> {}", url, normalized_url);
+    tracing::info!(
+        "🔧 规范化 URL: {}",
+        magekit_shared::redact_url_for_log(&normalized_url)
+    );
 
     let cookie_header = build_cookie_header(
         extract_platform_from_url(&normalized_url).as_deref(),
@@ -211,14 +216,14 @@ pub async fn extract_channel_info(
         .arg("--dump-single-json")
         .arg("--no-warnings")
         .arg("--extractor-args")
-        .arg("BiliBiliSpace:metadata=true")
-        .arg("-v")
-        .arg(normalize_youtube_channel_default_tab(&normalized_url));
+        .arg("BiliBiliSpace:metadata=true");
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
     }
 
+    cmd.arg("--")
+        .arg(normalize_youtube_channel_default_tab(&normalized_url));
     let output = cmd
         .output()
         .await
@@ -341,7 +346,7 @@ pub async fn extract_channel_page(
     let request_url = normalize_ytdlp_channel_url(&normalized_url);
     tracing::info!(
         "📄 ytdlp 分页解析: url={} offset={} count={} items={}",
-        request_url,
+        magekit_shared::redact_url_for_log(&request_url),
         offset,
         count,
         items
@@ -357,14 +362,13 @@ pub async fn extract_channel_page(
         .arg("--playlist-items")
         .arg(items)
         .arg("--extractor-args")
-        .arg("BiliBiliSpace:metadata=true")
-        .arg("-v")
-        .arg(&request_url);
+        .arg("BiliBiliSpace:metadata=true");
 
     if let Some(ref cookie) = cookie_header {
         cmd.arg("--add-header").arg(format!("Cookie: {}", cookie));
     }
 
+    cmd.arg("--").arg(&request_url);
     let output = cmd
         .output()
         .await

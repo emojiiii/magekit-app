@@ -2,10 +2,10 @@
 
 use crate::ui::widgets::Section;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
-use gpui_component::{IconName, Sizable};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{IconName, Sizable};
 
 pub struct SoopCredentialsCard {
     username_input: Entity<InputState>,
@@ -54,10 +54,10 @@ impl RenderOnce for SoopCredentialsInner {
         let password_input = self.password_input;
         let on_save = self.on_save;
 
-        Section::new_with_icon("SOOP 账号认证", IconName::Settings).child(
+        Section::new_with_icon(crate::i18n::tr("SOOP 账号认证"), IconName::Settings).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(theme.secondary)
                 .border_1()
                 .border_color(theme.border)
@@ -68,14 +68,14 @@ impl RenderOnce for SoopCredentialsInner {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("公开房间通常可匿名录制。需要登录权限时，可配置有效的 SOOP Global Cookie（平台填写 soop_global），或填写用户名和密码。19+ 房间还要求账号已完成成人认证并有观看权限。密码保存在 MageKit 本地配置中。"),
+                        .child(crate::i18n::tr("公开房间通常可匿名录制。需要登录权限时，可配置有效的 SOOP Global Cookie（平台填写 soop_global），或填写用户名和密码。19+ 房间还要求账号已完成成人认证并有观看权限。密码保存在 MageKit 本地配置中。")),
                 )
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap(px(4.0))
-                        .child(div().text_sm().child("SOOP 用户名"))
+                        .child(div().text_sm().child(crate::i18n::tr("SOOP 用户名")))
                         .child(Input::new(&username_input).small()),
                 )
                 .child(
@@ -83,7 +83,7 @@ impl RenderOnce for SoopCredentialsInner {
                         .flex()
                         .flex_col()
                         .gap(px(4.0))
-                        .child(div().text_sm().child("SOOP 密码"))
+                        .child(div().text_sm().child(crate::i18n::tr("SOOP 密码")))
                         .child(Input::new(&password_input).small().mask_toggle()),
                 )
                 .child(
@@ -91,7 +91,7 @@ impl RenderOnce for SoopCredentialsInner {
                         let mut button = Button::new("save-soop-credentials")
                             .small()
                             .primary()
-                            .label("保存账号");
+                            .label(crate::i18n::tr("保存账号"));
                         if let Some(handler) = on_save {
                             button = button.on_click(move |_event, window, cx| {
                                 handler(window, cx);

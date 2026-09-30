@@ -4,17 +4,25 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Disableable;
-use gpui_component::button::{Button, ButtonVariants};
-use magekit_shared::truncate_string;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Disableable;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tag::Tag;
+use gpui_kit::component::{Icon, IconName, Sizable};
 use std::sync::Arc;
 
 /// 视频格式信息 (从解析获取)
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoFormatInfo {
     pub format_id: String,
-    pub label: String,         // 如 "1080p", "720p", "音频"
+    pub label: String, // 如 "1080p", "720p", "音频"
+    /// 仅应用生成的回退标签设置翻译键；来源提供的画质和编码文本保持原样。
+    pub label_key: Option<&'static str>,
     pub ext: String,           // 如 "mp4", "webm"
     pub filesize: Option<u64>, // 文件大小
     pub has_video: bool,
@@ -54,6 +62,14 @@ impl FormatSelection {
 }
 
 impl VideoFormatInfo {
+    /// 在渲染时读取当前语言，不改写已解析的格式信息或格式 ID。
+    pub fn display_label(&self) -> String {
+        self.label_key
+            .map(crate::i18n::tr)
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.label.clone())
+    }
+
     /// 格式化文件大小
     pub fn format_filesize(&self) -> Option<String> {
         self.filesize.map(|bytes| {
@@ -99,170 +115,51 @@ pub struct VideoInfo {
     pub url: String,                   // 原始 URL
 }
 
-/// 视频预览卡片 - 空闲状态
+/// Kit 空状态与加载指示，避免重复维护颜色和交互样式。
 #[derive(IntoElement)]
 pub struct VideoPreviewIdle;
-
 impl RenderOnce for VideoPreviewIdle {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgb(0x18181b)
-        } else {
-            rgb(0xffffff)
-        };
-        let border_color = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let icon_bg = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf4f4f5)
-        };
-        let text_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x52525b)
-        };
-        let sub_text_color = if is_dark {
-            rgb(0x71717a)
-        } else {
-            rgb(0x9ca3af)
-        };
-
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .flex()
-            .flex_col()
+            .flex_wrap()
             .items_center()
-            .justify_center()
-            .py(px(60.0))
-            .px(px(40.0))
-            .gap(px(16.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
+            .gap_3()
+            .px_1()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(Icon::new(IconName::Info).size_4())
+            .child(crate::i18n::tr("解析后可选择视频画质和音频格式"))
             .child(
-                div()
-                    .w(px(72.0))
-                    .h(px(72.0))
-                    .rounded(px(16.0))
-                    .bg(icon_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_3xl()
-                    .child("🎬"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(text_color)
-                            .child("输入视频链接开始下载"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(sub_text_color)
-                            .child("支持 YouTube、Bilibili、Twitter 等主流平台"),
-                    ),
+                div().flex().flex_wrap().gap_2().children(
+                    ["YouTube", "Bilibili", "Twitter / X"]
+                        .into_iter()
+                        .map(|name| Tag::secondary().small().child(name)),
+                ),
             )
     }
 }
 
-/// 视频预览卡片 - 加载中状态
 #[derive(IntoElement)]
 pub struct VideoPreviewLoading;
-
 impl RenderOnce for VideoPreviewLoading {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgb(0x18181b)
-        } else {
-            rgb(0xffffff)
-        };
-        let border_color = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let icon_bg = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf4f4f5)
-        };
-        let text_color = if is_dark {
-            rgb(0xfafafa)
-        } else {
-            rgb(0x18181b)
-        };
-        let sub_text_color = if is_dark {
-            rgb(0x71717a)
-        } else {
-            rgb(0x9ca3af)
-        };
-
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .py(px(60.0))
-            .px(px(40.0))
-            .gap(px(16.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
-            .child(
-                div()
-                    .w(px(72.0))
-                    .h(px(72.0))
-                    .rounded(px(16.0))
-                    .bg(icon_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_3xl()
-                    .child("⏳"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(text_color)
-                            .child("正在获取视频信息..."),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(sub_text_color)
-                            .child("请稍候，正在解析视频数据"),
-                    ),
-            )
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        Empty::new().py_6().header(
+            EmptyHeader::new()
+                .media(EmptyMedia::new().child(Spinner::new().large()))
+                .title(EmptyTitle::new().child(crate::i18n::tr("正在解析视频...")))
+                .description(
+                    EmptyDescription::new().child(crate::i18n::tr("可以取消解析或输入新的链接")),
+                ),
+        )
     }
 }
 
-/// 视频预览卡片 - 就绪状态
 #[derive(IntoElement)]
 pub struct VideoPreviewReady {
     info: VideoInfo,
+    submitting: bool,
+    thumbnail_loading: bool,
     /// 选中的视频格式 ID（仅视频 或 合并格式）
     selected_video_id: Option<String>,
     /// 选中的音频格式 ID（仅音频）
@@ -279,6 +176,8 @@ impl VideoPreviewReady {
         // 默认不选中任何格式，让用户自由选择
         Self {
             info,
+            submitting: false,
+            thumbnail_loading: false,
             selected_video_id: None,
             selected_audio_id: None,
             on_cancel: None,
@@ -287,6 +186,15 @@ impl VideoPreviewReady {
             on_select_video: None,
             on_select_audio: None,
         }
+    }
+
+    pub fn submitting(mut self, value: bool) -> Self {
+        self.submitting = value;
+        self
+    }
+    pub fn thumbnail_loading(mut self, value: bool) -> Self {
+        self.thumbnail_loading = value;
+        self
     }
 
     pub fn selected_video(mut self, format_id: Option<String>) -> Self {
@@ -380,184 +288,133 @@ impl VideoPreviewReady {
 }
 
 impl RenderOnce for VideoPreviewReady {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgb(0x18181b)
-        } else {
-            rgb(0xffffff)
-        };
-        let border_color = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let thumb_bg = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf4f4f5)
-        };
-        let title_color = if is_dark {
-            rgb(0xfafafa)
-        } else {
-            rgb(0x18181b)
-        };
-        let meta_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x71717a)
-        };
-        let format_bg = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf8f8f8)
-        };
-        let format_hover_bg = if is_dark {
-            rgb(0x3f3f46)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let format_selected_bg = if is_dark {
-            rgb(0x1d4ed8)
-        } else {
-            rgb(0x2563eb)
-        };
-        let format_selected_border = if is_dark {
-            rgb(0x3b82f6)
-        } else {
-            rgb(0x3b82f6)
-        };
-        let format_text = if is_dark {
-            rgb(0xe4e4e7)
-        } else {
-            rgb(0x3f3f46)
-        };
-        let section_title_color = if is_dark {
-            rgb(0x9ca3af)
-        } else {
-            rgb(0x6b7280)
-        };
-        let hint_color = if is_dark {
-            rgb(0x6b7280)
-        } else {
-            rgb(0x9ca3af)
-        };
-        let badge_green_bg = if is_dark {
-            rgba(0x22c55e33)
-        } else {
-            rgba(0x22c55e22)
-        };
-        let badge_green_text = rgb(0x22c55e);
-        let _ = format_hover_bg;
-
-        // 分类格式
-        // 1. 合并格式（视频+音频一体）
-        let combined_formats: Vec<_> = self
-            .info
-            .formats
-            .iter()
-            .filter(|f| f.has_video && f.has_audio)
-            .cloned()
-            .collect();
-
-        // 2. 仅视频格式
-        let video_only_formats: Vec<_> = self
-            .info
-            .formats
-            .iter()
-            .filter(|f| f.has_video && !f.has_audio)
-            .cloned()
-            .collect();
-
-        // 3. 仅音频格式
-        let audio_only_formats: Vec<_> = self
-            .info
-            .formats
-            .iter()
-            .filter(|f| !f.has_video && f.has_audio)
-            .cloned()
-            .collect();
-
-        // 判断是否是分离格式网站（如B站）：没有合并格式，但有视频和音频分开的格式
-        let is_separated_source = combined_formats.is_empty()
-            && !video_only_formats.is_empty()
-            && !audio_only_formats.is_empty();
-
-        let selected_video = self.selected_video_id.clone();
-        let selected_audio = self.selected_audio_id.clone();
-        let on_download = self.on_download;
-        let on_download_thumbnail = self.on_download_thumbnail;
-        let on_select_video = self.on_select_video;
-        let on_select_audio = self.on_select_audio;
-        let has_thumbnail = self.info.thumbnail.is_some();
-
-        // 计算总格式数量，决定是否需要滚动
-        let total_formats =
-            combined_formats.len() + video_only_formats.len() + audio_only_formats.len();
-
-        // 计算选中状态的提示信息
-        let selection_hint = {
-            let has_video = selected_video.is_some();
-            let has_audio = selected_audio.is_some();
-            let video_includes_audio = selected_video
-                .as_ref()
-                .and_then(|vid| self.info.formats.iter().find(|f| &f.format_id == vid))
-                .map(|f| f.has_audio)
-                .unwrap_or(false);
-
-            if video_includes_audio {
-                "✅ 已选择音视频合并格式，可直接下载".to_string()
-            } else if is_separated_source && has_video {
-                // B站等分离格式网站，选择视频时自动带音频
-                "✅ 已选择视频质量，下载时自动包含音频".to_string()
-            } else if has_video && has_audio {
-                "🔀 已选择视频+音频，下载后将自动合并".to_string()
-            } else if has_video {
-                "📹 仅下载视频（无声音）".to_string()
-            } else if has_audio {
-                "🎵 仅下载音频".to_string()
-            } else {
-                "请选择下载格式".to_string()
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let border = cx.theme().border;
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let background = cx.theme().secondary;
+        let thumbnail_background = cx.theme().muted;
+        let has_selection = self.selected_video_id.is_some() || self.selected_audio_id.is_some();
+        let disabled = self.submitting;
+        let formats = self.info.formats.clone();
+        let format_groups = [
+            (FormatType::Combined, "视频和音频"),
+            (FormatType::VideoOnly, "视频画质"),
+            (FormatType::AudioOnly, "音频格式"),
+        ]
+        .into_iter()
+        .filter_map(|(kind, title)| {
+            let entries: Vec<_> = formats
+                .iter()
+                .filter(|format| format.format_type() == kind)
+                .cloned()
+                .collect();
+            if entries.is_empty() {
+                return None;
             }
-        };
+            let buttons = entries
+                .into_iter()
+                .map(|format| {
+                    let audio = kind == FormatType::AudioOnly;
+                    let selected = if audio {
+                        self.selected_audio_id.as_ref()
+                    } else {
+                        self.selected_video_id.as_ref()
+                    } == Some(&format.format_id);
+                    let handler = if audio {
+                        self.on_select_audio.clone()
+                    } else {
+                        self.on_select_video.clone()
+                    };
+                    let label = format!(
+                        "{} · {}{}",
+                        format.display_label(),
+                        format.ext.to_uppercase(),
+                        format
+                            .format_filesize()
+                            .map(|size| format!(" · {size}"))
+                            .unwrap_or_default()
+                    );
+                    let format_id = format.format_id.clone();
+                    Button::new(SharedString::from(format!(
+                        "format-{:?}-{}",
+                        kind, format_id
+                    )))
+                    .small()
+                    .map(|button| {
+                        if selected {
+                            button.primary()
+                        } else {
+                            button.outline()
+                        }
+                    })
+                    .label(label.clone())
+                    .tooltip(label)
+                    .disabled(disabled)
+                    .when_some(handler, |button, handler| {
+                        button.on_click(move |_, window, cx| handler(&format_id, window, cx))
+                    })
+                })
+                .collect::<Vec<_>>();
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::i18n::tr(title)),
+                    )
+                    .child(div().flex().flex_wrap().gap_2().children(buttons)),
+            )
+        })
+        .collect::<Vec<_>>();
+        let separated = formats
+            .iter()
+            .any(|format| !format.has_video && format.has_audio)
+            && formats.iter().any(|format| {
+                self.selected_video_id.as_ref() == Some(&format.format_id) && !format.has_audio
+            });
+        let selection_hint =
+            if separated && self.selected_video_id.is_some() && self.selected_audio_id.is_none() {
+                crate::i18n::tr("已自动搭配最佳音频，也可选择其他音轨")
+            } else if has_selection {
+                crate::i18n::tr("已选择格式，可以开始下载")
+            } else {
+                crate::i18n::tr("请选择下载格式")
+            };
 
-        let _ = total_formats;
-        let thumbnail_url = self.info.thumbnail.clone();
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(20.0))
-            .p(px(24.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
-            .shadow_sm()
-            // 顶部：缩略图 + 基本信息
+        GroupBox::new()
+            .id("download-preview-ready")
+            .outline()
+            .min_w_0()
+            .content_style(
+                StyleRefinement::default()
+                    .p_4()
+                    .gap_4()
+                    .bg(background)
+                    .rounded_xl(),
+            )
             .child(
                 div()
                     .flex()
-                    .gap(px(20.0))
-                    // 缩略图区域
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .relative()
-                            .w(px(220.0))
-                            .h(px(124.0))
-                            .bg(thumb_bg)
-                            .rounded(px(12.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .overflow_hidden()
-                            // 显示封面图或占位符
-                            .when_some(thumbnail_url.clone(), |el, url| {
-                                el.child(
-                                    img(url)
-                                        .w(px(220.0))
-                                        .h(px(124.0))
+                    .flex_wrap()
+                    .gap_4()
+                    .items_start()
+                    .when_some(self.info.thumbnail.clone(), |row, thumbnail| {
+                        row.child(
+                            div()
+                                .w(px(224.0))
+                                .h(px(126.0))
+                                .flex_shrink_0()
+                                .rounded_lg()
+                                .overflow_hidden()
+                                .bg(thumbnail_background)
+                                .child(
+                                    img(thumbnail)
+                                        .size_full()
                                         .object_fit(ObjectFit::Cover)
                                         .with_fallback(|| {
                                             div()
@@ -565,533 +422,104 @@ impl RenderOnce for VideoPreviewReady {
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .child(div().text_3xl().child("🎬"))
+                                                .child(Icon::new(IconName::Folder))
                                                 .into_any_element()
                                         }),
-                                )
-                            })
-                            .when(thumbnail_url.is_none(), |el| {
-                                el.child(div().text_3xl().child("🎬"))
-                            })
-                            // 时长标签
-                            .child(
-                                div()
-                                    .absolute()
-                                    .bottom(px(8.0))
-                                    .right(px(8.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .bg(rgba(0x000000cc))
-                                    .rounded(px(4.0))
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(rgb(0xffffff))
-                                    .child(self.info.duration.clone()),
-                            )
-                            // 封面下载按钮
-                            .when(has_thumbnail, |el| {
-                                el.child(div().absolute().top(px(8.0)).right(px(8.0)).child({
-                                    let mut btn = Button::new("download-thumb-btn")
-                                        .ghost()
-                                        .compact()
-                                        .label("📥");
-                                    if let Some(handler) = on_download_thumbnail {
-                                        btn = btn.on_click(move |ev, window, cx| {
-                                            handler(ev, window, cx)
-                                        });
-                                    }
-                                    btn
-                                }))
-                            }),
-                    )
-                    // 信息区域
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0() // 防止 flex 子元素撑开容器
+                            .min_w(px(180.0))
                             .flex()
                             .flex_col()
-                            .justify_center()
-                            .gap(px(12.0))
+                            .gap_2()
                             .child(
                                 div()
-                                    .text_base()
+                                    .text_lg()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(title_color)
-                                    .line_height(px(24.0))
-                                    // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
-                                    .child(truncate_string(&self.info.title, 60)),
+                                    .text_color(foreground)
+                                    .child(self.info.title),
                             )
-                            .when_some(self.info.uploader.clone(), |el, uploader| {
-                                el.child(
-                                    div().flex().items_center().gap(px(6.0)).child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(meta_color)
-                                            .child(format!("👤 {}", uploader)),
-                                    ),
+                            .when_some(self.info.uploader, |column, uploader| {
+                                column.child(div().text_sm().text_color(muted).child(uploader))
+                            })
+                            .child(div().text_sm().text_color(muted).child(self.info.duration))
+                            .when(self.info.thumbnail.is_some(), |column| {
+                                column.child(
+                                    Button::new("download-thumb-btn")
+                                        .small()
+                                        .ghost()
+                                        .icon(IconName::ArrowDown)
+                                        .label(crate::i18n::tr("下载封面"))
+                                        .loading(self.thumbnail_loading)
+                                        .disabled(self.thumbnail_loading || disabled)
+                                        .when_some(
+                                            self.on_download_thumbnail,
+                                            |button, handler| {
+                                                button.on_click(move |event, window, cx| {
+                                                    handler(event, window, cx)
+                                                })
+                                            },
+                                        ),
                                 )
                             }),
                     ),
             )
-            // 📦 合并格式（推荐）
-            .when(!combined_formats.is_empty(), |el| {
-                let selected = selected_video.clone();
-                let on_select = on_select_video.clone();
-                el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(section_title_color)
-                                        .child("选择画质"),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .px(px(8.0))
-                                        .py(px(3.0))
-                                        .bg(badge_green_bg)
-                                        .text_color(badge_green_text)
-                                        .rounded(px(6.0))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child("含音频"),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(10.0))
-                                .pt(px(6.0)) // 给勾选标记留出空间
-                                .children(combined_formats.into_iter().map({
-                                    let selected = selected.clone();
-                                    let on_select = on_select.clone();
-                                    move |fmt| {
-                                        let is_selected = selected.as_ref() == Some(&fmt.format_id);
-                                        let format_id = fmt.format_id.clone();
-                                        let on_select = on_select.clone();
-
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "combined-{}",
-                                                fmt.format_id
-                                            )))
-                                            .relative()
-                                            .px(px(16.0))
-                                            .py(px(10.0))
-                                            .min_w(px(90.0))
-                                            .bg(if is_selected {
-                                                format_selected_bg
-                                            } else {
-                                                format_bg
-                                            })
-                                            .border_1()
-                                            .border_color(if is_selected {
-                                                format_selected_border
-                                            } else {
-                                                border_color
-                                            })
-                                            .rounded(px(10.0))
-                                            .cursor_pointer()
-                                            .when(is_selected, |el| el.shadow_sm())
-                                            .on_click({
-                                                let format_id = format_id.clone();
-                                                move |_ev, window, cx| {
-                                                    if let Some(ref handler) = on_select {
-                                                        handler(&format_id, window, cx);
-                                                    }
-                                                }
-                                            })
-                                            // 选中指示器
-                                            .when(is_selected, |el| {
-                                                el.child(
-                                                    div()
-                                                        .absolute()
-                                                        .top(px(4.0))
-                                                        .right(px(4.0))
-                                                        .w(px(16.0))
-                                                        .h(px(16.0))
-                                                        .rounded_full()
-                                                        .bg(rgb(0x22c55e))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_xs()
-                                                        .text_color(rgb(0xffffff))
-                                                        .child("✓"),
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .items_center()
-                                                    .gap(px(4.0))
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(if is_selected {
-                                                                rgb(0xffffff)
-                                                            } else {
-                                                                format_text
-                                                            })
-                                                            .child(fmt.label.clone()),
-                                                    )
-                                                    .when_some(
-                                                        fmt.format_filesize(),
-                                                        |el, size| {
-                                                            el.child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .text_color(if is_selected {
-                                                                        rgba(0xffffffaa)
-                                                                    } else {
-                                                                        meta_color
-                                                                    })
-                                                                    .child(size),
-                                                            )
-                                                        },
-                                                    ),
-                                            )
-                                    }
-                                })),
-                        ),
-                )
-            })
-            // 📹 仅视频格式（对于分离源，显示为"视频质量"）
-            .when(!video_only_formats.is_empty(), |el| {
-                let selected = selected_video.clone();
-                let on_select = on_select_video.clone();
-                let section_title = if is_separated_source {
-                    "选择画质"
-                } else {
-                    "仅视频"
-                };
-                let section_hint = if is_separated_source {
-                    Some("下载时自动合并音频")
-                } else {
-                    Some("无声音，可搭配音频")
-                };
-                el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(section_title_color)
-                                        .child(section_title),
-                                )
-                                .when_some(section_hint, |el, hint| {
-                                    el.child(div().text_xs().text_color(hint_color).child(hint))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(10.0))
-                                .pt(px(6.0)) // 给勾选标记留出空间
-                                .children(video_only_formats.into_iter().map({
-                                    let selected = selected.clone();
-                                    let on_select = on_select.clone();
-                                    move |fmt| {
-                                        let is_selected = selected.as_ref() == Some(&fmt.format_id);
-                                        let format_id = fmt.format_id.clone();
-                                        let on_select = on_select.clone();
-
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "video-{}",
-                                                fmt.format_id
-                                            )))
-                                            .relative()
-                                            .px(px(16.0))
-                                            .py(px(10.0))
-                                            .min_w(px(90.0))
-                                            .bg(if is_selected {
-                                                format_selected_bg
-                                            } else {
-                                                format_bg
-                                            })
-                                            .border_1()
-                                            .border_color(if is_selected {
-                                                format_selected_border
-                                            } else {
-                                                border_color
-                                            })
-                                            .rounded(px(10.0))
-                                            .cursor_pointer()
-                                            .when(is_selected, |el| el.shadow_sm())
-                                            .on_click({
-                                                let format_id = format_id.clone();
-                                                move |_ev, window, cx| {
-                                                    if let Some(ref handler) = on_select {
-                                                        handler(&format_id, window, cx);
-                                                    }
-                                                }
-                                            })
-                                            // 选中指示器
-                                            .when(is_selected, |el| {
-                                                el.child(
-                                                    div()
-                                                        .absolute()
-                                                        .top(px(4.0))
-                                                        .right(px(4.0))
-                                                        .w(px(16.0))
-                                                        .h(px(16.0))
-                                                        .rounded_full()
-                                                        .bg(rgb(0x22c55e))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_xs()
-                                                        .text_color(rgb(0xffffff))
-                                                        .child("✓"),
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .items_center()
-                                                    .gap(px(4.0))
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(if is_selected {
-                                                                rgb(0xffffff)
-                                                            } else {
-                                                                format_text
-                                                            })
-                                                            .child(fmt.label.clone()),
-                                                    )
-                                                    .when_some(
-                                                        fmt.format_filesize(),
-                                                        |el, size| {
-                                                            el.child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .text_color(if is_selected {
-                                                                        rgba(0xffffffaa)
-                                                                    } else {
-                                                                        meta_color
-                                                                    })
-                                                                    .child(size),
-                                                            )
-                                                        },
-                                                    ),
-                                            )
-                                    }
-                                })),
-                        ),
-                )
-            })
-            // 🎵 仅音频格式（始终显示，允许用户单独下载音频）
-            .when(!audio_only_formats.is_empty(), |el| {
-                let selected = selected_audio.clone();
-                let on_select = on_select_audio.clone();
-                let hint = if is_separated_source {
-                    "可单独下载音频"
-                } else {
-                    "可单独下载"
-                };
-                el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(10.0))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(section_title_color)
-                                        .child("仅音频"),
-                                )
-                                .child(div().text_xs().text_color(hint_color).child(hint)),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(10.0))
-                                .pt(px(6.0)) // 给勾选标记留出空间
-                                .children(audio_only_formats.into_iter().map({
-                                    let selected = selected.clone();
-                                    let on_select = on_select.clone();
-                                    move |fmt| {
-                                        let is_selected = selected.as_ref() == Some(&fmt.format_id);
-                                        let format_id = fmt.format_id.clone();
-                                        let on_select = on_select.clone();
-
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "audio-{}",
-                                                fmt.format_id
-                                            )))
-                                            .relative()
-                                            .px(px(16.0))
-                                            .py(px(10.0))
-                                            .min_w(px(90.0))
-                                            .bg(if is_selected {
-                                                format_selected_bg
-                                            } else {
-                                                format_bg
-                                            })
-                                            .border_1()
-                                            .border_color(if is_selected {
-                                                format_selected_border
-                                            } else {
-                                                border_color
-                                            })
-                                            .rounded(px(10.0))
-                                            .cursor_pointer()
-                                            .when(is_selected, |el| el.shadow_sm())
-                                            .on_click({
-                                                let format_id = format_id.clone();
-                                                move |_ev, window, cx| {
-                                                    if let Some(ref handler) = on_select {
-                                                        handler(&format_id, window, cx);
-                                                    }
-                                                }
-                                            })
-                                            // 选中指示器
-                                            .when(is_selected, |el| {
-                                                el.child(
-                                                    div()
-                                                        .absolute()
-                                                        .top(px(4.0))
-                                                        .right(px(4.0))
-                                                        .w(px(16.0))
-                                                        .h(px(16.0))
-                                                        .rounded_full()
-                                                        .bg(rgb(0x22c55e))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .text_xs()
-                                                        .text_color(rgb(0xffffff))
-                                                        .child("✓"),
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .items_center()
-                                                    .gap(px(4.0))
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(if is_selected {
-                                                                rgb(0xffffff)
-                                                            } else {
-                                                                format_text
-                                                            })
-                                                            .child(fmt.label.clone()),
-                                                    )
-                                                    .when_some(
-                                                        fmt.format_filesize(),
-                                                        |el, size| {
-                                                            el.child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .text_color(if is_selected {
-                                                                        rgba(0xffffffaa)
-                                                                    } else {
-                                                                        meta_color
-                                                                    })
-                                                                    .child(size),
-                                                            )
-                                                        },
-                                                    ),
-                                            )
-                                    }
-                                })),
-                        ),
-                )
-            })
-            // 底部操作栏
+            .children(format_groups)
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
-                    .pt(px(16.0))
-                    .mt(px(4.0))
+                    .gap_3()
+                    .pt_4()
                     .border_t_1()
-                    .border_color(border_color)
+                    .border_color(border)
+                    .child(div().text_sm().text_color(muted).child(selection_hint))
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .text_sm()
-                            .text_color(hint_color)
-                            .child(selection_hint),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(12.0))
-                            .child({
-                                let mut btn = Button::new("cancel-btn").ghost().label("取消");
-                                if let Some(handler) = self.on_cancel {
-                                    btn =
-                                        btn.on_click(move |ev, window, cx| handler(ev, window, cx));
-                                }
-                                btn
-                            })
-                            .child({
-                                let has_selection =
-                                    selected_video.is_some() || selected_audio.is_some();
-                                let mut btn = Button::new("start-download-btn")
+                            .gap_2()
+                            .child(
+                                Button::new("cancel-btn")
+                                    .ghost()
+                                    .label(crate::i18n::tr("取消"))
+                                    .disabled(disabled)
+                                    .when_some(self.on_cancel, |button, handler| {
+                                        button.on_click(move |event, window, cx| {
+                                            handler(event, window, cx)
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("start-download-btn")
                                     .primary()
-                                    .label("开始下载")
-                                    .disabled(!has_selection);
-                                if let Some(handler) = on_download {
-                                    btn =
-                                        btn.on_click(move |ev, window, cx| handler(ev, window, cx));
-                                }
-                                btn
-                            }),
+                                    .label(if disabled {
+                                        crate::i18n::tr("添加任务中...")
+                                    } else {
+                                        crate::i18n::tr("开始下载")
+                                    })
+                                    .loading(disabled)
+                                    .disabled(disabled || !has_selection)
+                                    .when_some(self.on_download, |button, handler| {
+                                        button.on_click(move |event, window, cx| {
+                                            handler(event, window, cx)
+                                        })
+                                    }),
+                            ),
                     ),
             )
     }
 }
 
-/// 视频预览卡片 - 下载中状态
 #[derive(IntoElement)]
 pub struct VideoPreviewDownloading {
     progress: f32,
     speed: String,
 }
-
 impl VideoPreviewDownloading {
     pub fn new(progress: f32, speed: impl Into<String>) -> Self {
         Self {
@@ -1100,113 +528,30 @@ impl VideoPreviewDownloading {
         }
     }
 }
-
 impl RenderOnce for VideoPreviewDownloading {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let progress_percent = (self.progress * 100.0).min(100.0);
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgb(0x18181b)
-        } else {
-            rgb(0xffffff)
-        };
-        let border_color = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let title_color = if is_dark {
-            rgb(0xfafafa)
-        } else {
-            rgb(0x18181b)
-        };
-        let meta_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x71717a)
-        };
-        let progress_bg = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let progress_bar_color = rgb(0x3b82f6);
-
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(20.0))
-            .p(px(24.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
+            .gap_3()
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.0))
-                            .child(div().text_xl().child("⬇️"))
-                            .child(
-                                div()
-                                    .text_base()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(title_color)
-                                    .child("正在下载..."),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(meta_color)
-                            .child(self.speed),
-                    ),
+                Progress::new("home-download-progress")
+                    .value(if self.progress.is_finite() {
+                        self.progress * 100.0
+                    } else {
+                        0.0
+                    })
+                    .accessibility_label(crate::i18n::tr("下载进度")),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .h(px(10.0))
-                            .w_full()
-                            .bg(progress_bg)
-                            .rounded(px(5.0))
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(self.progress))
-                                    .bg(progress_bar_color)
-                                    .rounded(px(5.0)),
-                            ),
-                    )
-                    .child(
-                        div().flex().justify_between().child(
-                            div()
-                                .text_sm()
-                                .text_color(meta_color)
-                                .child(format!("{:.1}%", progress_percent)),
-                        ),
-                    ),
-            )
+            .child(self.speed)
     }
 }
 
-/// 视频预览卡片 - 完成状态
 #[derive(IntoElement)]
 pub struct VideoPreviewCompleted {
     path: String,
     on_new_download: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
-
 impl VideoPreviewCompleted {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
@@ -1214,7 +559,6 @@ impl VideoPreviewCompleted {
             on_new_download: None,
         }
     }
-
     pub fn on_new_download(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1223,96 +567,31 @@ impl VideoPreviewCompleted {
         self
     }
 }
-
 impl RenderOnce for VideoPreviewCompleted {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgba(0x22c55e15)
-        } else {
-            rgba(0x22c55e10)
-        };
-        let border_color = if is_dark {
-            rgba(0x22c55e40)
-        } else {
-            rgba(0x22c55e30)
-        };
-        let icon_bg = if is_dark {
-            rgba(0x22c55e25)
-        } else {
-            rgba(0x22c55e20)
-        };
-        let title_color = rgb(0x22c55e);
-        let path_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x6b7280)
-        };
-
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .py(px(48.0))
-            .px(px(40.0))
-            .gap(px(16.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
+            .gap_3()
             .child(
-                div()
-                    .w(px(64.0))
-                    .h(px(64.0))
-                    .rounded_full()
-                    .bg(icon_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_2xl()
-                    .child("✅"),
+                Alert::success("download-complete", self.path).title(crate::i18n::tr("下载完成")),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(title_color)
-                            .child("下载完成!"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(path_color)
-                            .max_w(px(400.0))
-                            .text_center()
-                            .truncate()
-                            .child(self.path),
-                    ),
+                Button::new("new-download-btn")
+                    .primary()
+                    .label(crate::i18n::tr("新建下载"))
+                    .when_some(self.on_new_download, |button, handler| {
+                        button.on_click(move |event, window, cx| handler(event, window, cx))
+                    }),
             )
-            .child({
-                let mut btn = Button::new("new-download-btn").primary().label("新下载");
-                if let Some(handler) = self.on_new_download {
-                    btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
-                }
-                btn
-            })
     }
 }
 
-/// 视频预览卡片 - 错误状态
 #[derive(IntoElement)]
 pub struct VideoPreviewError {
     message: String,
     on_retry: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
-
 impl VideoPreviewError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -1320,7 +599,6 @@ impl VideoPreviewError {
             on_retry: None,
         }
     }
-
     pub fn on_retry(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1329,84 +607,22 @@ impl VideoPreviewError {
         self
     }
 }
-
 impl RenderOnce for VideoPreviewError {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgba(0xef444415)
-        } else {
-            rgba(0xef444410)
-        };
-        let border_color = if is_dark {
-            rgba(0xef444440)
-        } else {
-            rgba(0xef444430)
-        };
-        let icon_bg = if is_dark {
-            rgba(0xef444425)
-        } else {
-            rgba(0xef444420)
-        };
-        let title_color = rgb(0xef4444);
-        let msg_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x6b7280)
-        };
-
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .py(px(48.0))
-            .px(px(40.0))
-            .gap(px(16.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(16.0))
+            .gap_3()
             .child(
-                div()
-                    .w(px(64.0))
-                    .h(px(64.0))
-                    .rounded_full()
-                    .bg(icon_bg)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_2xl()
-                    .child("❌"),
+                Alert::error("video-parse-error", self.message).title(crate::i18n::tr("解析失败")),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(title_color)
-                            .child("出错了"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(msg_color)
-                            .max_w(px(400.0))
-                            .text_center()
-                            .child(self.message),
-                    ),
+                Button::new("retry-btn")
+                    .outline()
+                    .label(crate::i18n::tr("重试"))
+                    .when_some(self.on_retry, |button, handler| {
+                        button.on_click(move |event, window, cx| handler(event, window, cx))
+                    }),
             )
-            .child({
-                let mut btn = Button::new("retry-btn").primary().label("重试");
-                if let Some(handler) = self.on_retry {
-                    btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
-                }
-                btn
-            })
     }
 }

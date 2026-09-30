@@ -3,9 +3,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::*;
 use magekit_shared::truncate_string;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -254,7 +254,7 @@ impl PlaylistPanel {
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child("输入播放列表URL开始下载"),
+                    .child(crate::i18n::tr("输入播放列表URL开始下载")),
             )
     }
 
@@ -277,7 +277,7 @@ impl PlaylistPanel {
                 div()
                     .text_sm()
                     .text_color(muted)
-                    .child("正在加载播放列表信息..."),
+                    .child(crate::i18n::tr("正在加载播放列表信息...")),
             )
     }
 
@@ -349,12 +349,10 @@ impl PlaylistPanel {
                                 .child(playlist.uploader.clone().unwrap()),
                         )
                     })
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(format!("{} 个视频", playlist.video_count)),
-                    ),
+                    .child(div().text_sm().text_color(muted).child(crate::i18n::format(
+                        "{} 个视频",
+                        &[format!("{}", playlist.video_count)],
+                    ))),
             )
     }
 
@@ -381,16 +379,16 @@ impl PlaylistPanel {
                             .ghost()
                             .small()
                             .label(SharedString::from(if is_all_selected {
-                                "取消全选"
+                                crate::i18n::tr("取消全选")
                             } else {
-                                "全选"
+                                crate::i18n::tr("全选")
                             })),
                     )
                     .child(
                         Button::new("invert-selection")
                             .ghost()
                             .small()
-                            .label("反选"),
+                            .label(crate::i18n::tr("反选")),
                     ),
             )
             // 中间：搜索框（简化版）
@@ -406,15 +404,18 @@ impl PlaylistPanel {
                     .items_center()
                     .gap_2()
                     .child(Icon::new(IconName::Search).size(px(16.0)).text_color(muted))
-                    .child(div().text_sm().text_color(muted).child("搜索视频...")),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(crate::i18n::tr("搜索视频...")),
+                    ),
             )
             // 右侧：选中计数
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(format!("已选 {}/{}", selected_count, total_count)),
-            )
+            .child(div().text_sm().text_color(muted).child(crate::i18n::format(
+                "已选 {}/{}",
+                &[format!("{}", selected_count), format!("{}", total_count)],
+            )))
     }
 
     /// 渲染视频列表
@@ -480,22 +481,26 @@ impl PlaylistPanel {
             .child(
                 h_flex()
                     .gap_4()
-                    .child(div().text_sm().text_color(muted).child(format!(
+                    .child(div().text_sm().text_color(muted).child(crate::i18n::format(
                         "总时长: {}",
-                        format_duration_seconds(total_duration)
+                        &[format!("{}", format_duration_seconds(total_duration))],
                     ))),
             )
             // 右侧：操作按钮
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("cancel-playlist").ghost().label("取消"))
+                    .child(
+                        Button::new("cancel-playlist")
+                            .ghost()
+                            .label(crate::i18n::tr("取消")),
+                    )
                     .child(
                         Button::new("download-playlist")
                             .primary()
-                            .label(SharedString::from(format!(
+                            .label(SharedString::from(crate::i18n::format(
                                 "下载 {} 个视频",
-                                selected_count
+                                &[format!("{}", selected_count)],
                             )))
                             .disabled(!has_selection),
                     ),
@@ -523,7 +528,7 @@ impl PlaylistPanel {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(danger)
-                    .child("加载失败"),
+                    .child(crate::i18n::tr("加载失败")),
             )
             .child(
                 div()
@@ -531,9 +536,14 @@ impl PlaylistPanel {
                     .text_color(muted)
                     .max_w(px(300.0))
                     .text_center()
-                    .child(error),
+                    .child(crate::i18n::text(&error)),
             )
-            .child(Button::new("retry-playlist").ghost().small().label("重试"))
+            .child(
+                Button::new("retry-playlist")
+                    .ghost()
+                    .small()
+                    .label(crate::i18n::tr("重试")),
+            )
     }
 }
 
@@ -560,7 +570,7 @@ fn render_playlist_item_inline(
     let duration = item
         .duration
         .map(format_duration_seconds)
-        .unwrap_or_else(|| "未知".to_string());
+        .unwrap_or_else(|| crate::i18n::tr("未知").to_string());
     let index = item.index;
     let uploader = item.uploader.clone();
 

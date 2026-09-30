@@ -4,8 +4,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use std::sync::Arc;
 
 /// 工具信息
@@ -49,13 +49,13 @@ pub enum ToolState {
 impl ToolState {
     fn label(&self) -> &'static str {
         match self {
-            ToolState::NotInstalled => "未安装",
-            ToolState::Installed => "已安装",
-            ToolState::Checking => "检查中...",
-            ToolState::Updating => "更新中...",
-            ToolState::UpdateAvailable => "有更新",
-            ToolState::Installing => "安装中...",
-            ToolState::Error => "错误",
+            ToolState::NotInstalled => crate::i18n::tr("未安装"),
+            ToolState::Installed => crate::i18n::tr("已安装"),
+            ToolState::Checking => crate::i18n::tr("检查中..."),
+            ToolState::Updating => crate::i18n::tr("更新中..."),
+            ToolState::UpdateAvailable => crate::i18n::tr("有更新"),
+            ToolState::Installing => crate::i18n::tr("安装中..."),
+            ToolState::Error => crate::i18n::tr("错误"),
         }
     }
 
@@ -104,7 +104,7 @@ impl ToolPanel {
             tools: vec![
                 ToolInfo {
                     name: "yt-dlp".to_string(),
-                    description: "视频下载引擎，支持 1000+ 网站".to_string(),
+                    description: crate::i18n::tr("视频下载引擎，支持 1000+ 网站").to_string(),
                     current_version: None,
                     latest_version: None,
                     status: ToolState::Checking,
@@ -113,7 +113,7 @@ impl ToolPanel {
                 },
                 ToolInfo {
                     name: "FFmpeg".to_string(),
-                    description: "音视频处理工具，用于格式转换和合并".to_string(),
+                    description: crate::i18n::tr("音视频处理工具，用于格式转换和合并").to_string(),
                     current_version: None,
                     latest_version: None,
                     status: ToolState::Checking,
@@ -211,14 +211,14 @@ impl Render for ToolPanel {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(foreground)
-                            .child("🔧 工具管理"),
+                            .child(crate::i18n::tr("🔧 工具管理")),
                     )
                     .child(
                         Button::new("refresh-all")
                             .ghost()
                             .small()
                             .icon(IconName::LoaderCircle)
-                            .label("刷新"),
+                            .label(crate::i18n::tr("刷新")),
                     ),
             )
             // 工具列表
@@ -255,7 +255,9 @@ impl Render for ToolPanel {
                         div()
                             .text_xs()
                             .text_color(muted_foreground)
-                            .child("💡 MageKit 会自动管理这些工具，确保它们保持最新版本"),
+                            .child(crate::i18n::tr(
+                                "💡 MageKit 会自动管理这些工具，确保它们保持最新版本",
+                            )),
                     ),
             )
     }
@@ -346,7 +348,7 @@ fn render_tool_card_static(
                             div()
                                 .text_sm()
                                 .text_color(muted_foreground)
-                                .child("当前版本:"),
+                                .child(crate::i18n::tr("当前版本:")),
                         )
                         .child(
                             div()
@@ -356,7 +358,7 @@ fn render_tool_card_static(
                                 .child(
                                     current_version
                                         .clone()
-                                        .unwrap_or_else(|| "未安装".to_string()),
+                                        .unwrap_or_else(|| crate::i18n::tr("未安装").to_string()),
                                 ),
                         ),
                 )
@@ -372,7 +374,7 @@ fn render_tool_card_static(
                                     div()
                                         .text_sm()
                                         .text_color(muted_foreground)
-                                        .child("最新版本:"),
+                                        .child(crate::i18n::tr("最新版本:")),
                                 )
                                 .child(
                                     div()
@@ -396,7 +398,7 @@ fn render_tool_card_static(
                         div()
                             .text_sm()
                             .text_color(muted_foreground)
-                            .child("安装位置:"),
+                            .child(crate::i18n::tr("安装位置:")),
                     )
                     .child(
                         div()
@@ -426,13 +428,13 @@ fn render_status_badge_static(
     primary: Hsla,
 ) -> impl IntoElement {
     let (bg_color, text_color, label) = match status {
-        ToolState::NotInstalled => (danger.opacity(0.1), danger, "未安装"),
-        ToolState::Installed => (success.opacity(0.1), success, "已安装"),
-        ToolState::Checking => (primary.opacity(0.1), primary, "检查中..."),
-        ToolState::Updating => (primary.opacity(0.1), primary, "更新中..."),
-        ToolState::UpdateAvailable => (warning.opacity(0.1), warning, "有更新"),
-        ToolState::Installing => (primary.opacity(0.1), primary, "安装中..."),
-        ToolState::Error => (danger.opacity(0.1), danger, "错误"),
+        ToolState::NotInstalled => (danger.opacity(0.1), danger, crate::i18n::tr("未安装")),
+        ToolState::Installed => (success.opacity(0.1), success, crate::i18n::tr("已安装")),
+        ToolState::Checking => (primary.opacity(0.1), primary, crate::i18n::tr("检查中...")),
+        ToolState::Updating => (primary.opacity(0.1), primary, crate::i18n::tr("更新中...")),
+        ToolState::UpdateAvailable => (warning.opacity(0.1), warning, crate::i18n::tr("有更新")),
+        ToolState::Installing => (primary.opacity(0.1), primary, crate::i18n::tr("安装中...")),
+        ToolState::Error => (danger.opacity(0.1), danger, crate::i18n::tr("错误")),
     };
 
     div()
@@ -470,33 +472,33 @@ fn render_action_buttons_static(tool_name: &str, status: ToolState) -> impl Into
                 Button::new(SharedString::from(format!("install-{}", tool_name)))
                     .primary()
                     .small()
-                    .label("安装")
+                    .label(crate::i18n::tr("安装"))
                     .into_any_element()
             }
             ToolState::Installed => Button::new(SharedString::from(format!("check-{}", tool_name)))
                 .ghost()
                 .small()
-                .label("检查更新")
+                .label(crate::i18n::tr("检查更新"))
                 .into_any_element(),
             ToolState::UpdateAvailable => {
                 Button::new(SharedString::from(format!("update-{}", tool_name)))
                     .primary()
                     .small()
-                    .label("更新")
+                    .label(crate::i18n::tr("更新"))
                     .into_any_element()
             }
             ToolState::Checking | ToolState::Updating | ToolState::Installing => {
                 Button::new(SharedString::from(format!("wait-{}", tool_name)))
                     .ghost()
                     .small()
-                    .label("请稍候...")
+                    .label(crate::i18n::tr("请稍候..."))
                     .disabled(true)
                     .into_any_element()
             }
             ToolState::Error => Button::new(SharedString::from(format!("retry-{}", tool_name)))
                 .ghost()
                 .small()
-                .label("重试")
+                .label(crate::i18n::tr("重试"))
                 .into_any_element(),
         })
         .when(

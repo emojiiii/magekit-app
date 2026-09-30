@@ -4,8 +4,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use magekit_shared::types::{DownloadOptions, VideoFormat, VideoInfo};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,12 +44,12 @@ pub enum QualityPreset {
 impl QualityPreset {
     fn label(&self) -> &'static str {
         match self {
-            QualityPreset::Best => "最佳质量",
-            QualityPreset::FullHD => "1080p 全高清",
-            QualityPreset::HD => "720p 高清",
-            QualityPreset::SD => "480p 标清",
-            QualityPreset::AudioOnly => "仅音频",
-            QualityPreset::Custom => "自定义",
+            QualityPreset::Best => crate::i18n::tr("最佳质量"),
+            QualityPreset::FullHD => crate::i18n::tr("1080p 全高清"),
+            QualityPreset::HD => crate::i18n::tr("720p 高清"),
+            QualityPreset::SD => crate::i18n::tr("480p 标清"),
+            QualityPreset::AudioOnly => crate::i18n::tr("仅音频"),
+            QualityPreset::Custom => crate::i18n::tr("自定义"),
         }
     }
 
@@ -282,7 +282,7 @@ impl Render for DownloadPanel {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.foreground)
-                            .child("📥 新建下载"),
+                            .child(crate::i18n::tr("📥 新建下载")),
                     ),
             )
             .child(
@@ -339,14 +339,11 @@ impl DownloadPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.foreground)
-                            .child("视频链接"),
+                            .child(crate::i18n::tr("视频链接")),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("支持 YouTube, Bilibili, Twitter 等 1000+ 网站"),
-                    ),
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(
+                        crate::i18n::tr("支持 YouTube, Bilibili, Twitter 等 1000+ 网站"),
+                    )),
             )
             .child(
                 div()
@@ -367,12 +364,16 @@ impl DownloadPanel {
                                 theme.foreground
                             })
                             .child(if url.is_empty() {
-                                "粘贴视频URL开始下载...".to_string()
+                                crate::i18n::tr("粘贴视频URL开始下载...").to_string()
                             } else {
                                 url
                             }),
                     )
-                    .child(Button::new("paste-url").icon(IconName::Plus).label("粘贴")),
+                    .child(
+                        Button::new("paste-url")
+                            .icon(IconName::Plus)
+                            .label(crate::i18n::tr("粘贴")),
+                    ),
             )
     }
 
@@ -396,14 +397,14 @@ impl DownloadPanel {
                             .text_lg()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.foreground)
-                            .child("准备下载"),
+                            .child(crate::i18n::tr("准备下载")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
                             .mt(px(4.0))
-                            .child("粘贴视频链接，自动获取视频信息"),
+                            .child(crate::i18n::tr("粘贴视频链接，自动获取视频信息")),
                     ),
             )
     }
@@ -432,14 +433,14 @@ impl DownloadPanel {
                             .text_lg()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.foreground)
-                            .child("正在获取视频信息..."),
+                            .child(crate::i18n::tr("正在获取视频信息...")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
                             .mt(px(4.0))
-                            .child("请稍候，正在解析视频页面"),
+                            .child(crate::i18n::tr("请稍候，正在解析视频页面")),
                     ),
             )
     }
@@ -476,17 +477,19 @@ impl DownloadPanel {
                             IconName::ChevronDown
                         })
                         .label(if self.show_advanced {
-                            "收起高级选项"
+                            crate::i18n::tr("收起高级选项")
                         } else {
-                            "展开高级选项"
+                            crate::i18n::tr("展开高级选项")
                         }),
                 ),
             )
             // 下载按钮
             .child(
-                div()
-                    .mt(px(8.0))
-                    .child(Button::new("start-download").primary().label("🚀 开始下载")),
+                div().mt(px(8.0)).child(
+                    Button::new("start-download")
+                        .primary()
+                        .label(crate::i18n::tr("🚀 开始下载")),
+                ),
             )
     }
 
@@ -535,7 +538,7 @@ impl DownloadPanel {
                         div().text_xs().text_color(theme.muted_foreground).child(
                             info.uploader
                                 .clone()
-                                .unwrap_or_else(|| "未知上传者".to_string()),
+                                .unwrap_or_else(|| crate::i18n::tr("未知上传者").to_string()),
                         ),
                     )
                     .child(
@@ -547,12 +550,13 @@ impl DownloadPanel {
                             .when_some(info.duration.as_ref(), |this, dur| {
                                 this.child(self.render_info_badge(&format_duration(dur), cx))
                             })
-                            .child(
-                                self.render_info_badge(
-                                    &format!("{} 种格式", info.formats.len()),
-                                    cx,
+                            .child(self.render_info_badge(
+                                &crate::i18n::format(
+                                    "{} 种格式",
+                                    &[format!("{}", info.formats.len())],
                                 ),
-                            ),
+                                cx,
+                            )),
                     ),
             )
     }
@@ -585,7 +589,7 @@ impl DownloadPanel {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.foreground)
-                    .child("视频质量"),
+                    .child(crate::i18n::tr("视频质量")),
             )
             .child(div().flex().flex_wrap().gap(px(8.0)).children(
                 QualityPreset::all().into_iter().map(|quality| {
@@ -634,7 +638,7 @@ impl DownloadPanel {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.foreground)
-                    .child("保存位置"),
+                    .child(crate::i18n::tr("保存位置")),
             )
             .child(
                 div()
@@ -657,7 +661,7 @@ impl DownloadPanel {
                     .child(
                         Button::new("browse-path")
                             .icon(IconName::Folder)
-                            .label("浏览"),
+                            .label(crate::i18n::tr("浏览")),
                     ),
             )
     }
@@ -675,7 +679,7 @@ impl DownloadPanel {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.foreground)
-                    .child("下载选项"),
+                    .child(crate::i18n::tr("下载选项")),
             )
             .child(
                 div()
@@ -683,17 +687,17 @@ impl DownloadPanel {
                     .flex_wrap()
                     .gap(px(12.0))
                     .child(self.render_option_checkbox(
-                        "嵌入元数据",
+                        crate::i18n::tr("嵌入元数据"),
                         self.config.embed_metadata,
                         cx,
                     ))
                     .child(self.render_option_checkbox(
-                        "嵌入缩略图",
+                        crate::i18n::tr("嵌入缩略图"),
                         self.config.embed_thumbnail,
                         cx,
                     ))
                     .child(self.render_option_checkbox(
-                        "下载字幕",
+                        crate::i18n::tr("下载字幕"),
                         self.config.download_subtitles,
                         cx,
                     )),
@@ -787,7 +791,7 @@ impl DownloadPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(foreground)
-                            .child("字幕设置"),
+                            .child(crate::i18n::tr("字幕设置")),
                     )
                     .child(
                         div()
@@ -795,7 +799,7 @@ impl DownloadPanel {
                             .flex_wrap()
                             .gap(px(12.0))
                             .child(render_checkbox_static(
-                                "嵌入字幕到视频",
+                                crate::i18n::tr("嵌入字幕到视频"),
                                 embed_subtitles,
                                 primary,
                                 border,
@@ -804,7 +808,7 @@ impl DownloadPanel {
                                 foreground,
                             ))
                             .child(render_checkbox_static(
-                                "自动生成字幕",
+                                crate::i18n::tr("自动生成字幕"),
                                 auto_subtitles,
                                 primary,
                                 border,
@@ -826,7 +830,10 @@ impl DownloadPanel {
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(foreground)
-                                .child(format!("可用格式 ({})", formats_count)),
+                                .child(crate::i18n::format(
+                                    "可用格式 ({})",
+                                    &[format!("{}", formats_count)],
+                                )),
                         )
                         .child(render_formats_static(
                             &formats,
@@ -868,7 +875,7 @@ impl DownloadPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.danger)
-                            .child("获取视频信息失败"),
+                            .child(crate::i18n::tr("获取视频信息失败")),
                     ),
             )
             .child(
@@ -877,7 +884,12 @@ impl DownloadPanel {
                     .text_color(theme.foreground)
                     .child(error.to_string()),
             )
-            .child(Button::new("retry-fetch").ghost().small().label("重试"))
+            .child(
+                Button::new("retry-fetch")
+                    .ghost()
+                    .small()
+                    .label(crate::i18n::tr("重试")),
+            )
     }
 }
 

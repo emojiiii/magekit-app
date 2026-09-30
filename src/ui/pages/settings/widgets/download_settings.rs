@@ -2,9 +2,9 @@
 
 use crate::ui::widgets::Section;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{Icon, IconName};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{Icon, IconName};
 
 /// 下载设置数据
 #[derive(Debug, Clone)]
@@ -68,10 +68,10 @@ impl RenderOnce for DownloadSettingsCard {
         let muted_color = theme.muted_foreground;
         let input_bg = theme.background;
 
-        Section::new_with_icon("下载", IconName::ArrowDown).child(
+        Section::new_with_icon(crate::i18n::tr("下载"), IconName::ArrowDown).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
@@ -101,13 +101,12 @@ impl RenderOnce for DownloadSettingsCard {
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_color(title_color)
-                                                        .child("下载目录"),
+                                                        .child(crate::i18n::tr("下载目录")),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(muted_color)
-                                                        .child("视频下载的默认保存位置"),
+                                                    div().text_xs().text_color(muted_color).child(
+                                                        crate::i18n::tr("视频下载的默认保存位置"),
+                                                    ),
                                                 ),
                                         ),
                                 )
@@ -131,8 +130,8 @@ impl RenderOnce for DownloadSettingsCard {
                                                 .child(self.download_path.clone()),
                                         )
                                         .child({
-                                            let mut btn =
-                                                Button::new("select-dir").label("浏览...");
+                                            let mut btn = Button::new("select-dir")
+                                                .label(crate::i18n::tr("浏览..."));
                                             if let Some(handler) = self.on_browse {
                                                 btn = btn.on_click(move |ev, window, cx| {
                                                     handler(ev, window, cx)
@@ -165,13 +164,14 @@ impl RenderOnce for DownloadSettingsCard {
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_color(title_color)
-                                                        .child("最大并发下载数"),
+                                                        .child(crate::i18n::tr("最大并发下载数")),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(muted_color)
-                                                        .child("同时下载的任务数量 (1-10)"),
+                                                    div().text_xs().text_color(muted_color).child(
+                                                        crate::i18n::tr(
+                                                            "同时下载的任务数量 (1-10)",
+                                                        ),
+                                                    ),
                                                 ),
                                         ),
                                 )

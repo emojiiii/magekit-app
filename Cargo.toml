@@ -29,12 +29,11 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 url = "2.4"
 
-# GPUI dependencies: keep the compatible release series from Cargo.lock.
-# Upgrade GPUI, components, assets and reqwest_client together after GUI regression testing.
-gpui = { version = "0.2.2" }
-gpui-component = { version = "0.5.0" }
-gpui-component-assets = { version = "0.5.0" }
-reqwest_client = { git = "https://github.com/longbridge/gpui-component.git", tag = "v0.5.0" }
+# GPUI Kit's gpui-fast integration branch is required: its main branch uses
+# gpui-pre snapshots. Pin Kit here; Cargo.lock pins the shared gpui-fast source.
+gpui = { git = "https://github.com/longbridge/gpui-fast", branch = "main" }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "0067bafcf3160cb871eff2521e98a51e526da175" }
+reqwest_client = { git = "https://github.com/longbridge/gpui-fast", branch = "main" }
 
 # Configuration
 toml = "0.9"
@@ -68,8 +67,7 @@ live_recorder = { path = "crates/live_recorder" }
 
 # GPUI dependencies
 gpui = { workspace = true }
-gpui-component = { workspace = true }
-gpui-component-assets = { workspace = true }
+gpui-kit = { workspace = true }
 gpui-router = "0.2.7"
 
 # 异步运行时
@@ -87,6 +85,7 @@ serde_json = { workspace = true }
 # 配置
 toml = { workspace = true }
 dirs = { workspace = true }
+sys-locale = "0.3"
 
 # 日志
 tracing = { workspace = true }
@@ -141,7 +140,7 @@ rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 
-# gpui 0.2.2 通过 stacksafe-macro 间接使用 proc-macro-error2；
-# crates.io 版本会触发 Rust 未来不兼容警告，使用仓库内兼容实现。
+# 让 gpui-router 也使用同一份 gpui-fast，避免来自不同源的 GPUI 类型不兼容。
 [patch.crates-io]
-proc-macro-error2 = { path = "vendor/proc-macro-error2" }
+gpui = { git = "https://github.com/longbridge/gpui-fast", branch = "main" }
+gpui-router = { path = "vendor/gpui-router" }

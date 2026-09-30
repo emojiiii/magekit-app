@@ -3,9 +3,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::*;
 use magekit_shared::truncate_string;
 use magekit_shared::types::DownloadOptions;
 use std::sync::Arc;
@@ -45,12 +45,12 @@ pub enum BatchItemStatus {
 impl BatchItemStatus {
     fn label(&self) -> &'static str {
         match self {
-            BatchItemStatus::Pending => "待处理",
-            BatchItemStatus::Parsing => "解析中",
-            BatchItemStatus::Parsed => "就绪",
-            BatchItemStatus::Downloading => "下载中",
-            BatchItemStatus::Completed => "已完成",
-            BatchItemStatus::Failed(_) => "失败",
+            BatchItemStatus::Pending => crate::i18n::tr("待处理"),
+            BatchItemStatus::Parsing => crate::i18n::tr("解析中"),
+            BatchItemStatus::Parsed => crate::i18n::tr("就绪"),
+            BatchItemStatus::Downloading => crate::i18n::tr("下载中"),
+            BatchItemStatus::Completed => crate::i18n::tr("已完成"),
+            BatchItemStatus::Failed(_) => crate::i18n::tr("失败"),
         }
     }
 }
@@ -73,7 +73,7 @@ pub struct DownloadTemplate {
 impl Default for DownloadTemplate {
     fn default() -> Self {
         Self {
-            name: "默认模板".to_string(),
+            name: crate::i18n::tr("默认模板").to_string(),
             description: None,
             options: DownloadOptions::default(),
             output_dir: "~/Downloads".to_string(),
@@ -159,25 +159,25 @@ impl BatchPanel {
             current_template: 0,
             categories: vec![
                 Category {
-                    name: "音乐".to_string(),
+                    name: crate::i18n::tr("音乐").to_string(),
                     icon: "🎵".to_string(),
                     output_dir: Some("~/Downloads/Music".to_string()),
                     count: 0,
                 },
                 Category {
-                    name: "视频".to_string(),
+                    name: crate::i18n::tr("视频").to_string(),
                     icon: "🎬".to_string(),
                     output_dir: Some("~/Downloads/Videos".to_string()),
                     count: 0,
                 },
                 Category {
-                    name: "教程".to_string(),
+                    name: crate::i18n::tr("教程").to_string(),
                     icon: "📚".to_string(),
                     output_dir: Some("~/Downloads/Tutorials".to_string()),
                     count: 0,
                 },
                 Category {
-                    name: "其他".to_string(),
+                    name: crate::i18n::tr("其他").to_string(),
                     icon: "📁".to_string(),
                     output_dir: None,
                     count: 0,
@@ -363,13 +363,13 @@ impl BatchPanel {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(fg)
-                            .child("📦 批量下载"),
+                            .child(crate::i18n::tr("📦 批量下载")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("{} 个项目", total)),
+                            .child(crate::i18n::format("{} 个项目", &[format!("{}", total)])),
                     ),
             )
             // 统计信息
@@ -380,13 +380,13 @@ impl BatchPanel {
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("待下载: {}", pending)),
+                            .child(crate::i18n::format("待下载: {}", &[format!("{}", pending)])),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted)
-                            .child(format!("已选: {}", selected)),
+                            .child(crate::i18n::format("已选: {}", &[format!("{}", selected)])),
                     ),
             )
     }
@@ -411,13 +411,13 @@ impl BatchPanel {
                         Button::new("paste-urls")
                             .outline()
                             .small()
-                            .label("📋 从剪贴板粘贴"),
+                            .label(crate::i18n::tr("📋 从剪贴板粘贴")),
                     )
                     .child(
                         Button::new("import-file")
                             .outline()
                             .small()
-                            .label("📁 从文件导入"),
+                            .label(crate::i18n::tr("📁 从文件导入")),
                     ),
             )
             // 提示文本
@@ -425,7 +425,7 @@ impl BatchPanel {
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child("支持粘贴多个URL，每行一个"),
+                    .child(crate::i18n::tr("支持粘贴多个URL，每行一个")),
             )
     }
 
@@ -452,7 +452,7 @@ impl BatchPanel {
                     div()
                         .text_sm()
                         .text_color(muted)
-                        .child("粘贴或导入URL开始批量下载"),
+                        .child(crate::i18n::tr("粘贴或导入URL开始批量下载")),
                 )
         } else {
             // 项目列表
@@ -472,13 +472,18 @@ impl BatchPanel {
                             Checkbox::new("select-all-batch")
                                 .checked(self.selected_ids.len() == self.items.len()),
                         )
-                        .child(div().text_sm().text_color(muted).child("全选"))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(muted)
+                                .child(crate::i18n::tr("全选")),
+                        )
                         .child(div().flex_1())
                         .child(
                             Button::new("clear-completed")
                                 .ghost()
                                 .xsmall()
-                                .label("清除已完成"),
+                                .label(crate::i18n::tr("清除已完成")),
                         ),
                 )
                 // 列表
@@ -523,7 +528,7 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("下载模板"),
+                            .child(crate::i18n::tr("下载模板")),
                     )
                     .child(
                         v_flex()
@@ -539,7 +544,7 @@ impl BatchPanel {
                         Button::new("new-template")
                             .ghost()
                             .small()
-                            .label("+ 新建模板"),
+                            .label(crate::i18n::tr("+ 新建模板")),
                     ),
             )
             // 分类
@@ -551,7 +556,7 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("分类"),
+                            .child(crate::i18n::tr("分类")),
                     )
                     .child(
                         h_flex().gap_1().flex_wrap().children(
@@ -570,7 +575,7 @@ impl BatchPanel {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(fg)
-                            .child("输出设置"),
+                            .child(crate::i18n::tr("输出设置")),
                     )
                     .child(
                         v_flex()
@@ -581,13 +586,23 @@ impl BatchPanel {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(div().text_xs().text_color(muted).child("保存位置"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(crate::i18n::tr("保存位置")),
+                                    )
                                     .child(div().text_xs().child("~/Downloads")),
                             )
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(div().text_xs().text_color(muted).child("文件名格式"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(crate::i18n::tr("文件名格式")),
+                                    )
                                     .child(div().text_xs().child("%(title)s.%(ext)s")),
                             ),
                     ),
@@ -616,7 +631,7 @@ impl BatchPanel {
                 h_flex().gap_2().child(
                     Button::new("clear-all")
                         .ghost()
-                        .label("清空列表")
+                        .label(crate::i18n::tr("清空列表"))
                         .disabled(!has_items),
                 ),
             )
@@ -626,13 +641,19 @@ impl BatchPanel {
                     .gap_2()
                     .when(has_selected, |this| {
                         this.child(Button::new("download-selected").outline().label(
-                            SharedString::from(format!("下载选中 ({})", self.selected_ids.len())),
+                            SharedString::from(crate::i18n::format(
+                                "下载选中 ({})",
+                                &[format!("{}", self.selected_ids.len())],
+                            )),
                         ))
                     })
                     .child(
                         Button::new("download-all")
                             .primary()
-                            .label(SharedString::from(format!("全部下载 ({})", pending)))
+                            .label(SharedString::from(crate::i18n::format(
+                                "全部下载 ({})",
+                                &[format!("{}", pending)],
+                            )))
                             .disabled(pending == 0),
                     ),
             )
@@ -750,7 +771,12 @@ fn render_template_item_inline(
             Hsla::transparent_black()
         })
         .cursor_pointer()
-        .child(div().text_sm().text_color(fg).child(template.name.clone()))
+        .child(
+            div()
+                .text_sm()
+                .text_color(fg)
+                .child(crate::i18n::text(&template.name)),
+        )
         .when(template.description.is_some(), |this| {
             this.child(
                 div()
@@ -779,7 +805,7 @@ fn render_category_badge(
         .bg(bg)
         .cursor_pointer()
         .child(div().text_sm().child(category.icon.clone()))
-        .child(div().text_xs().child(category.name.clone()))
+        .child(div().text_xs().child(crate::i18n::text(&category.name)))
         .when(category.count > 0, |this| {
             this.child(
                 div()

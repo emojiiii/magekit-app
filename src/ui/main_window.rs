@@ -8,7 +8,7 @@ use crate::ui::pages::{
     CapturePage, ChannelPage, HomePage, RecordingPage, SettingsPage, TasksPage, ToolsPage,
 };
 use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
 use gpui_router::{Route, Routes};
 use std::sync::Arc;
 
@@ -45,6 +45,19 @@ impl MainWindow {
         let recording_page = cx.new(|cx| RecordingPage::new(app_state.clone(), window, cx));
         let capture_page = cx.new(|cx| CapturePage::new(app_state.clone(), window, cx));
 
+        // 语言切换使所有缓存页面失效，但不重建页面、输入或任务。
+        cx.observe_global::<crate::i18n::LocaleChanged>(|this, cx| {
+            this.home_page.update(cx, |_, cx| cx.notify());
+            this.tasks_page.update(cx, |_, cx| cx.notify());
+            this.tools_page.update(cx, |_, cx| cx.notify());
+            this.settings_page.update(cx, |_, cx| cx.notify());
+            this.channel_page.update(cx, |_, cx| cx.notify());
+            this.recording_page.update(cx, |_, cx| cx.notify());
+            this.capture_page.update(cx, |_, cx| cx.notify());
+            cx.notify();
+        })
+        .detach();
+
         Self {
             app_state,
             home_page,
@@ -59,7 +72,7 @@ impl MainWindow {
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         // 克隆 Entity handles 用于路由
@@ -115,8 +128,5 @@ impl Render for MainWindow {
                         ),
                 ),
             )
-            // 渲染对话框和通知层
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
     }
 }

@@ -1,7 +1,7 @@
 //! 状态徽章组件
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 
 use super::{LiveStatus, RecordingStatus, LiveRoomStatus};
 
@@ -42,9 +42,9 @@ impl Render for StatusBadge {
 impl StatusBadge {
     fn render_live_status(&self, status: LiveStatus, cx: &mut Context<Self>) -> impl IntoElement {
         let (color, icon, text) = match status {
-            LiveStatus::Live => (gpui::green(), "🔴", "直播中"),
-            LiveStatus::Offline => (gpui::gray(), "⚫", "未开播"),
-            LiveStatus::Playback => (gpui::yellow(), "🟡", "轮播中"),
+            LiveStatus::Live => (gpui::green(), "🔴", crate::i18n::tr("直播中")),
+            LiveStatus::Offline => (gpui::gray(), "⚫", crate::i18n::tr("未开播")),
+            LiveStatus::Playback => (gpui::yellow(), "🟡", crate::i18n::tr("轮播中")),
         };
 
         div()
@@ -90,7 +90,7 @@ impl StatusBadge {
                 div()
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("录制中"),
+                    .child(crate::i18n::tr("录制中")),
             )
     }
 
@@ -113,7 +113,7 @@ impl StatusBadge {
                 div()
                     .text_xs()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("自动录制"),
+                    .child(crate::i18n::tr("自动录制")),
             )
     }
 

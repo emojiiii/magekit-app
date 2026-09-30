@@ -220,6 +220,167 @@ async fn direct_timeout() {
     let _ = shutdown_tx.send(());
 }
 
+#[tokio::test]
+async fn direct_cancel_interrupts_waiting_for_response_headers() {
+    assert_direct_cancels_promptly("/slow.bin").await;
+}
+
+#[tokio::test]
+async fn direct_cancel_interrupts_a_stalled_response_body() {
+    assert_direct_cancels_promptly("/stalled.bin").await;
+}
+
+async fn assert_direct_cancels_promptly(path: &str) {
+    let (addr, shutdown) = spawn_test_server().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = DownloadRequest::new(
+        format!("http://{addr}{path}").parse().unwrap(),
+        DownloadOutput {
+            directory: directory.path().into(),
+            template: Some("output.bin".into()),
+            full_path: None,
+        },
+    );
+    request.strategy = DownloadStrategy::Direct;
+    let cancel = CancellationToken::new();
+    let cancel_task = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel_task.cancel();
+    });
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(750),
+        DownloadClient::with_defaults().download(request, &NoopCallback, cancel),
+    )
+    .await
+    .expect("cancellation must interrupt stalled I/O");
+    assert!(matches!(result, Err(download::DownloadError::Canceled)));
+    assert!(!directory.path().join("output.bin").exists());
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn direct_resume_rejects_wrong_range_without_corrupting_partial() {
+    let (addr, shutdown) = spawn_test_server().await;
+    let directory = tempfile::tempdir().unwrap();
+    let partial = directory.path().join("output.bin.part");
+    tokio::fs::write(&partial, "saved").await.unwrap();
+    let mut request = DownloadRequest::new(
+        format!("http://{addr}/wrong-range.bin").parse().unwrap(),
+        DownloadOutput {
+            directory: directory.path().into(),
+            template: Some("output.bin".into()),
+            full_path: None,
+        },
+    );
+    request.strategy = DownloadStrategy::Direct;
+    let result = DownloadClient::with_defaults()
+        .download(request, &NoopCallback, CancellationToken::new())
+        .await;
+    assert!(result.is_err());
+    assert_eq!(tokio::fs::read(&partial).await.unwrap(), b"saved");
+    assert!(!directory.path().join("output.bin").exists());
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn direct_resume_revalidates_a_restarted_html_response() {
+    let (addr, shutdown) = spawn_test_server().await;
+    let directory = tempfile::tempdir().unwrap();
+    tokio::fs::write(directory.path().join("output.mp4.part"), "partial")
+        .await
+        .unwrap();
+    let mut request = DownloadRequest::new(
+        format!("http://{addr}/error-page").parse().unwrap(),
+        DownloadOutput {
+            directory: directory.path().into(),
+            template: Some("output.mp4".into()),
+            full_path: None,
+        },
+    );
+    request.strategy = DownloadStrategy::Direct;
+    let result = DownloadClient::with_defaults()
+        .download(request, &NoopCallback, CancellationToken::new())
+        .await;
+    assert!(result.is_err());
+    assert!(!directory.path().join("output.mp4").exists());
+    let _ = shutdown.send(());
+}
+
+#[cfg(unix)]
+fn fake_tool(directory: &std::path::Path, script: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = directory.join("fake-tool");
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn ytdlp_drains_stderr_after_stdout_closes() {
+    let directory = tempfile::tempdir().unwrap();
+    let tool = fake_tool(
+        directory.path(),
+        "exec 1>&-\ni=0\nwhile [ $i -lt 4000 ]; do echo 'failure details after stdout closed' >&2; i=$((i + 1)); done\nexit 7",
+    );
+    let mut request = DownloadRequest::new(
+        "https://example.com/video".parse().unwrap(),
+        DownloadOutput {
+            directory: directory.path().into(),
+            template: Some("output.mp4".into()),
+            full_path: None,
+        },
+    );
+    request.strategy = DownloadStrategy::YtDlp;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        DownloadClient::with_tools(Some(tool), None).download(
+            request,
+            &NoopCallback,
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("must continue draining stderr instead of deadlocking on wait");
+    assert!(matches!(
+        result,
+        Err(download::DownloadError::ProcessExit { code: Some(7), .. })
+    ));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn tools_remain_cancellable_after_pipes_close() {
+    for strategy in [DownloadStrategy::YtDlp, DownloadStrategy::Ffmpeg] {
+        let directory = tempfile::tempdir().unwrap();
+        let tool = fake_tool(directory.path(), "exec 1>&- 2>&-\nexec sleep 30");
+        let mut request = DownloadRequest::new(
+            "https://example.com/video".parse().unwrap(),
+            DownloadOutput {
+                directory: directory.path().into(),
+                template: Some("output.mp4".into()),
+                full_path: None,
+            },
+        );
+        request.strategy = strategy;
+        let cancel = CancellationToken::new();
+        let cancel_task = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+            cancel_task.cancel();
+        });
+        let client = DownloadClient::with_tools(Some(tool.clone()), Some(tool));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(750),
+            client.download(request, &NoopCallback, cancel),
+        )
+        .await
+        .expect("tool final wait must remain cancellable");
+        assert!(matches!(result, Err(download::DownloadError::Canceled)));
+    }
+}
+
 async fn spawn_test_server() -> (SocketAddr, oneshot::Sender<()>) {
     let (tx, rx) = oneshot::channel();
     let make_svc =
@@ -258,6 +419,23 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Infallible
                 }
             }
             Ok(Response::new(Body::from(full.to_vec())))
+        }
+        "/wrong-range.bin" => Ok(Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Content-Range", "bytes 0-3/4")
+            .body(Body::from("oops"))
+            .unwrap()),
+        "/error-page" => Ok(Response::builder()
+            .header("Content-Type", "text/html")
+            .body(Body::from("<html>access denied</html>"))
+            .unwrap()),
+        "/stalled.bin" => {
+            let (sender, body) = Body::channel();
+            tokio::spawn(async move {
+                let _sender = sender;
+                std::future::pending::<()>().await;
+            });
+            Ok(Response::new(body))
         }
         "/norange.bin" => {
             // 无论 Range 与否都返回 200 全量

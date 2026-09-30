@@ -143,3 +143,56 @@ fn test_download_error_clone() {
     let e2 = e1.clone();
     assert_eq!(format!("{e1}"), format!("{e2}"));
 }
+
+#[test]
+fn output_template_cannot_escape_directory() {
+    for template in [
+        "../escape.mp4",
+        "/tmp/escape.mp4",
+        r"..\escape.mp4",
+        r"C:\escape.mp4",
+        r"\\server\escape.mp4",
+        "foo/../../escape",
+        "bad\0file",
+    ] {
+        assert!(
+            download::utils::validate_output_template(template).is_err(),
+            "{template}"
+        );
+    }
+    assert!(download::utils::validate_output_template("series/%(title)s.%(ext)s").is_ok());
+}
+
+#[test]
+fn requests_reject_non_http_urls_and_header_injection() {
+    let output = download::DownloadOutput {
+        directory: "downloads".into(),
+        template: None,
+        full_path: None,
+    };
+    let mut request = download::DownloadRequest::new("file:///etc/passwd".parse().unwrap(), output);
+    assert!(download::utils::validate_request(&request).is_err());
+    request.url = "https://example.com/file".parse().unwrap();
+    request
+        .extra
+        .headers
+        .insert("User-Agent".into(), "normal\r\nX-Injected: yes".into());
+    assert!(download::utils::validate_request(&request).is_err());
+    request.extra.headers.clear();
+    request.extra.cookie = Some("a=1\nX-Injected: yes".into());
+    assert!(download::utils::validate_request(&request).is_err());
+}
+
+#[test]
+fn malformed_content_ranges_are_rejected() {
+    for value in [
+        "bytes 6-5/123",
+        "bytes 0-123/123",
+        "something/123",
+        "bytes 0-5/nope",
+    ] {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::CONTENT_RANGE, value.parse().unwrap());
+        assert_eq!(parse_content_range_total(&headers), None);
+    }
+}

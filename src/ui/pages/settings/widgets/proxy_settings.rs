@@ -3,10 +3,11 @@
 use crate::ui::widgets::Section;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
-use gpui_component::{Icon, IconName, Sizable};
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{ActiveTheme, Disableable};
+use gpui_kit::component::{Icon, IconName, Sizable};
 
 /// 代理模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -101,29 +102,26 @@ impl RenderOnce for ProxySettingsCard {
         let border_color = theme.border;
         let title_color = theme.foreground;
         let muted_color = theme.muted_foreground;
-        // 使用 hsla 创建颜色以支持 opacity
-        let success_color = gpui::hsla(142.0 / 360.0, 0.71, 0.45, 1.0); // green-500
-        let error_color = gpui::hsla(0.0 / 360.0, 0.84, 0.60, 1.0); // red-500
 
         let current_mode = self.mode;
         let test_status = self.test_status;
 
         // 创建三个模式按钮
-        let mut none_btn = Button::new("proxy-mode-none").label("不使用代理");
+        let mut none_btn = Button::new("proxy-mode-none").label(crate::i18n::tr("不使用代理"));
         if current_mode == ProxyMode::None {
             none_btn = none_btn.primary();
         } else {
             none_btn = none_btn.ghost();
         }
 
-        let mut system_btn = Button::new("proxy-mode-system").label("系统代理");
+        let mut system_btn = Button::new("proxy-mode-system").label(crate::i18n::tr("系统代理"));
         if current_mode == ProxyMode::System {
             system_btn = system_btn.primary();
         } else {
             system_btn = system_btn.ghost();
         }
 
-        let mut custom_btn = Button::new("proxy-mode-custom").label("自定义");
+        let mut custom_btn = Button::new("proxy-mode-custom").label(crate::i18n::tr("自定义"));
         if current_mode == ProxyMode::Custom {
             custom_btn = custom_btn.primary();
         } else {
@@ -142,12 +140,16 @@ impl RenderOnce for ProxySettingsCard {
         }
 
         // 测试按钮
-        let mut test_btn = Button::new("proxy-test").small().label(match test_status {
-            ProxyTestStatus::Idle => "测试连接",
-            ProxyTestStatus::Testing => "测试中...",
-            ProxyTestStatus::Success => "连接成功",
-            ProxyTestStatus::Failed => "连接失败",
-        });
+        let mut test_btn = Button::new("proxy-test")
+            .small()
+            .loading(test_status == ProxyTestStatus::Testing)
+            .disabled(test_status == ProxyTestStatus::Testing)
+            .label(match test_status {
+                ProxyTestStatus::Idle => crate::i18n::tr("测试连接"),
+                ProxyTestStatus::Testing => crate::i18n::tr("测试中..."),
+                ProxyTestStatus::Success => crate::i18n::tr("端口可达"),
+                ProxyTestStatus::Failed => crate::i18n::tr("连接失败"),
+            });
 
         if test_status == ProxyTestStatus::Testing {
             test_btn = test_btn.ghost();
@@ -163,10 +165,10 @@ impl RenderOnce for ProxySettingsCard {
             test_btn = test_btn.on_click(handler);
         }
 
-        Section::new_with_icon("网络代理", IconName::Globe).child(
+        Section::new_with_icon(crate::i18n::tr("网络代理"), IconName::Globe).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
@@ -198,13 +200,12 @@ impl RenderOnce for ProxySettingsCard {
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_color(title_color)
-                                                        .child("代理模式"),
+                                                        .child(crate::i18n::tr("代理模式")),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(muted_color)
-                                                        .child("选择网络代理的使用方式"),
+                                                    div().text_xs().text_color(muted_color).child(
+                                                        crate::i18n::tr("选择网络代理的使用方式"),
+                                                    ),
                                                 ),
                                         ),
                                 )
@@ -242,13 +243,15 @@ impl RenderOnce for ProxySettingsCard {
                                                             .text_sm()
                                                             .font_weight(FontWeight::MEDIUM)
                                                             .text_color(title_color)
-                                                            .child("代理地址"),
+                                                            .child(crate::i18n::tr("代理地址")),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_xs()
                                                             .text_color(muted_color)
-                                                            .child("支持 HTTP/HTTPS/SOCKS5 代理"),
+                                                            .child(crate::i18n::tr(
+                                                                "支持 HTTP/HTTPS/SOCKS5 代理",
+                                                            )),
                                                     ),
                                             ),
                                     )
@@ -284,7 +287,7 @@ impl RenderOnce for ProxySettingsCard {
                                         div()
                                             .text_sm()
                                             .text_color(theme.accent)
-                                            .child("将自动使用系统代理设置"),
+                                            .child(crate::i18n::tr("将自动使用系统代理设置")),
                                     ),
                             )
                         })
@@ -293,52 +296,20 @@ impl RenderOnce for ProxySettingsCard {
                             current_mode == ProxyMode::Custom
                                 && test_status == ProxyTestStatus::Success,
                             |el| {
-                                el.child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .p(px(12.0))
-                                        .rounded(px(8.0))
-                                        .bg(success_color.opacity(0.1))
-                                        .child(
-                                            Icon::new(IconName::CircleCheck)
-                                                .small()
-                                                .text_color(success_color),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(success_color)
-                                                .child("代理连接正常"),
-                                        ),
-                                )
+                                el.child(Alert::success(
+                                    "proxy-reachable",
+                                    crate::i18n::tr("代理端口可达；尚未验证认证和转发能力"),
+                                ))
                             },
                         )
                         .when(
                             current_mode == ProxyMode::Custom
                                 && test_status == ProxyTestStatus::Failed,
                             |el| {
-                                el.child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .p(px(12.0))
-                                        .rounded(px(8.0))
-                                        .bg(error_color.opacity(0.1))
-                                        .child(
-                                            Icon::new(IconName::CircleX)
-                                                .small()
-                                                .text_color(error_color),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(error_color)
-                                                .child("无法连接到代理服务器"),
-                                        ),
-                                )
+                                el.child(Alert::error(
+                                    "proxy-unreachable",
+                                    crate::i18n::tr("无法连接到代理服务器"),
+                                ))
                             },
                         ),
                 ),

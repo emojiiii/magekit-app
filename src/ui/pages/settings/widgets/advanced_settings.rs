@@ -3,9 +3,9 @@
 use crate::ui::widgets::Section;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::switch::Switch;
-use gpui_component::{Icon, IconName};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{Icon, IconName};
 
 /// 高级设置数据
 #[derive(Debug, Clone)]
@@ -69,10 +69,10 @@ impl RenderOnce for AdvancedSettingsCard {
         let card_bg = theme.secondary;
         let border_color = theme.border;
 
-        Section::new_with_icon("高级", IconName::Settings).child(
+        Section::new_with_icon(crate::i18n::tr("高级"), IconName::Settings).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
@@ -82,21 +82,27 @@ impl RenderOnce for AdvancedSettingsCard {
                         .flex_col()
                         // 自动检查更新
                         .child(
-                            SettingsToggleItem::new("auto-updates", "自动检查更新")
-                                .description("启动时自动检查工具和应用更新")
-                                .icon(IconName::Loader)
-                                .checked(auto_check)
-                                .border_bottom(true)
-                                .when_some(self.on_toggle_updates, |el, handler| {
+                            SettingsToggleItem::new(
+                                "auto-updates",
+                                crate::i18n::tr("自动检查更新"),
+                            )
+                            .description(crate::i18n::tr("启动时自动检查工具和应用更新"))
+                            .icon(IconName::Loader)
+                            .checked(auto_check)
+                            .border_bottom(true)
+                            .when_some(
+                                self.on_toggle_updates,
+                                |el, handler| {
                                     el.on_toggle(move |checked, window, cx| {
                                         handler(&checked, window, cx)
                                     })
-                                }),
+                                },
+                            ),
                         )
                         // 调试模式
                         .child(
-                            SettingsToggleItem::new("debug-mode", "调试模式")
-                                .description("启用详细日志和调试信息")
+                            SettingsToggleItem::new("debug-mode", crate::i18n::tr("调试模式"))
+                                .description(crate::i18n::tr("启用详细日志和调试信息"))
                                 .icon(IconName::Inspector)
                                 .checked(debug_mode)
                                 .when_some(self.on_toggle_debug, |el, handler| {

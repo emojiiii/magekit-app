@@ -3,7 +3,6 @@ use std::process::Stdio;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::DownloadRequest;
@@ -44,6 +43,10 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<DownloadOutcome> {
+        crate::utils::validate_request(&request)?;
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         callback.on_progress(DownloadProgress::preparing());
 
         let total_duration_secs = probe_m3u8_total_duration_secs(&request, &cancel).await;
@@ -64,7 +67,11 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         if let Some(cookie) = &request.extra.cookie {
             header_lines.push(format!("Cookie: {}", cookie));
         }
-        let header_blob = header_lines.join("\r\n");
+        let header_blob = if header_lines.is_empty() {
+            String::new()
+        } else {
+            format!("{}\r\n", header_lines.join("\r\n"))
+        };
 
         tracing::info!(
             "🔧 构建 ffmpeg 命令，headers数量: {}",
@@ -72,14 +79,14 @@ impl crate::downloader::Downloader for FfmpegDownloader {
         );
         tracing::info!("📁 ffmpeg 路径: {:?}", self.ffmpeg_path);
 
-        let mut cmd = Command::new(&self.ffmpeg_path);
+        let mut cmd = magekit_shared::create_tokio_command(&self.ffmpeg_path);
         cmd.arg("-hide_banner");
         // 降噪：避免刷屏的 hls “Opening ... for reading” 日志
         cmd.arg("-loglevel").arg("warning");
         cmd.arg("-y");
         if !header_blob.is_empty() {
             cmd.arg("-headers").arg(&header_blob);
-            tracing::debug!("📝 添加 headers:\n{}", header_blob);
+            tracing::debug!("📝 已添加请求 headers（值不记录）");
         }
         cmd.arg("-i").arg(request.url.to_string());
 
@@ -88,7 +95,7 @@ impl crate::downloader::Downloader for FfmpegDownloader {
             // 对于多输入（如 DASH：video+audio），需要给每个额外输入重复 headers，
             // 否则可能出现 403/返回 HTML 导致合并失败。
             cmd.args(expand_ffmpeg_args_with_headers(args, &header_blob));
-            tracing::debug!("📝 添加额外参数: {:?}", args);
+            tracing::debug!("📝 添加额外参数: {} 项", args.len());
         }
 
         // 直接拷贝封装，避免重编码
@@ -137,7 +144,7 @@ impl crate::downloader::Downloader for FfmpegDownloader {
             } else {
                 "-headers <...> "
             },
-            request.url,
+            magekit_shared::redact_url_for_log(request.url.as_str()),
             format_arg,
             output_path.display()
         );
@@ -195,6 +202,7 @@ impl crate::downloader::Downloader for FfmpegDownloader {
                 _ = cancel.cancelled() => {
                     tracing::warn!("⚠️ 下载被取消");
                     let _ = child.kill().await;
+                    stderr_handle.abort();
                     return Err(DownloadError::Canceled);
                 }
                 line = stdout.next_line() => {
@@ -283,10 +291,15 @@ impl crate::downloader::Downloader for FfmpegDownloader {
 
         // 等待进程结束并获取stderr
         tracing::info!("⏳ 等待 ffmpeg 进程退出...");
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| DownloadError::Internal(format!("wait ffmpeg failed: {}", e)))?;
+        let status = tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = child.kill().await;
+                stderr_handle.abort();
+                return Err(DownloadError::Canceled);
+            }
+            status = child.wait() => status
+                .map_err(|e| DownloadError::Internal(format!("wait ffmpeg failed: {}", e)))?,
+        };
 
         let stderr_buf = stderr_handle.await.unwrap_or_default();
 

@@ -3,20 +3,28 @@
 use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::WindowExt;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
-use gpui_component::notification::Notification;
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::spinner::Spinner;
-use gpui_component::{
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::tag::Tag;
+use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
 };
-use gpui_router::use_navigate;
+use gpui_router::{use_location, use_navigate};
 use magekit_shared::{ChannelInfo, ChannelTab, ChannelTabType, ChannelVideoEntry};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 #[derive(Debug, Clone)]
 struct TabPagingState {
@@ -26,6 +34,32 @@ struct TabPagingState {
     total: Option<usize>,
     initialized: bool,
     loading: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PageRequest {
+    channel: u64,
+    view: u64,
+    tab: Option<usize>,
+}
+impl PageRequest {
+    fn belongs_to(self, channel: u64) -> bool {
+        self.channel == channel
+    }
+    fn may_navigate(self, channel: u64, view: u64, tab: Option<usize>) -> bool {
+        self.belongs_to(channel) && self.view == view && self.tab == tab
+    }
+}
+
+fn page_count(loaded: usize, total: Option<usize>, has_more: bool) -> usize {
+    let loaded_pages = loaded.div_ceil(ITEMS_PER_PAGE);
+    if !has_more {
+        return loaded_pages;
+    }
+    total
+        .filter(|total| *total > loaded)
+        .map(|total| total.div_ceil(ITEMS_PER_PAGE))
+        .unwrap_or(loaded_pages + 1)
 }
 
 /// 格式化时长
@@ -42,7 +76,7 @@ fn format_duration(seconds: Option<u64>) -> String {
                 format!("{}:{:02}", minutes, seconds)
             }
         }
-        None => "未知".to_string(),
+        None => crate::i18n::tr("未知").to_string(),
     }
 }
 
@@ -93,23 +127,33 @@ pub struct ChannelPage {
     scroll_handle: VirtualListScrollHandle,
     /// 预计算的 item sizes
     item_sizes: Rc<Vec<Size<Pixels>>>,
+    request_generation: u64,
+    view_generation: u64,
+    page_error: Option<String>,
+    submitting: bool,
+    batch_progress: usize,
+    batch_total: usize,
+    batch_cancel: Arc<AtomicBool>,
 }
 
 /// 视频项的固定高度
-const VIDEO_ITEM_HEIGHT: f32 = 70.0;
+const VIDEO_ITEM_HEIGHT: f32 = 84.0;
 
-fn is_probably_youtube_channel_url(url: &str) -> bool {
-    let lower = url.to_lowercase();
-    if !lower.contains("youtube.com/") {
+fn is_probably_youtube_channel_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default();
+    if !(host == "youtube.com" || host.ends_with(".youtube.com"))
+        || url.query_pairs().any(|(name, _)| name == "list")
+    {
         return false;
     }
-    if lower.contains("/playlist") || lower.contains("list=") {
-        return false;
-    }
-    lower.contains("/@")
-        || lower.contains("/channel/")
-        || lower.contains("/user/")
-        || lower.contains("/c/")
+    let path = url.path();
+    path.starts_with("/@")
+        || path.starts_with("/channel/")
+        || path.starts_with("/user/")
+        || path.starts_with("/c/")
 }
 
 fn youtube_channel_base_url(url: &str) -> String {
@@ -155,10 +199,20 @@ fn youtube_tab_url(base_url: &str, tab: &str) -> String {
 impl ChannelPage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("粘贴 YouTube 频道、播放列表或 Bilibili UP主空间链接...")
-                .clean_on_escape()
+            crate::i18n::input(
+                "粘贴 YouTube 频道、播放列表或 Bilibili UP主空间链接...",
+                window,
+                cx,
+            )
+            .clean_on_escape()
         });
+
+        cx.subscribe(&url_input, |this, _, event, cx| match event {
+            InputEvent::PressEnter { .. } => this.on_parse(cx),
+            InputEvent::Change if !this.submitting => this.invalidate_parse(cx),
+            _ => {}
+        })
+        .detach();
 
         Self {
             app_state,
@@ -174,6 +228,13 @@ impl ChannelPage {
             current_page: 0,
             scroll_handle: VirtualListScrollHandle::new(),
             item_sizes: Rc::new(Vec::new()),
+            request_generation: 0,
+            view_generation: 0,
+            page_error: None,
+            submitting: false,
+            batch_progress: 0,
+            batch_total: 0,
+            batch_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -243,8 +304,6 @@ impl ChannelPage {
                     .unwrap_or(0),
             };
 
-            let base_pages = (loaded + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
-
             let total_opt = match self.current_tab_index {
                 None => {
                     let total = info.video_count.max(loaded);
@@ -265,11 +324,7 @@ impl ChannelPage {
                     .unwrap_or(false),
             };
 
-            if let Some(total) = total_opt {
-                (total + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE
-            } else {
-                base_pages + if has_more { 1 } else { 0 }
-            }
+            page_count(loaded, total_opt, has_more)
         } else {
             0
         }
@@ -289,6 +344,8 @@ impl ChannelPage {
         if self.hide_all_tab && tab_index.is_none() {
             return;
         }
+        self.view_generation = self.view_generation.wrapping_add(1);
+        self.page_error = None;
         self.current_tab_index = tab_index;
         self.current_page = 0;
         self.scroll_handle = VirtualListScrollHandle::new();
@@ -308,6 +365,8 @@ impl ChannelPage {
     fn switch_page(&mut self, page: usize, cx: &mut Context<Self>) {
         let total_pages = self.get_total_pages();
         if page < total_pages {
+            self.view_generation = self.view_generation.wrapping_add(1);
+            self.page_error = None;
             self.current_page = page;
             self.scroll_handle = VirtualListScrollHandle::new();
             self.update_item_sizes();
@@ -384,6 +443,12 @@ impl ChannelPage {
         let url = paging.url.clone();
         let cursor = paging.next_cursor;
         paging.loading = true;
+        self.page_error = None;
+        let request = PageRequest {
+            channel: self.request_generation,
+            view: self.view_generation,
+            tab: self.current_tab_index,
+        };
         cx.notify();
 
         let app_state = self.app_state.clone();
@@ -408,6 +473,9 @@ impl ChannelPage {
             .await;
 
             let _ = this.update(cx, |this, cx| {
+                if !request.belongs_to(this.request_generation) {
+                    return;
+                }
                 if let Some(p) = this.tab_paging.get_mut(tab_index) {
                     p.loading = false;
                 }
@@ -434,11 +502,25 @@ impl ChannelPage {
                             p.total = Some(page.info.video_count);
                         }
 
-                        this.current_page = target_page;
-                        this.scroll_handle = VirtualListScrollHandle::new();
+                        if request.may_navigate(
+                            this.request_generation,
+                            this.view_generation,
+                            this.current_tab_index,
+                        ) {
+                            this.current_page =
+                                target_page.min(this.get_total_pages().saturating_sub(1));
+                            this.scroll_handle = VirtualListScrollHandle::new();
+                        }
                         this.update_item_sizes();
                     }
                     Err(e) => {
+                        if request.may_navigate(
+                            this.request_generation,
+                            this.view_generation,
+                            this.current_tab_index,
+                        ) {
+                            this.page_error = Some(e.to_string());
+                        }
                         tracing::error!(
                             "❌ 加载 Tab 下一页失败: url={} err={}",
                             url_for_log,
@@ -453,6 +535,9 @@ impl ChannelPage {
     }
 
     fn load_more_then_switch(&mut self, target_page: usize, cx: &mut Context<Self>) {
+        if self.loading_more {
+            return;
+        }
         let url = match self.active_url.clone() {
             Some(u) => u,
             None => return,
@@ -468,6 +553,12 @@ impl ChannelPage {
         };
 
         self.loading_more = true;
+        self.page_error = None;
+        let request = PageRequest {
+            channel: self.request_generation,
+            view: self.view_generation,
+            tab: self.current_tab_index,
+        };
         cx.notify();
 
         let app_state = self.app_state.clone();
@@ -492,6 +583,9 @@ impl ChannelPage {
             .await;
 
             let _ = this.update(cx, |this, cx| {
+                if !request.belongs_to(this.request_generation) {
+                    return;
+                }
                 this.loading_more = false;
                 match result {
                     Ok(page) => {
@@ -516,11 +610,25 @@ impl ChannelPage {
                         this.has_more_remote = page.has_more;
 
                         // 切换到目标页（确保在追加后执行）
-                        this.current_page = target_page;
-                        this.scroll_handle = VirtualListScrollHandle::new();
+                        if request.may_navigate(
+                            this.request_generation,
+                            this.view_generation,
+                            this.current_tab_index,
+                        ) {
+                            this.current_page =
+                                target_page.min(this.get_total_pages().saturating_sub(1));
+                            this.scroll_handle = VirtualListScrollHandle::new();
+                        }
                         this.update_item_sizes();
                     }
                     Err(e) => {
+                        if request.may_navigate(
+                            this.request_generation,
+                            this.view_generation,
+                            this.current_tab_index,
+                        ) {
+                            this.page_error = Some(e.to_string());
+                        }
                         tracing::error!(
                             "❌ 加载下一页失败: url={} err={}",
                             url_for_log,
@@ -538,15 +646,39 @@ impl ChannelPage {
         self.url_input.read(cx).value().to_string()
     }
 
-    /// 解析频道
+    fn invalidate_parse(&mut self, cx: &mut Context<Self>) {
+        self.request_generation = self.request_generation.wrapping_add(1);
+        self.view_generation = self.view_generation.wrapping_add(1);
+        self.state = ChannelState::Idle;
+        self.active_url = None;
+        self.current_tab_index = None;
+        self.current_page = 0;
+        self.next_cursor = None;
+        self.has_more_remote = false;
+        self.loading_more = false;
+        self.hide_all_tab = false;
+        self.tab_paging.clear();
+        self.page_error = None;
+        self.update_item_sizes();
+        cx.notify();
+    }
+
+    /// 解析频道：输入变化或取消会废弃旧请求结果。
     fn on_parse(&mut self, cx: &mut Context<Self>) {
-        let url = self.get_url(cx);
-        if url.trim().is_empty() {
-            self.state = ChannelState::Error("请输入频道链接".to_string());
-            cx.notify();
+        if self.submitting || matches!(self.state, ChannelState::Parsing) {
             return;
         }
-
+        let url = match AppState::validate_media_url(&self.get_url(cx)) {
+            Ok(url) => url,
+            Err(error) => {
+                self.invalidate_parse(cx);
+                self.state = ChannelState::Error(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        self.invalidate_parse(cx);
+        let generation = self.request_generation;
         self.state = ChannelState::Parsing;
         self.active_url = Some(url.clone());
         self.next_cursor = None;
@@ -594,6 +726,11 @@ impl ChannelPage {
 
             // 更新 UI
             let _ = this.update(cx, |this, cx| {
+                if this.request_generation != generation
+                    || !matches!(this.state, ChannelState::Parsing)
+                {
+                    return;
+                }
                 match result {
                     Ok(page) => {
                         let mut info = page.info;
@@ -706,6 +843,9 @@ impl ChannelPage {
 
     /// 切换视频选中状态
     fn toggle_video(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
         if let ChannelState::Ready(ref mut info) = self.state {
             match self.current_tab_index {
                 None => {
@@ -728,6 +868,9 @@ impl ChannelPage {
 
     /// 全选/取消全选
     fn select_all(&mut self, selected: bool, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
         if let ChannelState::Ready(ref mut info) = self.state {
             match self.current_tab_index {
                 None => {
@@ -749,6 +892,9 @@ impl ChannelPage {
 
     /// 开始下载选中的视频
     fn download_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
         let selected_entries: Vec<ChannelVideoEntry> =
             if let ChannelState::Ready(ref info) = self.state {
                 match self.current_tab_index {
@@ -769,82 +915,144 @@ impl ChannelPage {
             };
 
         if selected_entries.is_empty() {
-            window.push_notification(Notification::error("请至少选择一个视频"), cx);
+            window.push_notification(
+                Notification::error(crate::i18n::tr("请至少选择一个视频")),
+                cx,
+            );
             return;
         }
 
-        let count = selected_entries.len();
-        tracing::info!("📥 开始批量下载 {} 个视频", count);
-
-        // 导航到任务页
-        {
-            let mut navigate = use_navigate(cx);
-            navigate("/tasks".into());
-        }
-        window.refresh();
-
+        self.submitting = true;
+        self.batch_progress = 0;
+        self.batch_total = selected_entries.len();
+        self.batch_cancel = Arc::new(AtomicBool::new(false));
+        let cancel = self.batch_cancel.clone();
+        let tab_index = self.current_tab_index;
         let app_state = self.app_state.clone();
-        let output_dir = app_state
-            .config
-            .blocking_read()
-            .download
-            .default_output_path
-            .clone();
-
-        // 为每个视频创建下载任务
-        // ToolManager 会自动处理任务创建、状态更新和持久化
-        for entry in selected_entries {
-            let url = entry.url.clone();
-
-            let options = crate::app::DownloadVideoOptions {
-                embed_metadata: true,
-                embed_thumbnail: false,
-                download_subtitles: false,
-                audio_only: false,
-            };
-
-            // 在后台启动下载
-            let _handle = app_state.start_download_in_background(
-                url,
-                output_dir.clone(),
-                "bestvideo+bestaudio/best".to_string(),
-                options,
-            );
-        }
-
-        window.push_notification(
-            Notification::success(format!("已添加 {} 个下载任务", count)),
-            cx,
-        );
+        let output_dir = app_state.config().download.default_output_path.clone();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut added = 0usize;
+            let mut errors = Vec::new();
+            // 逐个创建，避免为大型频道一次生成数百个线程；成功项立即取消选中。
+            for entry in selected_entries {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                let handle = app_state.start_download_in_background(
+                    entry.url.clone(),
+                    output_dir.clone(),
+                    "bestvideo+bestaudio/best".into(),
+                    crate::app::DownloadVideoOptions {
+                        embed_metadata: true,
+                        embed_thumbnail: false,
+                        download_subtitles: false,
+                        audio_only: false,
+                    },
+                );
+                let result = smol::unblock(move || {
+                    handle.join().unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(crate::i18n::tr("创建下载任务失败")))
+                    })
+                })
+                .await;
+                let success = result.is_ok();
+                match result {
+                    Ok(_) => added += 1,
+                    Err(error) => errors.push(format!("{}: {}", entry.title, error)),
+                }
+                if this
+                    .update_in(cx, |this, _, cx| {
+                        this.batch_progress += 1;
+                        if success {
+                            if let ChannelState::Ready(info) = &mut this.state {
+                                let entries = match tab_index {
+                                    None => Some(&mut info.entries),
+                                    Some(index) => {
+                                        info.tabs.get_mut(index).map(|tab| &mut tab.entries)
+                                    }
+                                };
+                                if let Some(entries) = entries {
+                                    for item in
+                                        entries.iter_mut().filter(|item| item.id == entry.id)
+                                    {
+                                        item.selected = false;
+                                    }
+                                }
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.submitting = false;
+                if errors.is_empty() {
+                    window.push_notification(
+                        Notification::success(crate::i18n::format(
+                            "已添加 {} 个下载任务",
+                            &[added.to_string()],
+                        )),
+                        cx,
+                    );
+                    if added > 0
+                        && !cancel.load(Ordering::Relaxed)
+                        && use_location(cx).pathname.as_ref() == "/channel"
+                    {
+                        use_navigate(cx)("/tasks".into());
+                    }
+                } else {
+                    window.push_notification(
+                        Notification::error(crate::i18n::format(
+                            "已添加 {} 个任务，{} 个失败。{}",
+                            &[
+                                added.to_string(),
+                                errors.len().to_string(),
+                                errors[0].clone(),
+                            ],
+                        )),
+                        cx,
+                    );
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 渲染空闲状态
-    fn render_idle(&self, _cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .py_12()
-            .gap_4()
-            .child(
-                Icon::new(IconName::Folder)
-                    .size_16()
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.3)),
+    fn render_idle(&self, cx: &Context<Self>) -> impl IntoElement {
+        Empty::new()
+            .py_6()
+            .header(
+                EmptyHeader::new()
+                    .media(
+                        EmptyMedia::new()
+                            .size_8()
+                            .rounded_xl()
+                            .bg(cx.theme().muted)
+                            .child(
+                                Icon::new(IconName::FolderOpen)
+                                    .size_4()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
+                    .title(EmptyTitle::new().child(crate::i18n::tr("输入频道链接开始解析")))
+                    .description(EmptyDescription::new().child(crate::i18n::tr(
+                        "支持 YouTube 频道 (@username)、播放列表、Bilibili UP主空间等",
+                    ))),
             )
             .child(
                 div()
-                    .text_lg()
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.5))
-                    .child("输入频道链接开始解析"),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.4))
-                    .max_w(px(400.0))
-                    .text_center()
-                    .child("支持 YouTube 频道 (@username)、播放列表、Bilibili UP主空间等"),
+                    .flex()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_2()
+                    .child(Tag::secondary().small().child(crate::i18n::tr("频道")))
+                    .child(Tag::secondary().small().child(crate::i18n::tr("播放列表"))),
             )
     }
 
@@ -857,45 +1065,33 @@ impl ChannelPage {
             .flex_col()
             .items_center()
             .justify_center()
-            .py_12()
+            .py_6()
             .gap_4()
             .child(Spinner::new().large().color(theme.primary))
-            .child(div().text_lg().child("正在解析频道..."))
+            .child(div().text_lg().child(crate::i18n::tr("正在解析频道...")))
             .child(
                 div()
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("这可能需要一些时间，取决于视频数量"),
+                    .child(crate::i18n::tr("这可能需要一些时间，取决于视频数量")),
             )
     }
 
     /// 渲染错误状态
-    fn render_error(&self, error: &str) -> impl IntoElement {
+    fn render_error(&self, error: &str, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .py_12()
-            .gap_4()
+            .gap_3()
             .child(
-                Icon::new(IconName::CircleX)
-                    .size_12()
-                    .text_color(gpui::hsla(0.0, 0.7, 0.5, 1.0)),
+                Alert::error("channel-parse-error", error.to_string())
+                    .title(crate::i18n::tr("解析失败")),
             )
             .child(
-                div()
-                    .text_lg()
-                    .text_color(gpui::hsla(0.0, 0.7, 0.5, 1.0))
-                    .child("解析失败"),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.6))
-                    .max_w(px(400.0))
-                    .text_center()
-                    .child(error.to_string()),
+                Button::new("retry-channel")
+                    .outline()
+                    .label(crate::i18n::tr("重试"))
+                    .on_click(cx.listener(|this, _, _, cx| this.on_parse(cx))),
             )
     }
 
@@ -926,11 +1122,7 @@ impl ChannelPage {
         // 提取主题颜色供后续使用
         let primary = theme.primary;
         let border_color = theme.border;
-        let secondary = theme.secondary;
-        let _muted = theme.muted;
         let muted_foreground = theme.muted_foreground;
-        let primary_foreground = theme.primary_foreground;
-        let foreground = theme.foreground;
 
         // 当前 Tab 和分页信息
         let current_tab_index = self.current_tab_index;
@@ -959,83 +1151,42 @@ impl ChannelPage {
             this.download_selected(window, cx);
         });
 
-        // 渲染 Tab 选择器
-        let has_tabs = !info.tabs.is_empty();
-        let tabs_clone = info.tabs.clone();
-        let tab_buttons = if has_tabs {
-            let mut buttons = Vec::new();
-
-            // "全部" Tab（某些平台/模式下要隐藏，避免与“分类 Tab”语义冲突）
+        // Kit tabs provide keyboard navigation and an overflow menu on narrow windows.
+        let mut tab_items = Vec::new();
+        let mut tab_targets = Vec::new();
+        if !info.tabs.is_empty() {
             if !self.hide_all_tab {
-                let is_selected = current_tab_index.is_none();
-                let btn_primary = primary;
-                let btn_secondary = secondary;
-                let btn_foreground = foreground;
-                let btn_primary_foreground = primary_foreground;
-
-                buttons.push(
-                    div()
-                        .id("tab-all")
-                        .px_4()
-                        .py_2()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .when(is_selected, |d| {
-                            d.bg(btn_primary).text_color(btn_primary_foreground)
-                        })
-                        .when(!is_selected, |d| {
-                            d.bg(btn_secondary)
-                                .text_color(btn_foreground)
-                                .hover(|s| s.bg(btn_secondary.opacity(0.8)))
-                        })
-                        .child("全部")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.switch_tab(None, cx);
-                        })),
-                );
+                tab_items.push(Tab::new().label(crate::i18n::tr("全部")));
+                tab_targets.push(None);
             }
-
-            // 各个 Tab 按钮
-            for (idx, tab) in tabs_clone.iter().enumerate() {
-                let tab_name = tab.tab_type.display_name().to_string();
-                let is_selected = current_tab_index == Some(idx);
-                let btn_primary = primary;
-                let btn_secondary = secondary;
-                let btn_foreground = foreground;
-                let btn_primary_foreground = primary_foreground;
-
-                buttons.push(
-                    div()
-                        .id(SharedString::from(format!("tab-{}", idx)))
-                        .px_4()
-                        .py_2()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .when(is_selected, |d| {
-                            d.bg(btn_primary).text_color(btn_primary_foreground)
-                        })
-                        .when(!is_selected, |d| {
-                            d.bg(btn_secondary)
-                                .text_color(btn_foreground)
-                                .hover(|s| s.bg(btn_secondary.opacity(0.8)))
-                        })
-                        .child(tab_name)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.switch_tab(Some(idx), cx);
-                        })),
-                );
+            for (index, tab) in info.tabs.iter().enumerate() {
+                let label = match &tab.tab_type {
+                    ChannelTabType::Other(name) => name.clone(),
+                    kind => crate::i18n::text(kind.display_name()).to_string(),
+                };
+                tab_items.push(Tab::new().label(label));
+                tab_targets.push(Some(index));
             }
-
-            Some(
-                div()
-                    .flex()
-                    .gap_2()
-                    .mb_2()
-                    .overflow_hidden()
-                    .children(buttons),
-            )
-        } else {
+        }
+        let tab_buttons = if tab_items.is_empty() {
             None
+        } else {
+            let selected = tab_targets
+                .iter()
+                .position(|target| *target == current_tab_index)
+                .unwrap_or(0);
+            Some(
+                TabBar::new("channel-categories")
+                    .underline()
+                    .menu(true)
+                    .selected_index(selected)
+                    .children(tab_items)
+                    .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                        if let Some(target) = tab_targets.get(*index) {
+                            this.switch_tab(*target, cx);
+                        }
+                    })),
+            )
         };
 
         // 使用 VirtualList 渲染视频列表
@@ -1057,18 +1208,17 @@ impl ChannelPage {
             })
             .collect();
 
+        let submitting = self.submitting;
         let video_list = v_virtual_list(
             cx.entity().clone(),
             "video-list",
             item_sizes,
             move |_page, visible_range, _window, cx| {
                 let theme = cx.theme();
-                let primary = theme.primary;
                 let border_color = theme.border;
                 let secondary = theme.secondary;
                 let muted = theme.muted;
                 let muted_foreground = theme.muted_foreground;
-                let primary_foreground = theme.primary_foreground;
                 let foreground = theme.foreground;
                 let entity = cx.entity().clone();
 
@@ -1094,48 +1244,31 @@ impl ChannelPage {
                                     )))
                                     .w_full()
                                     .h(px(VIDEO_ITEM_HEIGHT))
-                                    .px_3()
-                                    .py_2()
+                                    .px_4()
+                                    .py_3()
                                     .border_b_1()
                                     .border_color(border_color.opacity(0.5))
-                                    .hover(|style| style.bg(secondary.opacity(0.5)))
-                                    .cursor_pointer()
-                                    .on_click(move |_, _, cx| {
-                                        let _ = entity_clone.update(cx, |this, cx| {
-                                            this.toggle_video(global_idx, cx);
-                                        });
-                                    })
+                                    .when(is_selected, |row| row.bg(theme.primary.opacity(0.06)))
+                                    .hover(|style| style.bg(secondary))
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
                                             .gap_3()
                                             .h_full()
-                                            // 复选框 - 更现代的样式
                                             .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .w(px(20.0))
-                                                    .h(px(20.0))
-                                                    .rounded(px(4.0))
-                                                    .border_1()
-                                                    .when(is_selected, |d| {
-                                                        d.bg(primary).border_color(primary).child(
-                                                            div()
-                                                                .text_xs()
-                                                                .font_weight(FontWeight::BOLD)
-                                                                .text_color(primary_foreground)
-                                                                .child("✓"),
-                                                        )
-                                                    })
-                                                    .when(!is_selected, |d| {
-                                                        d.border_color(
-                                                            muted_foreground.opacity(0.5),
-                                                        )
-                                                        .bg(gpui::transparent_black())
-                                                    }),
+                                                Checkbox::new(SharedString::from(format!(
+                                                    "video-check-{}-{}",
+                                                    tab_key, global_idx
+                                                )))
+                                                .checked(is_selected)
+                                                .accessibility_label(entry_title.clone())
+                                                .disabled(submitting)
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = entity_clone.update(cx, |this, cx| {
+                                                        this.toggle_video(global_idx, cx)
+                                                    });
+                                                }),
                                             )
                                             // 序号 - 更紧凑
                                             .child(
@@ -1228,6 +1361,8 @@ impl ChannelPage {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .flex_wrap()
+                    .gap_3()
                     .child(
                         div()
                             .flex()
@@ -1239,10 +1374,15 @@ impl ChannelPage {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(channel_title),
                             )
-                            .child(div().text_sm().text_color(muted_foreground).child(format!(
-                                "已选择 {} | 当前显示 {}",
-                                selected_count, current_tab_total
-                            ))),
+                            .child(div().text_sm().text_color(muted_foreground).child(
+                                crate::i18n::format(
+                                    "已选择 {} | 已加载 {}",
+                                    &[
+                                        format!("{}", selected_count),
+                                        format!("{}", loaded_total_in_tab),
+                                    ],
+                                ),
+                            )),
                     )
                     .child(
                         div()
@@ -1254,10 +1394,11 @@ impl ChannelPage {
                                 Checkbox::new("select-all")
                                     .checked(all_selected)
                                     .label(if all_selected {
-                                        "取消全选"
+                                        crate::i18n::tr("取消全选")
                                     } else {
-                                        "全选"
+                                        crate::i18n::tr("全选已加载")
                                     })
+                                    .disabled(self.submitting || loaded_total_in_tab == 0)
                                     .on_click(select_all_listener),
                             )
                             // 下载按钮
@@ -1265,14 +1406,71 @@ impl ChannelPage {
                                 Button::new("download-selected")
                                     .primary()
                                     .icon(IconName::ArrowDown)
-                                    .label(format!("下载选中 ({})", selected_count))
-                                    .disabled(selected_count == 0)
+                                    .label(crate::i18n::format(
+                                        "下载选中 ({})",
+                                        &[format!("{}", selected_count)],
+                                    ))
+                                    .loading(self.submitting)
+                                    .disabled(self.submitting || selected_count == 0)
                                     .on_click(download_listener),
                             ),
                     ),
             )
             // Tab 选择器
             .when_some(tab_buttons, |el, tabs| el.child(tabs))
+            .when(self.submitting, |column| {
+                column.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_3()
+                        .child(div().text_sm().child(crate::i18n::format(
+                            "正在添加任务: {} / {}",
+                            &[
+                                self.batch_progress.to_string(),
+                                self.batch_total.to_string(),
+                            ],
+                        )))
+                        .child(
+                            Button::new("stop-batch")
+                                .outline()
+                                .label(crate::i18n::tr("停止添加"))
+                                .disabled(self.batch_cancel.load(Ordering::Relaxed))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.batch_cancel.store(true, Ordering::Relaxed);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
+            .when_some(self.page_error.clone(), |column, error| {
+                column.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(Alert::error("channel-page-error", error))
+                        .child(
+                            Button::new("retry-channel-page")
+                                .outline()
+                                .label(crate::i18n::tr("重试"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(index) = this.current_tab_index {
+                                        if this
+                                            .tab_paging
+                                            .get(index)
+                                            .is_some_and(|page| !page.initialized)
+                                        {
+                                            this.load_more_tab_then_switch(index, 0, cx);
+                                            return;
+                                        }
+                                    }
+                                    this.go_next_page(cx);
+                                })),
+                        ),
+                )
+            })
             // 视频列表 - 使用 VirtualList 和 Scrollbar
             .child(
                 div()
@@ -1285,6 +1483,20 @@ impl ChannelPage {
                     .border_color(border_color)
                     .rounded_md()
                     .child(video_list)
+                    .when(page_entry_count == 0 && !loading_more, |container| {
+                        container.child(
+                            Empty::new().header(
+                                EmptyHeader::new()
+                                    .title(
+                                        EmptyTitle::new().child(crate::i18n::tr("此分类暂无视频")),
+                                    )
+                                    .description(
+                                        EmptyDescription::new()
+                                            .child(crate::i18n::tr("可以切换分类或解析其他频道")),
+                                    ),
+                            ),
+                        )
+                    })
                     // 分页加载中的居中 Spinner（避免在 Tab 上显示“加载中/数量”）
                     .when(loading_more, |el| {
                         el.child(
@@ -1320,6 +1532,8 @@ impl ChannelPage {
                         .flex()
                         .items_center()
                         .justify_between()
+                        .flex_wrap()
+                        .gap_3()
                         .gap_4()
                         .py_2()
                         // 左侧：分页按钮
@@ -1333,7 +1547,7 @@ impl ChannelPage {
                                     Button::new("prev-page-bottom")
                                         .outline()
                                         .small()
-                                        .label("上一页")
+                                        .label(crate::i18n::tr("上一页"))
                                         .disabled(loading_more || current_page == 0)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             if this.current_page > 0 {
@@ -1348,10 +1562,12 @@ impl ChannelPage {
                                         .py_1()
                                         .text_sm()
                                         .text_color(muted_foreground)
-                                        .child(format!(
+                                        .child(crate::i18n::format(
                                             "第 {} / {} 页",
-                                            current_page + 1,
-                                            total_pages
+                                            &[
+                                                format!("{}", current_page + 1),
+                                                format!("{}", total_pages),
+                                            ],
                                         )),
                                 )
                                 // 下一页按钮
@@ -1359,7 +1575,7 @@ impl ChannelPage {
                                     Button::new("next-page-bottom")
                                         .outline()
                                         .small()
-                                        .label("下一页")
+                                        .label(crate::i18n::tr("下一页"))
                                         .disabled(loading_more || current_page >= total_pages - 1)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.go_next_page(cx);
@@ -1367,13 +1583,27 @@ impl ChannelPage {
                                 ),
                         )
                         // 右侧：显示统计
-                        .child(div().text_sm().text_color(muted_foreground).child(format!(
+                        .child(div().text_sm().text_color(muted_foreground).child(
+                            crate::i18n::format(
                                 "显示 {} - {} 条，共 {} 条",
-                                current_page * ITEMS_PER_PAGE + 1,
-                                (current_page * ITEMS_PER_PAGE + page_entry_count)
-                                    .min(current_tab_total),
-                                current_tab_total
-                            ))),
+                                &[
+                                    format!(
+                                        "{}",
+                                        if page_entry_count == 0 {
+                                            0
+                                        } else {
+                                            current_page * ITEMS_PER_PAGE + 1
+                                        }
+                                    ),
+                                    format!(
+                                            "{}",
+                                            (current_page * ITEMS_PER_PAGE + page_entry_count)
+                                                .min(current_tab_total)
+                                        ),
+                                    format!("{}", current_tab_total),
+                                ],
+                            ),
+                        )),
                 )
             })
     }
@@ -1388,89 +1618,186 @@ impl Render for ChannelPage {
             .flex()
             .flex_col()
             .size_full()
+            .min_h_0()
             .p_6()
-            .gap_6()
-            .bg(theme.background)
-            // 页面标题
+            .gap_4()
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap_2()
+                    .gap_3()
+                    .pb_4()
+                    .border_b_1()
+                    .border_color(theme.border)
                     .child(
-                        Icon::new(IconName::Folder)
-                            .size_6()
-                            .text_color(theme.foreground),
+                        div()
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::i18n::tr("频道下载")),
                     )
                     .child(
                         div()
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme.foreground)
-                            .child("频道/作者"),
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(crate::i18n::tr("发现创作者内容，一次选择，批量下载")),
                     ),
             )
             // URL 输入区域
             .child(
-                div()
-                    .w_full()
-                    .p_4()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.secondary)
+                GroupBox::new()
+                    .id("channel-link-card")
+                    .outline()
+                    .content_style(
+                        StyleRefinement::default()
+                            .p_4()
+                            .bg(theme.secondary)
+                            .rounded_lg(),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_3()
-                            // 说明文字
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::tr("频道链接")),
                             )
+                            // 说明文字
+                            .child(div().text_sm().text_color(theme.muted_foreground).child(
+                                crate::i18n::tr("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
+                            ))
                             // 输入框和按钮
                             .child(
                                 div()
                                     .flex()
-                                    .gap_2()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_3()
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .child(Input::new(&self.url_input).cleanable(true)),
+                                        div().flex_1().min_w(px(240.0)).child(
+                                            Input::new(&self.url_input)
+                                                .id("channel-url-input")
+                                                .cleanable(true)
+                                                .disabled(self.submitting)
+                                                .aria_label(crate::i18n::tr("频道链接")),
+                                        ),
                                     )
                                     .child(
                                         Button::new("parse-channel")
                                             .primary()
                                             .label(if matches!(self.state, ChannelState::Parsing) {
-                                                "解析中..."
+                                                crate::i18n::tr("解析中...")
                                             } else {
-                                                "解析"
+                                                crate::i18n::tr("解析")
                                             })
                                             .icon(if matches!(self.state, ChannelState::Parsing) {
                                                 IconName::LoaderCircle
                                             } else {
                                                 IconName::Search
                                             })
-                                            .disabled(matches!(self.state, ChannelState::Parsing))
+                                            .loading(matches!(self.state, ChannelState::Parsing))
+                                            .disabled(
+                                                self.submitting
+                                                    || matches!(self.state, ChannelState::Parsing)
+                                                    || self.get_url(cx).trim().is_empty(),
+                                            )
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.on_parse(cx);
                                             })),
-                                    ),
+                                    )
+                                    .when(matches!(self.state, ChannelState::Parsing), |row| {
+                                        row.child(
+                                            Button::new("cancel-channel-parse")
+                                                .ghost()
+                                                .label(crate::i18n::tr("取消"))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.invalidate_parse(cx)
+                                                })),
+                                        )
+                                    }),
                             ),
                     ),
             )
             // 内容区域
-            .child(div().flex_1().overflow_hidden().child(match &self.state {
-                ChannelState::Idle => self.render_idle(cx).into_any_element(),
-                ChannelState::Parsing => self.render_parsing(cx).into_any_element(),
-                ChannelState::Error(e) => self.render_error(e).into_any_element(),
-                ChannelState::Ready(info) => {
-                    let info = info.clone();
-                    self.render_video_list(&info, cx).into_any_element()
-                }
-            }))
+            .child(
+                div()
+                    .min_h_0()
+                    .when(matches!(self.state, ChannelState::Ready(_)), |workspace| {
+                        workspace
+                            .flex_1()
+                            .p_4()
+                            .bg(theme.secondary)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .overflow_hidden()
+                    })
+                    .child(match &self.state {
+                        ChannelState::Idle => self.render_idle(cx).into_any_element(),
+                        ChannelState::Parsing => self.render_parsing(cx).into_any_element(),
+                        ChannelState::Error(e) => self.render_error(e, cx).into_any_element(),
+                        ChannelState::Ready(info) => {
+                            let info = info.clone();
+                            self.render_video_list(&info, cx).into_any_element()
+                        }
+                    }),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PageRequest, is_probably_youtube_channel_url, page_count, youtube_tab_url};
+
+    #[test]
+    fn pagination_ignores_new_channel_and_preserves_newer_navigation() {
+        let request = PageRequest {
+            channel: 1,
+            view: 4,
+            tab: Some(0),
+        };
+        assert!(!request.belongs_to(2));
+        assert!(request.belongs_to(1));
+        assert!(request.may_navigate(1, 4, Some(0)));
+        assert!(!request.may_navigate(1, 5, Some(1)));
+        assert!(
+            !request.may_navigate(1, 6, Some(0)),
+            "switching away and back must preserve the user's page"
+        );
+    }
+
+    #[test]
+    fn exhausted_remote_results_do_not_create_empty_pages() {
+        assert_eq!(page_count(20, Some(200), false), 1);
+        assert_eq!(page_count(0, Some(200), false), 0);
+        assert_eq!(page_count(21, None, false), 2);
+        assert_eq!(page_count(20, None, true), 2);
+        assert_eq!(page_count(20, Some(200), true), 10);
+    }
+
+    #[test]
+    fn youtube_detection_checks_the_host_not_untrusted_path_text() {
+        assert!(is_probably_youtube_channel_url(
+            "https://www.youtube.com/@creator/videos"
+        ));
+        assert!(!is_probably_youtube_channel_url(
+            "https://youtube.com.evil.example/@creator"
+        ));
+        assert!(!is_probably_youtube_channel_url(
+            "https://example.com/youtube.com/@creator"
+        ));
+        assert!(!is_probably_youtube_channel_url(
+            "https://youtube.com/playlist?list=one"
+        ));
+        assert_eq!(
+            youtube_tab_url(
+                "https://www.youtube.com/@creator/videos?source=one",
+                "shorts"
+            ),
+            "https://www.youtube.com/@creator/shorts"
+        );
     }
 }

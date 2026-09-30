@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use m3u8_rs::{KeyMethod, MasterPlaylist, Playlist, VariantStream};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::DownloadRequest;
@@ -48,6 +47,10 @@ impl crate::downloader::Downloader for HlsDashDownloader {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<DownloadOutcome> {
+        crate::utils::validate_request(&request)?;
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         callback.on_progress(DownloadProgress::preparing());
 
         let manifest_url = request.url.clone();
@@ -408,7 +411,7 @@ async fn merge_with_ffmpeg(
         _ => output_path.with_file_name(format!("{}.part", stem)),
     };
 
-    let mut cmd = Command::new(ffmpeg_path);
+    let mut cmd = magekit_shared::create_tokio_command(ffmpeg_path);
     cmd.arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")

@@ -6,12 +6,19 @@ use crate::app::{
 use crate::ui::pages::capture::widgets::{CaptureRowTheme, capture_row};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::{ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list};
-use gpui_router::NavLink;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
+use gpui_kit::component::input::InputEvent;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::tag::Tag;
+use gpui_kit::component::{
+    ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
+};
 use magekit_shared::DownloadOptions;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -34,23 +41,54 @@ pub struct CapturePage {
     logs: Vec<String>,
     cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     output_dir: String,
-    download_status: HashMap<String, String>,
+    download_status: HashMap<String, EnqueueStatus>,
+    session_generation: u64,
+    last_error: Option<String>,
     scroll_handle: VirtualListScrollHandle,
 }
 
 const CAPTURE_ITEM_HEIGHT: f32 = 110.0;
 
+#[derive(Clone)]
+enum EnqueueStatus {
+    Submitting,
+    Queued,
+    Failed(String),
+}
+
+impl EnqueueStatus {
+    fn label(&self) -> String {
+        match self {
+            Self::Submitting => crate::i18n::tr("提交中...").into(),
+            Self::Queued => crate::i18n::tr("已加入任务").into(),
+            Self::Failed(error) => crate::i18n::format("失败: {}", &[error.clone()]),
+        }
+    }
+    fn blocks_submission(&self) -> bool {
+        matches!(self, Self::Submitting | Self::Queued)
+    }
+}
+
+fn valid_capture_url(value: &str) -> bool {
+    AppState::validate_media_url(value).is_ok()
+}
+
 impl CapturePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("输入要嗅探的网页 URL，支持频道/播放页")
+            crate::i18n::input("输入要嗅探的网页 URL，支持频道/播放页", window, cx)
                 .clean_on_escape()
         });
 
+        cx.subscribe_in(&url_input, window, |this, _, event, window, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.start_capture(window, cx);
+            }
+        })
+        .detach();
+
         let browser_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("可选：自定义浏览器可执行路径 (Chrome/Edge)")
+            crate::i18n::input("可选：自定义浏览器可执行路径 (Chrome/Edge)", window, cx)
                 .clean_on_escape()
         });
 
@@ -73,6 +111,8 @@ impl CapturePage {
             cancel_tx: None,
             output_dir,
             download_status: HashMap::new(),
+            session_generation: 0,
+            last_error: None,
             scroll_handle: VirtualListScrollHandle::new(),
         }
     }
@@ -86,14 +126,14 @@ impl CapturePage {
 
     fn start_capture(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.is_running {
-            self.append_log("已在运行中，先停止再重新开始".into());
+            self.append_log(crate::i18n::tr("已在运行中，先停止再重新开始").into());
             cx.notify();
             return;
         }
 
         let url = self.url_input.read(cx).value().trim().to_string();
-        if url.is_empty() {
-            self.append_log("请输入要嗅探的 URL".into());
+        if !valid_capture_url(&url) {
+            self.last_error = Some(crate::i18n::tr("请输入完整的 HTTP 或 HTTPS 网页地址").into());
             cx.notify();
             return;
         }
@@ -107,6 +147,9 @@ impl CapturePage {
 
         self.captured.clear();
         self.logs.clear();
+        self.last_error = None;
+        self.session_generation = self.session_generation.wrapping_add(1);
+        let generation = self.session_generation;
         self.is_running = true;
         cx.notify();
 
@@ -130,28 +173,56 @@ impl CapturePage {
             match result {
                 Ok(session) => {
                     let (mut rx, cancel_tx) = session.split();
-                    let _ = this.update(cx, |this, cx| {
-                        this.cancel_tx = cancel_tx;
-                        this.append_log(format!("🔍 开始嗅探 {}", url));
-                        this.is_running = true;
-                        cx.notify();
-                    });
+                    let accepted = this
+                        .update(cx, |this, cx| {
+                            if this.session_generation != generation || !this.is_running {
+                                // 启动期间已经停止；不要复活旧会话。
+                                if let Some(cancel) = cancel_tx {
+                                    let _ = cancel.send(());
+                                }
+                                return false;
+                            }
+                            this.cancel_tx = cancel_tx;
+                            this.append_log(crate::i18n::tr("正在捕获网页媒体资源").into());
+                            cx.notify();
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !accepted {
+                        return;
+                    }
 
                     while let Some(evt) = rx.recv().await {
-                        let _ = this.update(cx, |this, cx| {
-                            this.handle_event(evt);
-                            cx.notify();
-                        });
+                        let current = this
+                            .update(cx, |this, cx| {
+                                if this.session_generation != generation {
+                                    return false;
+                                }
+                                this.handle_event(evt);
+                                cx.notify();
+                                true
+                            })
+                            .unwrap_or(false);
+                        if !current {
+                            break;
+                        }
                     }
                     let _ = this.update(cx, |this, cx| {
+                        if this.session_generation != generation {
+                            return;
+                        }
                         this.is_running = false;
+                        this.cancel_tx = None;
                         cx.notify();
                     });
                 }
                 Err(err) => {
                     let _ = this.update(cx, |this, cx| {
+                        if this.session_generation != generation {
+                            return;
+                        }
                         this.is_running = false;
-                        this.append_log(format!("❌ 启动失败: {}", err));
+                        this.last_error = Some(err.to_string());
                         cx.notify();
                     });
                 }
@@ -161,11 +232,12 @@ impl CapturePage {
     }
 
     fn stop_capture(&mut self) {
+        self.session_generation = self.session_generation.wrapping_add(1);
         if let Some(tx) = self.cancel_tx.take() {
             let _ = tx.send(());
         }
         self.is_running = false;
-        self.append_log("⏹️ 已请求停止".into());
+        self.append_log(crate::i18n::tr("⏹️ 已请求停止").into());
     }
 
     fn handle_event(&mut self, event: CaptureEvent) {
@@ -176,12 +248,16 @@ impl CapturePage {
                     // 添加调试日志
                     tracing::info!(
                         "🔍 捕获资源: {} | 类型: {:?} | MIME: {:?}",
-                        item.url,
+                        magekit_shared::redact_url_for_log(&item.url),
                         item.resource_type,
                         item.mime_type
                     );
 
-                    self.append_log(format!("✅ 捕获到 {:?}: {}", item.resource_type, item.url));
+                    self.append_log(format!(
+                        "✅ {:?}: {}",
+                        item.resource_type,
+                        magekit_shared::redact_url_for_log(&item.url)
+                    ));
                     self.captured.push(item);
                 }
             }
@@ -190,6 +266,7 @@ impl CapturePage {
                 self.append_log("🎉 嗅探结束".into());
             }
             CaptureEvent::Error(err) => {
+                self.last_error = Some(err.clone());
                 self.append_log(format!("❌ 嗅探错误: {}", err));
                 self.is_running = false;
             }
@@ -239,9 +316,16 @@ impl CapturePage {
     }
 
     fn download_link(&mut self, url: String, cx: &mut Context<Self>) {
-        // 标记提交中，避免重复点击
+        // 状态检查位于处理入口，不能只依赖按钮的上一次渲染状态。
+        if self
+            .download_status
+            .get(&url)
+            .is_some_and(EnqueueStatus::blocks_submission)
+        {
+            return;
+        }
         self.download_status
-            .insert(url.clone(), "提交中...".to_string());
+            .insert(url.clone(), EnqueueStatus::Submitting);
         cx.notify();
 
         let app_state = self.app_state.clone();
@@ -278,6 +362,7 @@ impl CapturePage {
                     if let Some(headers) = item.headers {
                         tracing::debug!("📦 从 captured_item 获取到 {} 个 headers", headers.len());
                         for (k, v) in headers {
+                            magekit_shared::validate_http_header(&k, &v)?;
                             let key_lower = k.to_ascii_lowercase();
                             if seen.insert(key_lower) {
                                 header_lines.push(format!("{}: {}", k, v));
@@ -287,7 +372,7 @@ impl CapturePage {
                         tracing::warn!("⚠️ captured_item.headers 为 None");
                     }
                     if let Some(referer) = item.referer {
-                        tracing::debug!("📍 Referer: {}", referer);
+                        magekit_shared::validate_http_header("Referer", &referer)?;
                         if seen.insert("referer".into()) {
                             header_lines.push(format!("Referer: {}", referer));
                         }
@@ -330,10 +415,10 @@ impl CapturePage {
 
                 // 设置 headers（会被 ffmpeg 使用）
                 let header_block = format!("{}\r\n", header_lines.join("\r\n"));
-                tracing::info!(
-                    "📝 最终构造的 ffmpeg headers ({} 行):\n{}",
-                    header_lines.len(),
-                    header_block.trim()
+                // Cookie、Authorization 和签名 URL 绝不写入日志。
+                tracing::debug!(
+                    header_count = header_lines.len(),
+                    "Prepared capture request headers"
                 );
                 options.ffmpeg_args.push("-headers".to_string());
                 options.ffmpeg_args.push(header_block);
@@ -350,11 +435,11 @@ impl CapturePage {
                 match result {
                     Ok(_) => {
                         this.download_status
-                            .insert(url.clone(), "已加入任务".to_string());
+                            .insert(url.clone(), EnqueueStatus::Queued);
                     }
                     Err(err) => {
                         this.download_status
-                            .insert(url.clone(), format!("失败: {}", err));
+                            .insert(url.clone(), EnqueueStatus::Failed(err.to_string()));
                     }
                 }
                 cx.notify();
@@ -376,7 +461,7 @@ impl Render for CapturePage {
         };
 
         // 使用筛选后的资源列表
-        let captured_data: Vec<(M3u8Stream, Option<String>)> = self
+        let captured_data: Vec<(M3u8Stream, Option<EnqueueStatus>)> = self
             .filter_resources()
             .into_iter()
             .map(|item| {
@@ -385,7 +470,7 @@ impl Render for CapturePage {
             })
             .collect();
 
-        let captured_data_rc: Rc<Vec<(M3u8Stream, Option<String>)>> =
+        let captured_data_rc: Rc<Vec<(M3u8Stream, Option<EnqueueStatus>)>> =
             Rc::new(captured_data.clone());
         let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
             captured_data
@@ -411,21 +496,29 @@ impl Render for CapturePage {
                         let entity = entity.clone();
                         captured_data.get(ix).cloned().map(move |(item, status)| {
                             let url = item.url.clone();
-                            let status_clone = status.clone();
+                            let status_label = status.as_ref().map(EnqueueStatus::label);
+                            let blocked = status
+                                .as_ref()
+                                .is_some_and(EnqueueStatus::blocks_submission);
+                            let queued = matches!(status, Some(EnqueueStatus::Queued));
+                            let submitting = matches!(status, Some(EnqueueStatus::Submitting));
                             let entity_for_btn = entity.clone();
-                            let action = NavLink::new().to("/tasks").child(
-                                Button::new(("capture-download", ix))
-                                    .primary()
-                                    .small()
-                                    .label("加入下载")
-                                    .disabled(matches!(status_clone.as_deref(), Some("提交中...")))
-                                    .on_click(move |_, _, cx| {
-                                        let _ = entity_for_btn.update(cx, |this, cx| {
-                                            this.download_link(url.clone(), cx);
-                                        });
-                                    }),
-                            );
-                            capture_row(item, status_clone, row_theme, action)
+                            let action = Button::new(("capture-download", ix))
+                                .primary()
+                                .small()
+                                .label(if queued {
+                                    crate::i18n::tr("已加入任务")
+                                } else {
+                                    crate::i18n::tr("加入下载")
+                                })
+                                .loading(submitting)
+                                .disabled(blocked)
+                                .on_click(move |_, _, cx| {
+                                    let _ = entity_for_btn.update(cx, |this, cx| {
+                                        this.download_link(url.clone(), cx);
+                                    });
+                                });
+                            capture_row(item, status_label, row_theme, action)
                         })
                     })
                     .collect::<Vec<_>>()
@@ -434,13 +527,27 @@ impl Render for CapturePage {
         .track_scroll(&scroll_handle);
 
         let capture_body: AnyElement = if captured_data.is_empty() {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .flex_1()
-                .text_color(row_theme.muted)
-                .child("尚未捕获到 m3u8 链接")
+            Empty::new()
+                .header(
+                    EmptyHeader::new()
+                        .media(
+                            EmptyMedia::new()
+                                .size_8()
+                                .rounded_xl()
+                                .bg(theme.muted)
+                                .child(
+                                    Icon::new(IconName::Search)
+                                        .size_4()
+                                        .text_color(theme.muted_foreground),
+                                ),
+                        )
+                        .title(EmptyTitle::new().child(crate::i18n::tr("尚未捕获到媒体资源")))
+                        .description(EmptyDescription::new().child(if self.is_running {
+                            crate::i18n::tr("正在监听网页请求，可随时停止；已捕获的资源会保留")
+                        } else {
+                            crate::i18n::tr("输入网页地址并开始抓取，选择资源后加入下载任务")
+                        })),
+                )
                 .into_any_element()
         } else {
             div()
@@ -474,269 +581,293 @@ impl Render for CapturePage {
                 .into_any_element()
         };
 
+        let filters = [
+            (CaptureFilterType::Media, "媒体"),
+            (CaptureFilterType::Video, "视频"),
+            (CaptureFilterType::Audio, "音频"),
+            (CaptureFilterType::Image, "图片"),
+            (CaptureFilterType::All, "全部"),
+        ];
+        let selected_filter = filters
+            .iter()
+            .position(|(filter, _)| *filter == self.filter_type)
+            .unwrap_or(0);
+
         div()
-            .flex()
-            .flex_col()
+            .id("capture-page")
             .size_full()
-            .gap(px(16.0))
-            .p(px(20.0))
+            .overflow_y_scroll()
             .child(
-                // 标题
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .text_2xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme.foreground)
-                                    .child("M3U8 嗅探"),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("启动浏览器抓包，实时展示捕获到的 m3u8 链接"),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.0))
-                            .child(
-                                Button::new("start-capture")
-                                    .primary()
-                                    .disabled(self.is_running)
-                                    .label("开始抓取")
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.start_capture(window, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("stop-capture")
-                                    .ghost()
-                                    .disabled(!self.is_running)
-                                    .label("停止")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.stop_capture();
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
-            .child(
-                // 配置区
-                div()
+                    .w_full()
+                    .p_6()
                     .flex()
                     .flex_col()
-                    .gap(px(12.0))
-                    .p(px(16.0))
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded(px(12.0))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.foreground)
-                            .child("抓取设置"),
-                    )
+                    .gap_4()
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.foreground)
-                                    .child("目标 URL"),
-                            )
-                            .child(Input::new(&self.url_input)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.foreground)
-                                    .child("自定义浏览器路径 (可选)"),
-                            )
-                            .child(Input::new(&self.browser_input)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(
-                                Checkbox::new("headless-toggle")
-                                    .checked(self.headless)
-                                    .label("使用 Headless 模式")
-                                    .on_click(cx.listener(|this, checked, _window, cx| {
-                                        this.headless = *checked;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("无头模式可减少资源占用"),
-                            ),
-                    ),
-            )
-            .child(
-                // 捕获结果
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
-                    .p(px(16.0))
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded(px(12.0))
-                    .child(
-                        // 标题和操作栏
-                        div()
-                            .flex()
+                            .flex_wrap()
                             .items_center()
                             .justify_between()
+                            .gap_4()
+                            .pb_4()
+                            .border_b_1()
+                            .border_color(theme.border)
                             .child(
                                 div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.foreground)
-                                    .child(format!("捕获的资源 ({})", self.captured.len())),
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .text_size(px(22.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(crate::i18n::tr("资源嗅探")),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child(crate::i18n::tr("从网页中发现可下载的媒体资源")),
+                                    ),
+                            )
+                            .child(if self.is_running {
+                                Tag::primary().child(crate::i18n::tr("进行中"))
+                            } else {
+                                Tag::secondary().child(crate::i18n::tr("就绪"))
+                            }),
+                    )
+                    .when_some(self.last_error.clone(), |el, error| {
+                        el.child(Alert::error("capture-error", error))
+                    })
+                    .child(
+                        GroupBox::new()
+                            .id("capture-setup")
+                            .outline()
+                            .content_style(
+                                StyleRefinement::default()
+                                    .p_4()
+                                    .gap_3()
+                                    .bg(theme.secondary)
+                                    .rounded_lg(),
                             )
                             .child(
-                                Button::new("refresh-capture")
-                                    .ghost()
-                                    .small()
-                                    .label("清空")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.captured.clear();
-                                        this.scroll_handle = VirtualListScrollHandle::new();
-                                        cx.notify();
-                                    })),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        Icon::new(IconName::Globe)
+                                            .size_5()
+                                            .text_color(theme.primary),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(crate::i18n::tr("抓取设置")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(crate::i18n::tr("目标 URL")),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .gap_3()
+                                            .child(
+                                                div().flex_1().min_w(px(240.0)).child(
+                                                    Input::new(&self.url_input)
+                                                        .disabled(self.is_running),
+                                                ),
+                                            )
+                                            .child(
+                                                Button::new("start-capture")
+                                                    .primary()
+                                                    .icon(IconName::Play)
+                                                    .disabled(self.is_running)
+                                                    .label(crate::i18n::tr("开始抓取"))
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.start_capture(window, cx)
+                                                        },
+                                                    )),
+                                            )
+                                            .when(self.is_running, |row| {
+                                                row.child(
+                                                    Button::new("stop-capture")
+                                                        .outline()
+                                                        .label(crate::i18n::tr("停止"))
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.stop_capture();
+                                                            cx.notify();
+                                                        })),
+                                                )
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_end()
+                                    .gap_4()
+                                    .pt_4()
+                                    .border_t_1()
+                                    .border_color(theme.border)
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(260.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(crate::i18n::tr(
+                                                        "自定义浏览器路径 (可选)",
+                                                    )),
+                                            )
+                                            .child(
+                                                Input::new(&self.browser_input)
+                                                    .disabled(self.is_running),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .pb_1()
+                                            .child(
+                                                Checkbox::new("headless-toggle")
+                                                    .disabled(self.is_running)
+                                                    .checked(self.headless)
+                                                    .label(crate::i18n::tr("使用 Headless 模式"))
+                                                    .on_click(cx.listener(
+                                                        |this, checked, _, cx| {
+                                                            this.headless = *checked;
+                                                            cx.notify();
+                                                        },
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(crate::i18n::tr(
+                                                        "无头模式可减少资源占用",
+                                                    )),
+                                            ),
+                                    ),
                             ),
                     )
                     .child(
-                        // 资源类型筛选（移到这里）
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .p(px(8.0))
-                            .bg(theme.muted.opacity(0.05))
-                            .border_1()
-                            .border_color(theme.border.opacity(0.5))
-                            .rounded(px(8.0))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.muted_foreground)
-                                    .child("筛选类型："),
-                            )
-                            .child(
-                                Button::new("filter-media")
-                                    .when(self.filter_type == CaptureFilterType::Media, |btn| {
-                                        btn.primary()
-                                    })
-                                    .when(self.filter_type != CaptureFilterType::Media, |btn| {
-                                        btn.ghost()
-                                    })
-                                    .xsmall()
-                                    .label("媒体")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.filter_type = CaptureFilterType::Media;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("filter-video")
-                                    .when(self.filter_type == CaptureFilterType::Video, |btn| {
-                                        btn.primary()
-                                    })
-                                    .when(self.filter_type != CaptureFilterType::Video, |btn| {
-                                        btn.ghost()
-                                    })
-                                    .xsmall()
-                                    .label("视频")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.filter_type = CaptureFilterType::Video;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("filter-audio")
-                                    .when(self.filter_type == CaptureFilterType::Audio, |btn| {
-                                        btn.primary()
-                                    })
-                                    .when(self.filter_type != CaptureFilterType::Audio, |btn| {
-                                        btn.ghost()
-                                    })
-                                    .xsmall()
-                                    .label("音频")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.filter_type = CaptureFilterType::Audio;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("filter-image")
-                                    .when(self.filter_type == CaptureFilterType::Image, |btn| {
-                                        btn.primary()
-                                    })
-                                    .when(self.filter_type != CaptureFilterType::Image, |btn| {
-                                        btn.ghost()
-                                    })
-                                    .xsmall()
-                                    .label("图片")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.filter_type = CaptureFilterType::Image;
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("filter-all")
-                                    .when(self.filter_type == CaptureFilterType::All, |btn| {
-                                        btn.primary()
-                                    })
-                                    .when(self.filter_type != CaptureFilterType::All, |btn| {
-                                        btn.ghost()
-                                    })
-                                    .xsmall()
-                                    .label("全部")
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.filter_type = CaptureFilterType::All;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
+                            .h(px(if captured_data.is_empty() {
+                                260.0
+                            } else {
+                                400.0
+                            }))
+                            .flex_shrink_0()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
-                            .flex_1()
-                            .child(capture_body),
+                            .gap_4()
+                            .p_4()
+                            .bg(theme.secondary)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_xl()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                                        crate::i18n::format(
+                                            "捕获的资源 ({})",
+                                            &[self.captured.len().to_string()],
+                                        ),
+                                    ))
+                                    .child(
+                                        Button::new("refresh-capture")
+                                            .ghost()
+                                            .small()
+                                            .label(crate::i18n::tr("清空"))
+                                            .disabled(self.captured.is_empty())
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.captured.clear();
+                                                this.download_status.clear();
+                                                this.scroll_handle = VirtualListScrollHandle::new();
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                TabBar::new("capture-resource-types")
+                                    .underline()
+                                    .menu(true)
+                                    .selected_index(selected_filter)
+                                    .children(
+                                        filters.iter().map(|(_, label)| {
+                                            Tab::new().label(crate::i18n::tr(label))
+                                        }),
+                                    )
+                                    .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                                        if let Some((filter, _)) = filters.get(*index) {
+                                            this.filter_type = *filter;
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(capture_body),
+                            ),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EnqueueStatus, valid_capture_url};
+    #[test]
+    fn only_web_urls_are_accepted() {
+        assert!(valid_capture_url("https://example.com/watch?v=1"));
+        for value in [
+            "",
+            "example.com",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "--no-sandbox",
+        ] {
+            assert!(!valid_capture_url(value));
+        }
+    }
+    #[test]
+    fn enqueue_state_blocks_repeated_clicks_without_localized_text_comparison() {
+        assert!(EnqueueStatus::Submitting.blocks_submission());
+        assert!(EnqueueStatus::Queued.blocks_submission());
+        assert!(!EnqueueStatus::Failed("network".into()).blocks_submission());
     }
 }

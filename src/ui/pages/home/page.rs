@@ -2,18 +2,18 @@
 
 use crate::app::{AppState, DownloadVideoOptions};
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::WindowExt;
-use gpui_component::input::InputState;
-use gpui_component::notification::Notification;
-use gpui_router::use_navigate;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::notification::Notification;
+use gpui_router::{use_location, use_navigate};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::widgets::{
-    FormatSelection, QualityOption, UrlInputCard, VideoFormatInfo, VideoInfo,
-    VideoPreviewCompleted, VideoPreviewDownloading, VideoPreviewError, VideoPreviewIdle,
-    VideoPreviewLoading, VideoPreviewReady,
+    FormatSelection, UrlInputCard, VideoFormatInfo, VideoInfo, VideoPreviewCompleted,
+    VideoPreviewDownloading, VideoPreviewError, VideoPreviewIdle, VideoPreviewLoading,
+    VideoPreviewReady,
 };
 
 /// 格式化时长
@@ -31,26 +31,7 @@ fn format_duration(duration: Option<Duration>) -> String {
                 format!("{}:{:02}", minutes, seconds)
             }
         }
-        None => "未知".to_string(),
-    }
-}
-
-/// 格式化下载速度
-fn format_speed(bytes_per_sec: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes_per_sec == 0 {
-        return "准备中...".to_string();
-    } else if bytes_per_sec >= GB {
-        format!("{:.2} GB/s", bytes_per_sec as f64 / GB as f64)
-    } else if bytes_per_sec >= MB {
-        format!("{:.2} MB/s", bytes_per_sec as f64 / MB as f64)
-    } else if bytes_per_sec >= KB {
-        format!("{:.2} KB/s", bytes_per_sec as f64 / KB as f64)
-    } else {
-        format!("{} B/s", bytes_per_sec)
+        None => crate::i18n::tr("未知").to_string(),
     }
 }
 
@@ -170,9 +151,21 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
             }
         } else if !has_video && has_audio {
             // 音频格式显示为 "最佳音质" 或扩展名
-            "最佳音质".to_string()
+            crate::i18n::tr("最佳音质").to_string()
         } else {
-            fmt.quality.clone().unwrap_or_else(|| "视频".to_string())
+            fmt.quality
+                .clone()
+                .unwrap_or_else(|| crate::i18n::tr("视频").to_string())
+        };
+
+        let label_key = if fmt.resolution.is_some() {
+            None
+        } else if !has_video && has_audio {
+            Some("最佳音质")
+        } else if fmt.quality.is_none() {
+            Some("视频")
+        } else {
+            None
         };
 
         // 根据格式类型分类处理
@@ -192,6 +185,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                 result.push(VideoFormatInfo {
                     format_id: fmt.format_id.clone(),
                     label,
+                    label_key,
                     ext: fmt.ext.clone(),
                     filesize: fmt.filesize,
                     has_video: true,
@@ -214,6 +208,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                 result.push(VideoFormatInfo {
                     format_id: fmt.format_id.clone(),
                     label,
+                    label_key,
                     ext: fmt.ext.clone(),
                     filesize: fmt.filesize,
                     has_video: true,
@@ -235,6 +230,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                     result.push(VideoFormatInfo {
                         format_id: fmt.format_id.clone(),
                         label,
+                        label_key,
                         ext: fmt.ext.clone(),
                         filesize: fmt.filesize,
                         has_video: false,
@@ -258,7 +254,8 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
         tracing::warn!("⚠️ 未能识别任何格式，添加默认选项");
         result.push(VideoFormatInfo {
             format_id: "bestvideo+bestaudio/best".to_string(),
-            label: "最佳质量".to_string(),
+            label: crate::i18n::tr("最佳质量").to_string(),
+            label_key: Some("最佳质量"),
             ext: "mp4".to_string(),
             filesize: None,
             has_video: true,
@@ -286,51 +283,57 @@ impl Default for DownloadState {
     }
 }
 
+/// 取消、修改链接或重试后，较早请求不得替换当前结果。
+fn accept_parse_result(active: u64, result: u64, fetching: bool) -> bool {
+    active == result && fetching
+}
+
 /// 首页组件
 pub struct HomePage {
     app_state: Arc<AppState>,
     url_input: Entity<InputState>,
     download_state: DownloadState,
-    selected_quality: QualityOption,
     /// 选中的视频格式 ID（合并格式或仅视频）
     selected_video_id: Option<String>,
     /// 选中的音频格式 ID（仅音频）
     selected_audio_id: Option<String>,
-    output_path: String,
     /// 当前解析的 URL (用于下载)
     current_url: Option<String>,
     /// 原始视频信息（用于传递给 ToolManager，避免重复获取）
     original_video_info: Option<magekit_shared::VideoInfo>,
+    request_generation: u64,
+    submitting: bool,
+    thumbnail_loading: bool,
 }
 
 impl HomePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 从配置读取默认下载路径
-        let default_path = app_state
-            .config
-            .blocking_read()
-            .download
-            .default_output_path
-            .to_string_lossy()
-            .to_string();
-
         // 创建 URL 输入框状态
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("粘贴 YouTube、Bilibili 等视频链接...")
-                .clean_on_escape()
+            crate::i18n::input("粘贴 YouTube、Bilibili 等视频链接...", window, cx).clean_on_escape()
         });
+
+        // 输入变化立即使旧解析结果失效；Enter 与按钮走同一个受保护入口。
+        cx.subscribe(&url_input, |this, _, event, cx| match event {
+            InputEvent::PressEnter { .. } => this.on_parse(cx),
+            InputEvent::Change if !this.submitting => {
+                this.invalidate_parse(cx);
+            }
+            _ => {}
+        })
+        .detach();
 
         Self {
             app_state,
             url_input,
             download_state: DownloadState::Idle,
-            selected_quality: QualityOption::Best,
             selected_video_id: None,
             selected_audio_id: None,
-            output_path: default_path,
             current_url: None,
             original_video_info: None,
+            request_generation: 0,
+            submitting: false,
+            thumbnail_loading: false,
         }
     }
 
@@ -338,14 +341,31 @@ impl HomePage {
         self.url_input.read(cx).value().to_string()
     }
 
+    fn invalidate_parse(&mut self, cx: &mut Context<Self>) {
+        self.request_generation = self.request_generation.wrapping_add(1);
+        self.download_state = DownloadState::Idle;
+        self.current_url = None;
+        self.original_video_info = None;
+        self.selected_video_id = None;
+        self.selected_audio_id = None;
+        cx.notify();
+    }
+
     fn on_parse(&mut self, cx: &mut Context<Self>) {
-        let url = self.get_url(cx);
-        if url.trim().is_empty() {
-            self.download_state = DownloadState::Error("请输入视频链接".to_string());
-            cx.notify();
+        if self.submitting || matches!(self.download_state, DownloadState::Fetching) {
             return;
         }
-
+        let url = match AppState::validate_media_url(&self.get_url(cx)) {
+            Ok(url) => url,
+            Err(error) => {
+                self.invalidate_parse(cx);
+                self.download_state = DownloadState::Error(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        self.invalidate_parse(cx);
+        let generation = self.request_generation;
         self.download_state = DownloadState::Fetching;
         cx.notify();
 
@@ -363,19 +383,26 @@ impl HomePage {
                 if handle.is_finished() {
                     break;
                 }
-                Timer::after(std::time::Duration::from_millis(100)).await;
+                smol::Timer::after(std::time::Duration::from_millis(100)).await;
             }
 
             // 在后台线程获取结果，避免阻塞主线程
             let result: anyhow::Result<magekit_shared::VideoInfo> = smol::unblock(move || {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("解析线程崩溃")))
+                handle.join().unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(crate::i18n::format("解析线程崩溃", &[])))
+                })
             })
             .await;
 
             // 更新 UI
             let _ = this.update(cx, |this, cx| {
+                if !accept_parse_result(
+                    this.request_generation,
+                    generation,
+                    matches!(this.download_state, DownloadState::Fetching),
+                ) {
+                    return;
+                }
                 match result {
                     Ok(info) => {
                         // 保存当前 URL
@@ -387,7 +414,10 @@ impl HomePage {
                         // 详细日志
                         tracing::info!("🎬 视频信息解析成功:");
                         tracing::info!("  标题: {}", info.title);
-                        tracing::info!("  作者: {}", info.uploader.as_deref().unwrap_or("未知"));
+                        tracing::info!(
+                            "  作者: {}",
+                            info.uploader.as_deref().unwrap_or(crate::i18n::tr("未知"))
+                        );
                         tracing::info!("  时长: {}", format_duration(info.duration));
                         tracing::info!("  格式数量: {}", info.formats.len());
                         if let Some(thumb) = &info.thumbnail {
@@ -408,9 +438,19 @@ impl HomePage {
                             );
                         }
 
-                        // 默认不选中任何格式，让用户自由选择
-                        this.selected_video_id = None;
-                        this.selected_audio_id = None;
+                        // 按现有质量排序提供可直接下载的默认格式，仍可调整。
+                        this.selected_video_id = gui_formats
+                            .iter()
+                            .find(|format| format.has_video)
+                            .map(|format| format.format_id.clone());
+                        this.selected_audio_id = if this.selected_video_id.is_none() {
+                            gui_formats
+                                .iter()
+                                .find(|format| format.has_audio)
+                                .map(|format| format.format_id.clone())
+                        } else {
+                            None
+                        };
 
                         // 转换为 GUI 使用的 VideoInfo
                         let gui_info = VideoInfo {
@@ -436,66 +476,6 @@ impl HomePage {
             });
         })
         .detach();
-    }
-
-    fn start_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 获取当前 URL
-        let url = match &self.current_url {
-            Some(url) => url.clone(),
-            None => {
-                self.download_state = DownloadState::Error("请先解析视频链接".to_string());
-                cx.notify();
-                return;
-            }
-        };
-
-        // 详细日志
-        tracing::info!("📥 开始下载任务:");
-        tracing::info!("  URL: {}", url);
-        tracing::info!("  输出目录: {}", self.output_path);
-        tracing::info!("  质量: {:?}", self.selected_quality);
-
-        // 导航到任务页
-        {
-            let mut navigate = use_navigate(cx);
-            navigate("/tasks".into());
-        }
-        window.refresh();
-        tracing::info!("📍 已跳转到任务页面");
-        cx.notify();
-
-        let app_state = self.app_state.clone();
-        let output_dir = std::path::PathBuf::from(&self.output_path);
-
-        // 根据选择的质量转换为 format_id
-        let format_id = match self.selected_quality {
-            QualityOption::Best => "bestvideo+bestaudio/best".to_string(),
-            QualityOption::P1080 => {
-                "bestvideo[height<=1080]+bestaudio/best[height<=1080]".to_string()
-            }
-            QualityOption::P720 => "bestvideo[height<=720]+bestaudio/best[height<=720]".to_string(),
-            QualityOption::P480 => "bestvideo[height<=480]+bestaudio/best[height<=480]".to_string(),
-            QualityOption::AudioOnly => "bestaudio/best".to_string(),
-        };
-
-        // 转换下载选项
-        let options = DownloadVideoOptions {
-            embed_metadata: true,
-            embed_thumbnail: false,
-            download_subtitles: false,
-            audio_only: matches!(self.selected_quality, QualityOption::AudioOnly),
-        };
-
-        // 在后台线程中启动下载
-        // ToolManager 会自动处理任务创建、状态更新和持久化
-        let _handle = app_state.start_download_in_background(url, output_dir, format_id, options);
-
-        // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
-    }
-
-    fn select_quality(&mut self, quality: QualityOption, cx: &mut Context<Self>) {
-        self.selected_quality = quality;
-        cx.notify();
     }
 
     /// 选择/取消选择视频格式（toggle）
@@ -528,6 +508,14 @@ impl HomePage {
         } else {
             tracing::info!("🎵 选择音频格式: {}", format_id);
             self.selected_audio_id = Some(format_id);
+            // 单独音轨不应与包含音频的合并格式同时高亮却被静默忽略。
+            if let DownloadState::Ready(info) = &self.download_state {
+                if info.formats.iter().any(|format| {
+                    self.selected_video_id.as_ref() == Some(&format.format_id) && format.has_audio
+                }) {
+                    self.selected_video_id = None;
+                }
+            }
         }
         cx.notify();
     }
@@ -536,10 +524,9 @@ impl HomePage {
     fn get_format_selection(&self) -> Option<FormatSelection> {
         // 判断是否是分离格式网站（如B站）
         let is_separated_source = if let DownloadState::Ready(info) = &self.download_state {
-            let has_combined = info.formats.iter().any(|f| f.has_video && f.has_audio);
             let has_video_only = info.formats.iter().any(|f| f.has_video && !f.has_audio);
             let has_audio_only = info.formats.iter().any(|f| !f.has_video && f.has_audio);
-            !has_combined && has_video_only && has_audio_only
+            has_video_only && has_audio_only
         } else {
             false
         };
@@ -592,71 +579,71 @@ impl HomePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 获取当前 URL
-        let url = match &self.current_url {
-            Some(url) => url.clone(),
-            None => {
-                self.download_state = DownloadState::Error("请先解析视频链接".to_string());
-                cx.notify();
-                return;
-            }
-        };
-
-        // 详细日志
-        tracing::info!("📥 开始下载任务:");
-        tracing::info!("  URL: {}", url);
-        tracing::info!("  输出目录: {}", self.output_path);
-        tracing::info!("  格式 ID: {}", format_id);
-
-        // 判断是否是音频格式
-        let is_audio_only = match &self.download_state {
-            DownloadState::Ready(info) => info
-                .formats
-                .iter()
-                .find(|f| f.format_id == format_id)
-                .map(|f| !f.has_video && f.has_audio)
-                .unwrap_or(false),
-            _ => false,
-        };
-
-        // 获取原始视频信息用于传递给 ToolManager
-        let original_video_info = self.original_video_info.clone();
-
-        // 导航到任务页
-        {
-            let mut navigate = use_navigate(cx);
-            navigate("/tasks".into());
+        if self.submitting {
+            return;
         }
-        window.refresh();
-        tracing::info!("📍 已跳转到任务页面");
-        cx.notify();
-
-        let app_state = self.app_state.clone();
-        let output_dir = std::path::PathBuf::from(&self.output_path);
-
-        // 转换下载选项
+        let (Some(url), DownloadState::Ready(info)) = (&self.current_url, &self.download_state)
+        else {
+            return;
+        };
+        let is_audio_only = info
+            .formats
+            .iter()
+            .find(|format| format.format_id == format_id)
+            .is_some_and(|format| !format.has_video && format.has_audio);
         let options = DownloadVideoOptions {
             embed_metadata: true,
             embed_thumbnail: false,
             download_subtitles: false,
             audio_only: is_audio_only,
         };
-
-        // 在后台线程中启动下载（传递已有的视频信息以避免重复获取）
-        // ToolManager 会自动处理任务创建、状态更新和持久化
-        let _handle = app_state.start_download_in_background_with_info(
-            url,
+        // 每次开始读取最新保存路径，避免修改设置后仍写入页面缓存的旧路径。
+        let output_dir = self.app_state.config().download.default_output_path.clone();
+        let handle = self.app_state.start_download_in_background_with_info(
+            url.clone(),
             output_dir,
             format_id,
             options,
-            original_video_info,
+            self.original_video_info.clone(),
         );
-
-        // 不需要等待下载完成，任务状态会通过事件自动更新到 AppState.tasks
+        self.submitting = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = smol::unblock(move || {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::i18n::tr("创建下载任务失败"))))
+            })
+            .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.submitting = false;
+                match result {
+                    Ok(_) => {
+                        this.invalidate_parse(cx);
+                        window.push_notification(
+                            Notification::success(crate::i18n::tr("下载任务已添加")),
+                            cx,
+                        );
+                        // 离开首页后完成的请求不抢回用户的新导航。
+                        if use_location(cx).pathname.as_ref() == "/" {
+                            use_navigate(cx)("/tasks".into());
+                        }
+                    }
+                    Err(error) => {
+                        window.push_notification(Notification::error(error.to_string()), cx)
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 下载封面图
     fn download_thumbnail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.thumbnail_loading || self.submitting {
+            return;
+        }
         let thumbnail_url = match &self.download_state {
             DownloadState::Ready(info) => info.thumbnail.clone(),
             _ => None,
@@ -664,7 +651,10 @@ impl HomePage {
 
         let Some(thumb_url) = thumbnail_url else {
             tracing::warn!("⚠️ 没有封面图可下载");
-            window.push_notification(Notification::warning("没有可用的封面图"), cx);
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("没有可用的封面图")),
+                cx,
+            );
             return;
         };
 
@@ -673,71 +663,117 @@ impl HomePage {
             _ => "thumbnail".to_string(),
         };
 
-        let output_dir = std::path::PathBuf::from(&self.output_path);
+        let output_dir = self.app_state.config().download.default_output_path.clone();
 
         tracing::info!("📥 开始下载封面图:");
         tracing::info!("  URL: {}", thumb_url);
         tracing::info!("  输出目录: {:?}", output_dir);
 
+        self.thumbnail_loading = true;
+        cx.notify();
+
         // 显示开始下载通知
-        window.push_notification(Notification::info("正在下载封面..."), cx);
+        window.push_notification(Notification::info(crate::i18n::tr("正在下载封面...")), cx);
 
         // 使用 spawn_in 以获取 AsyncWindowContext，这样可以访问 window
-        cx.spawn_in(window, async move |_this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = smol::unblock(move || {
-                // 创建文件名（使用视频标题）
+                use std::io::{Read, Write};
+                let url = AppState::validate_media_url(&thumb_url)?;
+                let mut response = reqwest::blocking::Client::builder()
+                    .connect_timeout(Duration::from_secs(10))
+                    .timeout(Duration::from_secs(45))
+                    .build()?
+                    .get(url)
+                    .send()?
+                    .error_for_status()?;
+                let extension = match response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                {
+                    "image/png" => "png",
+                    "image/webp" => "webp",
+                    "image/jpeg" => "jpg",
+                    _ => anyhow::bail!(crate::i18n::tr("封面响应不是受支持的图片")),
+                };
+                let mut bytes = Vec::new();
+                response
+                    .by_ref()
+                    .take(20 * 1024 * 1024 + 1)
+                    .read_to_end(&mut bytes)?;
+                anyhow::ensure!(
+                    !bytes.is_empty() && bytes.len() <= 20 * 1024 * 1024,
+                    crate::i18n::tr("封面文件为空或过大")
+                );
+                std::fs::create_dir_all(&output_dir)?;
                 let safe_title: String = video_title
                     .chars()
+                    .take(100)
                     .map(|c| {
-                        if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
                             c
                         } else {
                             '_'
                         }
                     })
                     .collect();
-                let filename = format!("{}_thumbnail.jpg", safe_title);
-                let output_path = output_dir.join(&filename);
-
-                // 使用 curl 命令下载封面（无窗口模式）
-                let status = magekit_shared::create_command("curl")
-                    .arg("-L") // 跟随重定向
-                    .arg("-o")
-                    .arg(&output_path)
-                    .arg(&thumb_url)
-                    .status()
-                    .map_err(|e| anyhow::anyhow!("执行 curl 失败: {}", e))?;
-
-                if !status.success() {
-                    return Err(anyhow::anyhow!(
-                        "curl 下载失败，退出码: {:?}",
-                        status.code()
-                    ));
+                let mut temporary = tempfile::NamedTempFile::new_in(&output_dir)?;
+                temporary.write_all(&bytes)?;
+                // 原子保存且不覆盖已有封面；重复下载保留两个文件。
+                for suffix in 0..1000 {
+                    let filename = if suffix == 0 {
+                        format!("{}_thumbnail.{}", safe_title, extension)
+                    } else {
+                        format!("{}_thumbnail_{}.{}", safe_title, suffix, extension)
+                    };
+                    let output_path = output_dir.join(filename);
+                    match temporary.persist_noclobber(&output_path) {
+                        Ok(_) => return Ok::<_, anyhow::Error>(output_path),
+                        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                            temporary = error.file
+                        }
+                        Err(error) => return Err(error.error.into()),
+                    }
                 }
-
-                tracing::info!("✅ 封面下载完成: {:?}", output_path);
-                Ok::<_, anyhow::Error>(output_path)
+                anyhow::bail!(crate::i18n::tr("无法创建新的封面文件"))
             })
             .await;
 
             // 显示结果通知
             // 使用 cx.update 来获取 window 和 App context
-            let _ = cx.update(|window, cx| match result {
-                Ok(path) => {
-                    tracing::info!("✅ 封面已保存到: {:?}", path);
-                    let filename = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "封面".to_string());
-                    window.push_notification(
-                        Notification::success(format!("封面已保存: {}", filename)),
-                        cx,
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("❌ 封面下载失败: {}", e);
-                    window
-                        .push_notification(Notification::error(format!("封面下载失败: {}", e)), cx);
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.thumbnail_loading = false;
+                cx.notify();
+                match result {
+                    Ok(path) => {
+                        tracing::info!("✅ 封面已保存到: {:?}", path);
+                        let filename = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "封面".to_string());
+                        window.push_notification(
+                            Notification::success(crate::i18n::format(
+                                "封面已保存: {}",
+                                &[format!("{}", filename)],
+                            )),
+                            cx,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ 封面下载失败: {}", e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::format(
+                                "封面下载失败: {}",
+                                &[format!("{}", e)],
+                            )),
+                            cx,
+                        );
+                    }
                 }
             });
         })
@@ -745,6 +781,10 @@ impl HomePage {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.submitting {
+            return;
+        }
+        self.request_generation = self.request_generation.wrapping_add(1);
         self.url_input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
@@ -763,62 +803,54 @@ impl Render for HomePage {
         let is_url_empty = url.trim().is_empty();
         let is_loading = matches!(self.download_state, DownloadState::Fetching);
 
-        // 使用主题颜色
-        let bg_color = cx.theme().background;
-
-        div()
-            .id("home-page")
-            .size_full()
-            .overflow_y_scroll()
-            .bg(bg_color)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .p(px(24.0))
-                    .gap(px(24.0))
-                    // 页面标题
-                    .child(self.render_header(cx))
-                    // URL 输入区域
-                    .child(
-                        UrlInputCard::new(&self.url_input)
-                            .loading(is_loading)
-                            .empty(is_url_empty)
-                            .on_parse(cx.listener(|this, _ev, _window, cx| {
-                                this.on_parse(cx);
-                            })),
-                    )
-                    // 状态内容（包含格式选择）
-                    .child(self.render_state_content(cx)),
-            )
+        div().id("home-page").size_full().overflow_y_scroll().child(
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .p_6()
+                .gap_4()
+                // 页面标题
+                .child(self.render_header(cx))
+                // URL 输入区域
+                .child(
+                    UrlInputCard::new(&self.url_input)
+                        .loading(is_loading)
+                        .disabled(self.submitting)
+                        .on_cancel(cx.listener(|this, _, _, cx| this.invalidate_parse(cx)))
+                        .empty(is_url_empty)
+                        .on_parse(cx.listener(|this, _ev, _window, cx| {
+                            this.on_parse(cx);
+                        })),
+                )
+                // 状态内容（包含格式选择）
+                .child(self.render_state_content(cx)),
+        )
     }
 }
 
 impl HomePage {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // 使用主题颜色
-        let title_color = cx.theme().foreground;
-        let desc_color = cx.theme().muted_foreground;
-
-        div().flex().items_center().justify_between().child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .text_2xl()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(title_color)
-                        .child("视频下载"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(desc_color)
-                        .child("粘贴视频链接，一键下载"),
-                ),
-        )
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_size(px(22.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(crate::i18n::tr("视频下载")),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(crate::i18n::tr("从一个链接开始，轻松保存视频和音频")),
+            )
     }
 
     fn render_state_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -829,6 +861,8 @@ impl HomePage {
                 let selected_video = self.selected_video_id.clone();
                 let selected_audio = self.selected_audio_id.clone();
                 VideoPreviewReady::new(info.clone())
+                    .submitting(self.submitting)
+                    .thumbnail_loading(self.thumbnail_loading)
                     .selected_video(selected_video)
                     .selected_audio(selected_audio)
                     .on_cancel(cx.listener(|this, _ev, window, cx| {
@@ -863,10 +897,31 @@ impl HomePage {
                 .into_any_element(),
             DownloadState::Error(msg) => VideoPreviewError::new(msg.clone())
                 .on_retry(cx.listener(|this, _ev, _window, cx| {
-                    this.download_state = DownloadState::Idle;
-                    cx.notify();
+                    this.on_parse(cx);
                 }))
                 .into_any_element(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accept_parse_result;
+
+    #[test]
+    fn parse_result_requires_same_generation_and_active_fetch() {
+        assert!(accept_parse_result(3, 3, true));
+        assert!(
+            !accept_parse_result(4, 3, true),
+            "older URL must not overwrite a newer request"
+        );
+        assert!(
+            !accept_parse_result(4, 3, false),
+            "cancelled request must not reopen preview"
+        );
+        assert!(
+            !accept_parse_result(3, 3, false),
+            "completed request must not apply twice"
+        );
     }
 }

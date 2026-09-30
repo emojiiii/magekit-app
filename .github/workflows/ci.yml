@@ -47,3 +47,52 @@ jobs:
             rustfmt.patch
             rustfmt-files.tar.gz
           retention-days: 3
+
+  framework:
+    name: GPUI / i18n (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gpui-fast-kit
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libssl-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libx11-dev libx11-xcb-dev libasound2-dev \
+            libvulkan-dev libegl1-mesa-dev
+      - name: Check workspace and test targets against the locked framework stack
+        run: cargo check --workspace --all-targets --locked
+      - name: Test persisted configuration compatibility
+        run: cargo test -p magekit-shared --locked
+      - name: Check translation catalog coverage
+        if: runner.os == 'Linux'
+        run: python3 scripts/check_i18n.py
+      - name: Test UI workflow, locale, and external-label regressions
+        run: cargo test --bin magekit --locked
+      - name: Test credential boundaries, download cancellation, update integrity, and task persistence
+        run: cargo test -p download -p magekit-extractor -p magekit-tool-manager -p magekit-capture --locked
+      - name: Test recording URL domain boundaries
+        run: cargo test -p live_recorder --lib security_tests --locked
+      - name: Verify official Deno release installation on Windows
+        if: runner.os == 'Windows'
+        run: cargo test -p magekit-tool-manager --locked deno_runtime::tests::live_official_release_installs_in_temporary_directory -- --ignored --exact
+      - name: Test recording cover source selection and cache freshness
+        run: cargo test -p live_recorder --lib cover --locked
+      - name: Test cover image metadata and original-byte caching
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s crates/live_recorder/tests -p test_cover_images.py

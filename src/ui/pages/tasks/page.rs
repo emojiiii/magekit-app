@@ -8,10 +8,14 @@
 use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::*;
+use gpui_router::use_navigate;
 use magekit_shared::{TaskId, TaskState, TaskStatus};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use super::widgets::TaskItem;
 
@@ -22,15 +26,44 @@ pub enum TaskFilter {
     Downloading,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl TaskFilter {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::All => "全部",
-            Self::Downloading => "下载中",
-            Self::Completed => "已完成",
-            Self::Failed => "失败",
+            Self::All => crate::i18n::tr("全部"),
+            Self::Downloading => crate::i18n::tr("进行中"),
+            Self::Completed => crate::i18n::tr("已完成"),
+            Self::Failed => crate::i18n::tr("失败"),
+            Self::Cancelled => crate::i18n::tr("已取消"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TaskAction {
+    Pause,
+    Resume,
+    Retry,
+    Cancel,
+    Delete,
+}
+
+impl TaskAction {
+    fn allowed(self, state: &TaskState) -> bool {
+        match self {
+            Self::Pause => matches!(state, TaskState::Downloading),
+            Self::Resume => matches!(state, TaskState::Paused),
+            Self::Retry => matches!(state, TaskState::Failed(_)),
+            Self::Cancel => matches!(
+                state,
+                TaskState::Queued | TaskState::Downloading | TaskState::Paused | TaskState::Merging
+            ),
+            Self::Delete => matches!(
+                state,
+                TaskState::Completed | TaskState::Failed(_) | TaskState::Cancelled
+            ),
         }
     }
 }
@@ -40,6 +73,8 @@ pub struct TasksPage {
     app_state: Arc<AppState>,
     tasks: Vec<TaskStatus>,
     filter: TaskFilter,
+    pending_tasks: HashSet<TaskId>,
+    clearing: bool,
 }
 
 impl TasksPage {
@@ -51,6 +86,8 @@ impl TasksPage {
             app_state: app_state.clone(),
             tasks,
             filter: TaskFilter::All,
+            pending_tasks: HashSet::new(),
+            clearing: false,
         };
 
         // 事件驱动刷新：订阅 ToolManager 事件，收到更新后从 AppState 缓存读取最新任务列表
@@ -67,7 +104,7 @@ impl TasksPage {
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
-                    _ = Timer::after(std::time::Duration::from_secs(1)) => {}
+                    _ = smol::Timer::after(std::time::Duration::from_secs(1)) => {}
                 }
 
                 // 从 AppState 缓存读取最新任务
@@ -87,6 +124,9 @@ impl TasksPage {
                                 || a.state != b.state
                                 || a.speed != b.speed
                                 || a.downloaded_bytes != b.downloaded_bytes
+                                || a.total_bytes != b.total_bytes
+                                || a.title != b.title
+                                || a.output_path != b.output_path
                         });
 
                     if has_change {
@@ -137,42 +177,103 @@ impl TasksPage {
                 TaskFilter::Completed => {
                     matches!(task.state, TaskState::Completed)
                 }
-                TaskFilter::Failed => {
-                    matches!(task.state, TaskState::Failed(_) | TaskState::Cancelled)
-                }
+                TaskFilter::Failed => matches!(task.state, TaskState::Failed(_)),
+                TaskFilter::Cancelled => matches!(task.state, TaskState::Cancelled),
             })
             .collect()
     }
 
-    /// 暂停任务
-    fn pause_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("⏸️ 暂停任务: {}", task_id);
-        self.app_state.pause_download_sync(task_id);
+    /// 重复点击只发出一次请求；错误保持可见并允许再次操作。
+    fn run_task_action(
+        &mut self,
+        id: TaskId,
+        action: TaskAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clearing || self.pending_tasks.contains(&id) {
+            return;
+        }
+        let Some(task) = self.app_state.get_task_status_sync(id) else {
+            return;
+        };
+        if !action.allowed(&task.state) {
+            self.refresh_tasks(cx);
+            return;
+        }
+        self.pending_tasks.insert(id);
+        let handle = match action {
+            TaskAction::Pause => self.app_state.pause_download_sync(id),
+            TaskAction::Resume => self.app_state.resume_download_sync(id),
+            TaskAction::Retry => self.app_state.retry_task(id),
+            TaskAction::Cancel => self.app_state.cancel_download_sync(id),
+            TaskAction::Delete => self.app_state.delete_task_sync(id),
+        };
         cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = handle
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result);
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending_tasks.remove(&id);
+                this.refresh_tasks(cx);
+                if let Err(error) = result {
+                    window.push_notification(
+                        Notification::error(crate::i18n::format(
+                            "任务操作失败: {}",
+                            &[error.to_string()],
+                        )),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
     }
 
-    /// 恢复任务
-    fn resume_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("▶️ 恢复任务: {}", task_id);
-        self.app_state.resume_download_sync(task_id);
-        cx.notify();
-    }
-
-    /// 取消任务
-    fn cancel_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("🛑 取消任务: {}", task_id);
-        self.app_state.cancel_download_sync(task_id);
-        cx.notify();
-    }
-
-    /// 删除任务
-    fn delete_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        tracing::info!("🗑️ 删除任务: {}", task_id);
-        self.app_state.delete_task_sync(task_id);
-
-        // 立即从本地列表中移除
-        self.tasks.retain(|t| t.id != task_id);
-        cx.notify();
+    fn confirm_task_action(
+        &self,
+        id: TaskId,
+        action: TaskAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clearing || self.pending_tasks.contains(&id) {
+            return;
+        }
+        let Some(task) = self.tasks.iter().find(|task| task.id == id) else {
+            return;
+        };
+        let title = task.title.clone().unwrap_or_else(|| task.url.clone());
+        let (heading, description, action_label) = match action {
+            TaskAction::Cancel => (
+                "取消下载？",
+                "取消后将停止此任务，可从首页重新添加。",
+                "取消下载",
+            ),
+            _ => (
+                "删除任务记录？",
+                "这将删除任务记录和临时文件，已下载的文件会保留。",
+                "删除",
+            ),
+        };
+        let page = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let page = page.clone();
+            dialog
+                .confirm()
+                .title(crate::i18n::tr(heading))
+                .description(format!("{}\n{}", title, crate::i18n::tr(description)))
+                .ok_text(crate::i18n::tr(action_label))
+                .cancel_text(crate::i18n::tr("返回"))
+                .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    let _ =
+                        page.update(cx, |this, cx| this.run_task_action(id, action, window, cx));
+                    true
+                })
+        });
     }
 
     /// 打开文件夹
@@ -195,14 +296,73 @@ impl TasksPage {
         }
     }
 
-    /// 清空已完成的任务
-    fn clear_completed(&mut self, cx: &mut Context<Self>) {
-        self.app_state.clear_completed_tasks_sync();
+    /// 清理前确认范围，完成后再移除记录。
+    fn confirm_clear_completed(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.clearing || !self.pending_tasks.is_empty() {
+            return;
+        }
+        let completed_ids: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|task| matches!(task.state, TaskState::Completed))
+            .map(|task| task.id)
+            .collect();
+        let count = completed_ids.len();
+        let page = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let page = page.clone();
+            let completed_ids = completed_ids.clone();
+            dialog
+                .confirm()
+                .title(crate::i18n::tr("清空已完成的任务？"))
+                .description(crate::i18n::format(
+                    "将删除 {} 条已完成记录，下载的文件会保留。",
+                    &[count.to_string()],
+                ))
+                .ok_text(crate::i18n::tr("清空已完成"))
+                .cancel_text(crate::i18n::tr("返回"))
+                .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    let _ = page.update(cx, |this, cx| {
+                        this.clear_completed(completed_ids.clone(), window, cx)
+                    });
+                    true
+                })
+        });
+    }
 
-        // 立即从本地列表中移除
-        self.tasks
-            .retain(|t| !matches!(t.state, TaskState::Completed));
+    fn clear_completed(
+        &mut self,
+        completed_ids: Vec<TaskId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clearing || !self.pending_tasks.is_empty() {
+            return;
+        }
+        self.clearing = true;
+        let handle = self.app_state.clear_completed_tasks_sync(completed_ids);
         cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = handle
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result);
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.clearing = false;
+                this.refresh_tasks(cx);
+                if let Err(error) = result {
+                    window.push_notification(
+                        Notification::error(crate::i18n::format(
+                            "清理任务失败: {}",
+                            &[error.to_string()],
+                        )),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
     }
 }
 
@@ -212,25 +372,19 @@ impl Render for TasksPage {
         let task_count = filtered_tasks.len();
         let is_empty = task_count == 0;
 
-        // 使用主题颜色
-        let bg_color = cx.theme().background;
-
         div()
             .id("tasks-page")
             .size_full()
             .overflow_y_scroll()
-            .bg(bg_color)
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .p(px(24.0))
-                    .gap(px(24.0))
-                    // 页面标题
+                    .w_full()
+                    .p_6()
+                    .gap_4()
                     .child(self.render_header(cx))
-                    // 筛选栏
                     .child(self.render_filter_bar(cx))
-                    // 任务列表
                     .when(is_empty, |this| this.child(self.render_empty_state(cx)))
                     .when(!is_empty, |this| this.child(self.render_task_list(cx))),
             )
@@ -247,23 +401,29 @@ impl TasksPage {
             .flex()
             .items_center()
             .justify_between()
+            .flex_wrap()
+            .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.0))
+                    .flex_wrap()
+                    .items_center()
+                    .gap_3()
                     .child(
                         div()
-                            .text_2xl()
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
-                            .child("📥 任务列表"),
+                            .child(crate::i18n::tr("下载任务")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(desc_color)
-                            .child(format!("共 {} 个任务", self.tasks.len())),
+                            .child(crate::i18n::tr("管理所有下载任务")),
                     ),
             )
             .child(
@@ -277,19 +437,23 @@ impl TasksPage {
                             .iter()
                             .any(|t| matches!(t.state, TaskState::Completed));
                         Button::new("clear")
-                            .xsmall()
-                            .outline()
-                            .disabled(!has_completed)
-                            .label("清空已完成")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_completed(cx);
+                            .small()
+                            .ghost()
+                            .disabled(
+                                !has_completed || self.clearing || !self.pending_tasks.is_empty(),
+                            )
+                            .loading(self.clearing)
+                            .label(crate::i18n::tr("清空已完成"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_clear_completed(window, cx);
                             }))
                     })
                     .child(
                         Button::new("refresh")
-                            .xsmall()
+                            .small()
                             .outline()
-                            .label("刷新")
+                            .icon(IconName::RefreshCw)
+                            .label(crate::i18n::tr("刷新"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh_tasks(cx);
                             })),
@@ -297,68 +461,87 @@ impl TasksPage {
             )
     }
 
+    fn filter_count(&self, filter: TaskFilter) -> usize {
+        self.tasks
+            .iter()
+            .filter(|task| match filter {
+                TaskFilter::All => true,
+                TaskFilter::Downloading => matches!(
+                    task.state,
+                    TaskState::Downloading
+                        | TaskState::Merging
+                        | TaskState::Paused
+                        | TaskState::Queued
+                ),
+                TaskFilter::Completed => matches!(task.state, TaskState::Completed),
+                TaskFilter::Failed => matches!(task.state, TaskState::Failed(_)),
+                TaskFilter::Cancelled => matches!(task.state, TaskState::Cancelled),
+            })
+            .count()
+    }
+
     fn render_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_filter = self.filter;
         let filters = [
             TaskFilter::All,
             TaskFilter::Downloading,
             TaskFilter::Completed,
             TaskFilter::Failed,
+            TaskFilter::Cancelled,
         ];
-
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
+        let selected = filters
+            .iter()
+            .position(|filter| *filter == self.filter)
+            .unwrap_or(0);
+        TabBar::new("download-filters")
+            .underline()
+            .menu(true)
+            .selected_index(selected)
             .children(filters.into_iter().map(|filter| {
-                let is_active = filter == current_filter;
-                let label = filter.label();
-
-                Button::new(SharedString::from(format!("filter-{:?}", filter)))
-                    .xsmall()
-                    .map(|btn| {
-                        if is_active {
-                            btn.primary()
-                        } else {
-                            btn.outline()
-                        }
-                    })
-                    .label(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_filter(filter, cx);
-                    }))
+                Tab::new().label(format!("{}  {}", filter.label(), self.filter_count(filter)))
+            }))
+            .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                if let Some(filter) = filters.get(*index) {
+                    this.set_filter(*filter, cx);
+                }
             }))
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // 使用主题颜色
-        let text_color = cx.theme().muted_foreground;
-        let muted_color = cx.theme().muted_foreground;
-
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .py(px(80.0))
-            .gap(px(16.0))
-            .child(div().text_2xl().child("📭"))
-            .child(
-                div()
-                    .text_lg()
-                    .text_color(text_color)
-                    .child(match self.filter {
-                        TaskFilter::All => "暂无下载任务",
-                        TaskFilter::Downloading => "没有正在下载的任务",
-                        TaskFilter::Completed => "没有已完成的任务",
-                        TaskFilter::Failed => "没有失败的任务",
-                    }),
+        Empty::new()
+            .py_6()
+            .header(
+                EmptyHeader::new()
+                    .media(
+                        EmptyMedia::new()
+                            .size_8()
+                            .rounded_xl()
+                            .bg(cx.theme().muted)
+                            .child(
+                                Icon::new(IconName::Inbox)
+                                    .size_4()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
+                    .title(EmptyTitle::new().child(match self.filter {
+                        TaskFilter::All => crate::i18n::tr("暂无下载任务"),
+                        TaskFilter::Downloading => crate::i18n::tr("没有正在下载的任务"),
+                        TaskFilter::Completed => crate::i18n::tr("没有已完成的任务"),
+                        TaskFilter::Failed => crate::i18n::tr("没有失败的任务"),
+                        TaskFilter::Cancelled => crate::i18n::tr("没有已取消的任务"),
+                    }))
+                    .description(
+                        EmptyDescription::new()
+                            .child(crate::i18n::tr("在首页粘贴视频链接开始下载")),
+                    ),
             )
             .child(
-                div()
-                    .text_sm()
-                    .text_color(muted_color)
-                    .child("在首页粘贴视频链接开始下载"),
+                Button::new("new-download")
+                    .primary()
+                    .icon(IconName::Plus)
+                    .label(crate::i18n::tr("新建下载"))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        use_navigate(cx)("/".into());
+                    })),
             )
     }
 
@@ -368,23 +551,27 @@ impl TasksPage {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap_2()
             .children(filtered_tasks.into_iter().map(|task| {
                 let task_id = task.id;
                 let task_clone = task.clone();
 
                 TaskItem::new(task.clone())
-                    .on_pause(cx.listener(move |this, _, _, cx| {
-                        this.pause_task(task_id, cx);
+                    .pending(self.clearing || self.pending_tasks.contains(&task_id))
+                    .on_pause(cx.listener(move |this, _, window, cx| {
+                        this.run_task_action(task_id, TaskAction::Pause, window, cx);
                     }))
-                    .on_resume(cx.listener(move |this, _, _, cx| {
-                        this.resume_task(task_id, cx);
+                    .on_resume(cx.listener(move |this, _, window, cx| {
+                        this.run_task_action(task_id, TaskAction::Resume, window, cx);
                     }))
-                    .on_cancel(cx.listener(move |this, _, _, cx| {
-                        this.cancel_task(task_id, cx);
+                    .on_retry(cx.listener(move |this, _, window, cx| {
+                        this.run_task_action(task_id, TaskAction::Retry, window, cx);
                     }))
-                    .on_delete(cx.listener(move |this, _, _, cx| {
-                        this.delete_task(task_id, cx);
+                    .on_cancel(cx.listener(move |this, _, window, cx| {
+                        this.confirm_task_action(task_id, TaskAction::Cancel, window, cx);
+                    }))
+                    .on_delete(cx.listener(move |this, _, window, cx| {
+                        this.confirm_task_action(task_id, TaskAction::Delete, window, cx);
                     }))
                     .on_open_folder(cx.listener({
                         let task = task_clone.clone();
@@ -393,5 +580,25 @@ impl TasksPage {
                         }
                     }))
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskAction;
+    use magekit_shared::TaskState;
+
+    #[test]
+    fn late_confirmation_cannot_cancel_a_completed_task() {
+        assert!(!TaskAction::Cancel.allowed(&TaskState::Completed));
+        assert!(TaskAction::Cancel.allowed(&TaskState::Queued));
+        assert!(!TaskAction::Delete.allowed(&TaskState::Downloading));
+    }
+
+    #[test]
+    fn retry_and_resume_have_distinct_states() {
+        assert!(TaskAction::Retry.allowed(&TaskState::Failed("network".into())));
+        assert!(!TaskAction::Resume.allowed(&TaskState::Failed("network".into())));
+        assert!(TaskAction::Resume.allowed(&TaskState::Paused));
     }
 }

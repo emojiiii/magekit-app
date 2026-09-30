@@ -4,8 +4,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use magekit_shared::truncate_string;
 use magekit_shared::types::{TaskId, TaskState, TaskStatus};
 use std::collections::HashMap;
@@ -226,7 +226,10 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.foreground)
-                        .child(format!("任务列表 ({})", stats.total)),
+                        .child(crate::i18n::format(
+                            "任务列表 ({})",
+                            &[format!("{}", stats.total)],
+                        )),
                 )
                 .when(stats.downloading > 0, |this| {
                     this.child(
@@ -237,7 +240,10 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                             .bg(theme.primary)
                             .text_xs()
                             .text_color(theme.primary_foreground)
-                            .child(format!("{} 进行中", stats.downloading)),
+                            .child(crate::i18n::format(
+                                "{} 进行中",
+                                &[format!("{}", stats.downloading)],
+                            )),
                     )
                 }),
         )
@@ -255,7 +261,7 @@ fn render_toolbar(stats: &TaskStats, cx: &mut App) -> impl IntoElement {
                     Button::new("clear-completed")
                         .ghost()
                         .small()
-                        .label("清除已完成"),
+                        .label(crate::i18n::tr("清除已完成")),
                 ),
         )
 }
@@ -281,13 +287,13 @@ fn render_empty_state(cx: &mut App) -> impl IntoElement {
                     div()
                         .text_lg()
                         .text_color(theme.muted_foreground)
-                        .child("暂无下载任务"),
+                        .child(crate::i18n::tr("暂无下载任务")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("在左侧面板添加视频链接开始下载"),
+                        .child(crate::i18n::tr("在左侧面板添加视频链接开始下载")),
                 ),
         )
 }
@@ -453,13 +459,13 @@ fn state_color(state: &TaskState, theme: &Theme) -> Hsla {
 /// 获取状态文本
 fn state_text(state: &TaskState) -> String {
     match state {
-        TaskState::Queued => "排队中".to_string(),
-        TaskState::Downloading => "下载中".to_string(),
-        TaskState::Merging => "合并中".to_string(),
-        TaskState::Paused => "已暂停".to_string(),
-        TaskState::Completed => "已完成".to_string(),
-        TaskState::Failed(err) => format!("失败: {}", err),
-        TaskState::Cancelled => "已取消".to_string(),
+        TaskState::Queued => crate::i18n::tr("排队中").to_string(),
+        TaskState::Downloading => crate::i18n::tr("下载中").to_string(),
+        TaskState::Merging => crate::i18n::tr("合并中").to_string(),
+        TaskState::Paused => crate::i18n::tr("已暂停").to_string(),
+        TaskState::Completed => crate::i18n::tr("已完成").to_string(),
+        TaskState::Failed(err) => crate::i18n::format("失败: {}", &[format!("{}", err)]),
+        TaskState::Cancelled => crate::i18n::tr("已取消").to_string(),
     }
 }
 
@@ -474,7 +480,8 @@ fn render_progress_bar_element(
     let fg_color = theme.primary;
     let text_color = theme.muted_foreground;
 
-    let eta_text = eta.map(|eta| format!("剩余 {}", format_duration(eta)));
+    let eta_text =
+        eta.map(|eta| crate::i18n::format("剩余 {}", &[format!("{}", format_duration(eta))]));
 
     div()
         .flex()

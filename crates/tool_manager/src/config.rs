@@ -96,6 +96,14 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
+    #[cfg(test)]
+    pub(crate) fn isolated_for_test(path: PathBuf) -> Self {
+        Self {
+            config_path: path,
+            config: ToolManagerConfig::default(),
+        }
+    }
+
     /// 创建新的配置管理器 (同步版本)
     pub fn new_sync() -> ToolManagerResult<Self> {
         let config_dir =

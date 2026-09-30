@@ -32,6 +32,10 @@ impl crate::downloader::Downloader for DirectDownloader {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<DownloadOutcome> {
+        crate::utils::validate_request(&request)?;
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         callback.on_progress(DownloadProgress::preparing());
 
         // 构建 HTTP 客户端
@@ -102,9 +106,18 @@ impl crate::downloader::Downloader for DirectDownloader {
             req = req.header(reqwest::header::RANGE, format!("bytes={}-", downloaded));
         }
 
-        let resp = match req.send().await {
+        let response = tokio::select! {
+            _ = cancel.cancelled() => {
+                drop(file);
+                if created_new { let _ = tokio::fs::remove_file(&temp_path).await; }
+                return Err(DownloadError::Canceled);
+            }
+            response = req.send() => response,
+        };
+        let resp = match response {
             Ok(r) => r,
             Err(e) => {
+                drop(file);
                 // 超时/网络错误：若本次新建的 .part 仍为空，清理避免堆积垃圾文件
                 if created_new && downloaded == 0 {
                     let _ = tokio::fs::remove_file(&temp_path).await;
@@ -113,6 +126,7 @@ impl crate::downloader::Downloader for DirectDownloader {
             }
         };
         if !resp.status().is_success() {
+            drop(file);
             if created_new && downloaded == 0 {
                 let _ = tokio::fs::remove_file(&temp_path).await;
             }
@@ -122,12 +136,23 @@ impl crate::downloader::Downloader for DirectDownloader {
         // 如果服务器不支持 Range（返回 200），且有已下载，重下
         if downloaded > 0 && resp.status() == reqwest::StatusCode::OK {
             downloaded = 0;
+            created_new = true;
             file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .open(&temp_path)
                 .await?;
+        }
+
+        if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            let valid_range = parse_content_range(resp.headers())
+                .is_some_and(|(start, _, _)| start == downloaded);
+            if !valid_range {
+                return Err(DownloadError::Network(
+                    "Server returned an invalid or mismatched Content-Range".into(),
+                ));
+            }
         }
 
         // 计算 total：优先 Content-Range，总长包含已下部分
@@ -146,11 +171,12 @@ impl crate::downloader::Downloader for DirectDownloader {
         let mut speed_window: VecDeque<(Instant, u64)> = VecDeque::new(); // (time, bytes)
         let speed_span = Duration::from_secs(5);
 
-        while let Some(chunk) = stream.next().await {
-            if cancel.is_cancelled() {
-                return Err(DownloadError::Canceled);
-            }
-
+        loop {
+            let chunk = tokio::select! {
+                _ = cancel.cancelled() => return Err(DownloadError::Canceled),
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else { break };
             let chunk = chunk.map_err(DownloadError::from)?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
@@ -177,7 +203,11 @@ impl crate::downloader::Downloader for DirectDownloader {
             callback.on_progress(DownloadProgress::downloading(downloaded, total, speed));
         }
 
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         file.flush().await?;
+        drop(file);
 
         // 校验：避免把 HTML/JSON/m3u8 等页面内容当作 mp4 保存
         // 不做额外网络请求，仅在下载完成后读取本地文件头判断。
@@ -185,6 +215,7 @@ impl crate::downloader::Downloader for DirectDownloader {
             let mut f = tokio::fs::File::open(&temp_path).await?;
             let mut buf = [0u8; 512];
             let n = f.read(&mut buf).await.unwrap_or(0);
+            drop(f);
             let head = &buf[..n];
 
             let ct = content_type.as_deref().unwrap_or("");
@@ -231,7 +262,15 @@ impl crate::downloader::Downloader for DirectDownloader {
             }
         }
 
-        // 成功后重命名
+        // 完整性校验通过后才发布；取消不得留下“已完成”文件。
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
+        if total.is_some_and(|total| downloaded != total) {
+            return Err(DownloadError::Network(
+                "Downloaded size does not match response length".into(),
+            ));
+        }
         tokio::fs::rename(&temp_path, &output_path).await?;
         callback.on_progress(DownloadProgress::completed(downloaded, total));
 
@@ -249,11 +288,23 @@ impl crate::downloader::Downloader for DirectDownloader {
     }
 }
 
+fn parse_content_range(headers: &reqwest::header::HeaderMap) -> Option<(u64, u64, Option<u64>)> {
+    let value = headers.get(reqwest::header::CONTENT_RANGE)?.to_str().ok()?;
+    let (range, total) = value.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start = start.parse::<u64>().ok()?;
+    let end = end.parse::<u64>().ok()?;
+    let total = if total == "*" {
+        None
+    } else {
+        Some(total.parse::<u64>().ok()?)
+    };
+    if end < start || total.is_some_and(|total| end >= total) {
+        return None;
+    }
+    Some((start, end, total))
+}
+
 pub fn parse_content_range_total(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers.get(reqwest::header::CONTENT_RANGE).and_then(|v| {
-        v.to_str().ok().and_then(|s| {
-            // bytes start-end/total
-            s.split('/').nth(1).and_then(|t| t.parse::<u64>().ok())
-        })
-    })
+    parse_content_range(headers).and_then(|(_, _, total)| total)
 }

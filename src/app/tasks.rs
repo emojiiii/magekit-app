@@ -73,29 +73,20 @@ impl AppState {
             .count()
     }
 
-    /// 清空已完成的任务（同步包装）
-    pub fn clear_completed_tasks_sync(&self) {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
+    /// 仅清理调用时已完成的任务，保留失败/取消记录及随后完成的任务。
+    pub fn clear_completed_tasks_sync(
+        &self,
+        completed_ids: Vec<TaskId>,
+    ) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
         let tasks = self.tasks.clone();
-
-        runtime.spawn(async move {
-            // 从 ToolManager 清理
-            if let Err(e) = tool_manager.clear_completed_tasks().await {
-                tracing::error!("❌ 清理已完成任务失败: {}", e);
-                return;
+        self.runtime.spawn(async move {
+            for id in completed_ids {
+                manager.delete_task_status(id).await?;
+                tasks.write().await.remove(&id);
             }
-
-            // 从本地缓存清理
-            {
-                let mut tasks = tasks.write().await;
-                tasks.retain(|_, task| {
-                    !matches!(task.state, TaskState::Completed | TaskState::Cancelled)
-                });
-            }
-
-            tracing::info!("✅ 已清理完成的任务");
-        });
+            Ok(())
+        })
     }
 
     /// 批量暂停所有下载中的任务
@@ -131,19 +122,16 @@ impl AppState {
         });
     }
 
-    /// 重试失败的任务
-    pub fn retry_task(&self, task_id: TaskId) -> Result<()> {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
-
-        runtime.spawn(async move {
-            if let Err(e) = tool_manager.retry_task(task_id).await {
-                tracing::error!("❌ 重试任务失败: {}", e);
-            } else {
-                tracing::info!("🔄 任务已加入重试队列: {}", task_id);
+    /// 返回真实的重试结果，错误交由 UI 呈现。
+    pub fn retry_task(&self, task_id: TaskId) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
+        let tasks = self.tasks.clone();
+        self.runtime.spawn(async move {
+            manager.retry_task(task_id).await?;
+            if let Some(status) = manager.get_task_status(task_id).await {
+                tasks.write().await.insert(task_id, status);
             }
-        });
-
-        Ok(())
+            Ok(())
+        })
     }
 }

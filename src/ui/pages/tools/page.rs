@@ -3,9 +3,14 @@
 use crate::app::{AppState, ToolStatus};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Disableable;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_kit::component::Disableable;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::separator::Separator;
+use gpui_kit::component::tag::{Tag, TagVariant};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, StyledExt};
 use magekit_shared::{ToolType, UpdateChannel};
 use magekit_tool_manager::UpdateInfo;
 use std::sync::Arc;
@@ -44,7 +49,7 @@ impl ToolsPage {
         // 延迟检测工具状态
         cx.spawn(async move |this, cx| {
             // 等待一小段时间让 UI 先渲染
-            Timer::after(std::time::Duration::from_millis(100)).await;
+            smol::Timer::after(std::time::Duration::from_millis(100)).await;
 
             let _ = this.update(cx, |this, cx| {
                 if !this.initial_check_done {
@@ -139,7 +144,8 @@ impl ToolsPage {
                         this.update_info = Some(info);
                     }
                     Err(e) => {
-                        this.error_message = Some(format!("检查更新失败: {}", e));
+                        this.error_message =
+                            Some(crate::i18n::format("检查更新失败: {}", &[format!("{}", e)]));
                     }
                 }
                 cx.notify();
@@ -167,13 +173,13 @@ impl ToolsPage {
                     if handle.is_finished() {
                         break;
                     }
-                    Timer::after(std::time::Duration::from_millis(100)).await;
+                    smol::Timer::after(std::time::Duration::from_millis(100)).await;
                 }
 
                 let (result, status): (anyhow::Result<()>, ToolStatus) = smol::unblock(move || {
-                    let result = handle
-                        .join()
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("安装线程崩溃")));
+                    let result = handle.join().unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(crate::i18n::format("安装线程崩溃", &[])))
+                    });
                     let status = app_state.check_tool_status_sync(tool_type);
                     (result, status)
                 })
@@ -198,8 +204,10 @@ impl ToolsPage {
                                 }
                                 Err(e) => {
                                     tool.state = ToolInstallState::Failed(e.to_string());
-                                    this.error_message =
-                                        Some(format!("安装 {} 失败: {}", tool.name, e));
+                                    this.error_message = Some(crate::i18n::format(
+                                        "安装 {} 失败: {}",
+                                        &[format!("{}", tool.name), format!("{}", e)],
+                                    ));
                                     tracing::error!("❌ 安装失败: {}: {}", tool.name, e);
                                 }
                             }
@@ -287,15 +295,15 @@ impl ToolsPage {
                     cx.notify();
                 });
 
-                // 使用 GPUI 的 Timer 来异步等待
-                Timer::after(std::time::Duration::from_millis(100)).await;
+                // 使用 smol 的 Timer 来异步等待
+                smol::Timer::after(std::time::Duration::from_millis(100)).await;
             }
 
             // 在后台线程中获取安装结果和检测状态，避免阻塞主线程
             let (result, status): (anyhow::Result<()>, ToolStatus) = smol::unblock(move || {
-                let result = handle
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("安装线程崩溃")));
+                let result = handle.join().unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(crate::i18n::format("安装线程崩溃", &[])))
+                });
                 let status = app_state.check_tool_status_sync(tool_type);
                 (result, status)
             })
@@ -321,8 +329,10 @@ impl ToolsPage {
                             }
                             Err(e) => {
                                 tool.state = ToolInstallState::Failed(e.to_string());
-                                this.error_message =
-                                    Some(format!("安装 {} 失败: {}", tool.name, e));
+                                this.error_message = Some(crate::i18n::format(
+                                    "安装 {} 失败: {}",
+                                    &[format!("{}", tool.name), format!("{}", e)],
+                                ));
                                 tracing::error!("❌ 安装失败: {}: {}", tool.name, e);
                             }
                         }
@@ -362,7 +372,7 @@ impl ToolsPage {
                 tracing::info!("✅ 工具 {} 删除成功", tool_name);
             }
             Err(e) => {
-                self.error_message = Some(format!("删除失败: {}", e));
+                self.error_message = Some(crate::i18n::format("删除失败: {}", &[format!("{}", e)]));
                 tracing::error!("❌ 工具 {} 删除失败: {}", tool_name, e);
             }
         }
@@ -393,13 +403,13 @@ impl ToolsPage {
                 if handle.is_finished() {
                     break;
                 }
-                Timer::after(std::time::Duration::from_millis(100)).await;
+                smol::Timer::after(std::time::Duration::from_millis(100)).await;
             }
 
             // 获取安装结果
             let result = handle
                 .join()
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("安装线程崩溃")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::i18n::format("安装线程崩溃", &[]))));
             let refresh_updates = result.is_ok();
 
             // 安装完成后重新检测所有工具状态
@@ -409,7 +419,8 @@ impl ToolsPage {
             // 更新 UI
             let _ = this.update(cx, |this, cx| {
                 if let Err(ref e) = result {
-                    this.error_message = Some(format!("安装工具失败: {}", e));
+                    this.error_message =
+                        Some(crate::i18n::format("安装工具失败: {}", &[format!("{}", e)]));
                 }
 
                 for tool in &mut this.tools {
@@ -421,7 +432,7 @@ impl ToolsPage {
                     tool.state = match status {
                         ToolStatus::NotInstalled => {
                             if this.error_message.is_some() {
-                                ToolInstallState::Failed("安装失败".to_string())
+                                ToolInstallState::Failed(crate::i18n::tr("安装失败").to_string())
                             } else {
                                 ToolInstallState::NotInstalled
                             }
@@ -450,7 +461,7 @@ impl ToolsPage {
 }
 
 impl Render for ToolsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let any_not_installed = self.tools.iter().any(|t| {
             matches!(
                 t.state,
@@ -483,8 +494,9 @@ impl Render for ToolsPage {
                         div()
                             .flex()
                             .flex_col()
-                            .p(px(24.0))
-                            .gap(px(24.0))
+                            .w_full()
+                            .p_6()
+                            .gap_4()
                             // 页面标题
                             .child(self.render_header(cx, any_not_installed, any_installing))
                             // 错误消息
@@ -495,8 +507,10 @@ impl Render for ToolsPage {
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap(px(12.0))
+                                    .when(window.bounds().size.width < px(1100.0), |el| {
+                                        el.flex_col()
+                                    })
+                                    .gap(px(16.0))
                                     .children(self.render_tool_cards(cx)),
                             )
                             // YouTube 与直播录制运行环境
@@ -527,43 +541,52 @@ impl ToolsPage {
 
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .justify_between()
+            .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.0))
+                    .flex_wrap()
+                    .items_center()
+                    .gap_3()
                     .child(
                         div()
-                            .text_2xl()
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
-                            .child("工具管理"),
+                            .child(crate::i18n::tr("工具管理")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(muted_color)
-                            .child("管理下载所需的依赖工具"),
+                            .child(crate::i18n::tr("管理下载所需的依赖工具")),
                     ),
             )
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.0))
                     .child(
                         div()
                             .relative()
                             .child(
                                 Button::new("check-updates")
+                                    .small()
                                     .ghost()
                                     .label(if self.is_checking_updates {
-                                        "检查更新中..."
+                                        crate::i18n::tr("检查更新中...")
                                     } else {
-                                        "检查更新"
+                                        crate::i18n::tr("检查更新")
                                     })
                                     .disabled(self.is_checking_updates)
+                                    .loading(self.is_checking_updates)
                                     .on_click(cx.listener(|this, _ev, _window, cx| {
                                         this.check_tool_updates(cx);
                                     })),
@@ -576,24 +599,28 @@ impl ToolsPage {
                                         .right(px(-2.0))
                                         .w(px(8.0))
                                         .h(px(8.0))
-                                        .bg(rgb(0xef4444))
+                                        .bg(cx.theme().danger)
                                         .rounded_full(),
                                 )
                             }),
                     )
                     .child(
                         Button::new("refresh-tools")
+                            .small()
                             .ghost()
-                            .label("刷新")
+                            .icon(IconName::RefreshCw)
+                            .label(crate::i18n::tr("刷新"))
                             .disabled(self.is_checking)
+                            .loading(self.is_checking)
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.refresh_status(cx);
                             })),
                     )
                     .child(
                         Button::new("install-all")
+                            .small()
                             .primary()
-                            .label("一键安装全部")
+                            .label(crate::i18n::tr("一键安装全部"))
                             .disabled(!any_not_installed || any_installing || self.is_checking)
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.install_all_tools(cx);
@@ -603,28 +630,11 @@ impl ToolsPage {
     }
 
     fn render_error_message(&self, msg: String) -> impl IntoElement {
-        div()
-            .p(px(12.0))
-            .rounded(px(8.0))
-            .bg(Hsla::from(rgb(0x450a0a)).opacity(0.5))
-            .border_1()
-            .border_color(rgb(0xef4444))
-            .child(div().text_sm().text_color(rgb(0xef4444)).child(msg))
+        Alert::error("tool-operation-error", crate::i18n::text(&msg))
     }
 
     fn render_tool_cards(&mut self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
-        // 获取主题颜色
-        let card_bg = cx.theme().secondary;
-        let border_color = cx.theme().border;
-        let icon_bg = cx.theme().muted;
-        let title_color = cx.theme().foreground;
-        let muted_color = cx.theme().muted_foreground;
-        let success_color = cx.theme().success;
-        let danger_color = cx.theme().danger;
-        let primary_color = cx.theme().primary;
-        let warning_color: Hsla = rgb(0xfbbf24).into();
         let update_info = self.update_info.clone();
-
         self.tools
             .iter()
             .enumerate()
@@ -634,244 +644,211 @@ impl ToolsPage {
                     tool.state,
                     ToolInstallState::Installing | ToolInstallState::Downloading(_)
                 );
-                let tool_name: SharedString = tool.name.into();
-                let tool_desc: SharedString = tool.description.into();
-                let tool_icon = tool.icon;
                 let tool_update = update_info.as_ref().and_then(|info| match tool_type {
                     ToolType::YtDlp => info.yt_dlp_update.as_ref(),
                     ToolType::Ffmpeg => info.ffmpeg_update.as_ref(),
                 });
                 let has_update = tool_update.is_some();
-
-                // 状态文本和颜色
-                let (status_text, status_color): (SharedString, Hsla) = match &tool.state {
-                    ToolInstallState::Unknown => ("检查中...".into(), muted_color),
-                    ToolInstallState::NotInstalled => ("未安装".into(), danger_color),
-                    ToolInstallState::Installed { version, is_system } => {
-                        if let Some(update) = tool_update {
-                            let suffix = if *is_system { " (系统)" } else { "" };
-                            (
-                                format!(
-                                    "v{} → v{} 可更新{}",
-                                    update.current, update.latest, suffix
-                                )
-                                .into(),
-                                warning_color,
-                            )
-                        } else {
-                            let text: SharedString = match (version, is_system) {
-                                (Some(v), true) => format!("v{} (系统)", v).into(),
-                                (Some(v), false) => format!("v{}", v).into(),
-                                (None, true) => "已安装 (系统)".into(),
-                                (None, false) => "已安装".into(),
-                            };
-                            (text, success_color)
-                        }
-                    }
-                    ToolInstallState::Downloading(progress) => {
-                        let text: SharedString = format!(
-                            "下载中 {:.1}% - {} / {} @ {}",
-                            progress.percent(),
-                            progress.downloaded_str(),
-                            progress.total_str(),
-                            progress.speed_str()
-                        )
-                        .into();
-                        (text, primary_color)
-                    }
-                    ToolInstallState::Installing => ("安装中...".into(), primary_color),
-                    ToolInstallState::Failed(_) => ("安装失败".into(), danger_color),
-                };
-
-                let status_bg: Hsla = status_color.opacity(0.15);
-
-                // 是否可删除（只有非系统安装的可以删除）
                 let can_delete = matches!(
-                    &tool.state,
+                    tool.state,
                     ToolInstallState::Installed {
                         is_system: false,
                         ..
                     }
                 );
-
-                // 进度信息
-                let progress_percent = match &tool.state {
-                    ToolInstallState::Downloading(progress) => Some(progress.percent()),
-                    _ => None,
+                let (status, variant, detail) = match &tool.state {
+                    ToolInstallState::Unknown => (
+                        crate::i18n::tr("检查中..."),
+                        TagVariant::Secondary,
+                        String::new(),
+                    ),
+                    ToolInstallState::NotInstalled => (
+                        crate::i18n::tr("未安装"),
+                        TagVariant::Secondary,
+                        String::new(),
+                    ),
+                    ToolInstallState::Installed { version, is_system } => {
+                        let detail = version
+                            .as_ref()
+                            .map(|v| {
+                                if *is_system {
+                                    crate::i18n::format("v{} (系统)", &[v.clone()])
+                                } else {
+                                    format!("v{v}")
+                                }
+                            })
+                            .unwrap_or_default();
+                        if let Some(update) = tool_update {
+                            (
+                                crate::i18n::tr("可更新"),
+                                TagVariant::Warning,
+                                crate::i18n::format(
+                                    "v{} → v{} 可更新{}",
+                                    &[update.current.clone(), update.latest.clone(), String::new()],
+                                ),
+                            )
+                        } else {
+                            (crate::i18n::tr("已安装"), TagVariant::Success, detail)
+                        }
+                    }
+                    ToolInstallState::Downloading(progress) => (
+                        crate::i18n::tr("下载中..."),
+                        TagVariant::Info,
+                        crate::i18n::format(
+                            "下载中 {:.1}% - {} / {} @ {}",
+                            &[
+                                format!("{:.1}", progress.percent()),
+                                progress.downloaded_str(),
+                                progress.total_str(),
+                                progress.speed_str(),
+                            ],
+                        ),
+                    ),
+                    ToolInstallState::Installing => (
+                        crate::i18n::tr("安装中..."),
+                        TagVariant::Info,
+                        String::new(),
+                    ),
+                    ToolInstallState::Failed(error) => (
+                        crate::i18n::tr("安装失败"),
+                        TagVariant::Danger,
+                        crate::i18n::text(error).to_string(),
+                    ),
                 };
-
-                let btn_id: SharedString = format!("install-{}", idx).into();
-                let delete_btn_id: SharedString = format!("delete-{}", idx).into();
-
-                div()
-                    .id(SharedString::from(format!("tool-card-{}", idx)))
-                    .p(px(20.0))
-                    .rounded(px(12.0))
-                    .bg(card_bg)
-                    .border_1()
-                    .border_color(border_color)
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
+                let (btn_label, btn_disabled, action) = match &tool.state {
+                    ToolInstallState::NotInstalled | ToolInstallState::Failed(_) => {
+                        (crate::i18n::tr("安装"), false, "install")
+                    }
+                    ToolInstallState::Installed { .. } if has_update => {
+                        (crate::i18n::tr("更新"), false, "install")
+                    }
+                    ToolInstallState::Installed { .. } if tool_type == ToolType::Ffmpeg => {
+                        (crate::i18n::tr("重新检测"), false, "refresh")
+                    }
+                    ToolInstallState::Installed { .. } => {
+                        (crate::i18n::tr("检查更新"), false, "check_updates")
+                    }
+                    ToolInstallState::Unknown => (crate::i18n::tr("检查中..."), true, "none"),
+                    _ => (crate::i18n::tr("下载中..."), true, "none"),
+                };
+                GroupBox::new()
+                    .id(("tool-card", idx))
+                    .outline()
+                    .flex_1()
+                    .min_w(px(300.0))
+                    .content_style(
+                        StyleRefinement::default()
+                            .p_4()
+                            .gap_3()
+                            .bg(cx.theme().secondary)
+                            .rounded_lg(),
+                    )
                     .child(
                         div()
                             .flex()
-                            .items_center()
+                            .items_start()
                             .justify_between()
+                            .gap_4()
                             .child(
-                                // 左侧：图标和信息
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(16.0))
+                                    .gap_3()
                                     .child(
-                                        // 图标
                                         div()
-                                            .w(px(48.0))
-                                            .h(px(48.0))
+                                            .size_8()
+                                            .rounded(cx.theme().radius)
+                                            .bg(cx.theme().secondary)
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .bg(icon_bg)
-                                            .rounded(px(12.0))
-                                            .text_2xl()
-                                            .child(tool_icon),
-                                    )
-                                    .child(
-                                        // 名称和描述
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(4.0))
                                             .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(8.0))
-                                                    .child(
-                                                        div()
-                                                            .text_base()
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(title_color)
-                                                            .child(tool_name),
-                                                    )
-                                                    .child(
-                                                        // 状态标签
-                                                        div()
-                                                            .px(px(8.0))
-                                                            .py(px(2.0))
-                                                            .bg(status_bg)
-                                                            .rounded(px(4.0))
-                                                            .text_xs()
-                                                            .text_color(status_color)
-                                                            .child(status_text),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(muted_color)
-                                                    .child(tool_desc),
+                                                Icon::new(match tool_type {
+                                                    ToolType::YtDlp => {
+                                                        gpui_kit::assets::IconName::ArrowDown
+                                                    }
+                                                    ToolType::Ffmpeg => {
+                                                        gpui_kit::assets::IconName::Film
+                                                    }
+                                                })
+                                                .size_4(),
                                             ),
-                                    ),
+                                    )
+                                    .child(div().text_base().font_semibold().child(tool.name)),
                             )
                             .child(
-                                // 右侧：操作按钮
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    // 删除按钮 (仅非系统安装的工具显示)
-                                    .when(can_delete, |el| {
-                                        el.child(
-                                            Button::new(delete_btn_id)
-                                                .label("删除")
-                                                .danger()
-                                                .on_click(cx.listener(
-                                                    move |this, _ev, window, cx| {
-                                                        tracing::info!(
-                                                            "🗑️ 点击删除按钮: {:?}",
-                                                            tool_type
-                                                        );
-                                                        this.delete_tool(tool_type, window, cx);
-                                                    },
-                                                )),
-                                        )
-                                    })
-                                    // 安装/更新按钮
-                                    .child({
-                                        let (btn_label, btn_disabled, btn_action) =
-                                            match &tool.state {
-                                                ToolInstallState::NotInstalled
-                                                | ToolInstallState::Failed(_) => {
-                                                    ("安装", false, "install")
-                                                }
-                                                ToolInstallState::Installed { .. } => {
-                                                    if has_update {
-                                                        ("更新", false, "install")
-                                                    } else if tool_type == ToolType::Ffmpeg {
-                                                        ("重新检测", false, "refresh")
-                                                    } else {
-                                                        ("检查更新", false, "check_updates")
-                                                    }
-                                                }
-                                                ToolInstallState::Installing
-                                                | ToolInstallState::Downloading(_) => {
-                                                    ("下载中...", true, "none")
-                                                }
-                                                ToolInstallState::Unknown => ("...", true, "none"),
-                                            };
-                                        Button::new(btn_id)
-                                            .label(btn_label)
-                                            .primary()
-                                            .disabled(btn_disabled || is_busy)
-                                            .on_click(cx.listener(move |this, _ev, _window, cx| {
-                                                match btn_action {
-                                                    "install" => {
-                                                        tracing::info!(
-                                                            "🔧 点击安装/更新按钮: {:?}",
-                                                            tool_type
-                                                        );
-                                                        this.install_tool(tool_type, cx);
-                                                    }
-                                                    "refresh" => {
-                                                        tracing::info!(
-                                                            "🔄 点击重新检测按钮: {:?}",
-                                                            tool_type
-                                                        );
-                                                        this.refresh_status(cx);
-                                                    }
-                                                    "check_updates" => {
-                                                        tracing::info!(
-                                                            "🔎 点击检查更新按钮: {:?}",
-                                                            tool_type
-                                                        );
-                                                        this.check_tool_updates(cx);
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }))
-                                    }),
+                                Tag::new()
+                                    .with_variant(variant)
+                                    .outline()
+                                    .small()
+                                    .child(status),
                             ),
                     )
-                    // 进度条 (下载时显示)
-                    .when_some(progress_percent, |el, percent| {
-                        el.child(
-                            div()
-                                .w_full()
-                                .h(px(4.0))
-                                .bg(icon_bg)
-                                .rounded(px(2.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .h_full()
-                                        .w(relative(percent / 100.0))
-                                        .bg(primary_color)
-                                        .rounded(px(2.0)),
-                                ),
-                        )
-                    })
+                    .child(
+                        div()
+                            .min_h(px(20.0))
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(crate::i18n::text(tool.description)),
+                    )
+                    .child(
+                        div()
+                            .min_h(px(20.0))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(detail),
+                    )
+                    .when_some(
+                        match &tool.state {
+                            ToolInstallState::Downloading(p) => Some(p),
+                            _ => None,
+                        },
+                        |card, progress| {
+                            card.child(
+                                Progress::new(("tool-progress", idx))
+                                    .value(progress.percent())
+                                    .loading(progress.total == 0)
+                                    .accessibility_label(tool.name)
+                                    .small(),
+                            )
+                        },
+                    )
+                    .child(Separator::horizontal())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                Button::new(("install-tool", idx))
+                                    .small()
+                                    .label(btn_label)
+                                    .when(action == "install", |button| button.primary())
+                                    .when(action != "install", |button| button.outline())
+                                    .disabled(btn_disabled || is_busy)
+                                    .loading(is_busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| match action {
+                                        "install" => this.install_tool(tool_type, cx),
+                                        "refresh" => this.refresh_status(cx),
+                                        "check_updates" => this.check_tool_updates(cx),
+                                        _ => {}
+                                    })),
+                            )
+                            .when(can_delete, |row| {
+                                row.child(
+                                    Button::new(("delete-tool", idx))
+                                        .small()
+                                        .ghost()
+                                        .label(crate::i18n::tr("删除"))
+                                        .icon(gpui_kit::assets::IconName::Trash)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.delete_tool(tool_type, window, cx)
+                                        })),
+                                )
+                            }),
+                    )
             })
             .collect()
     }

@@ -5,11 +5,11 @@
 use crate::ui::widgets::Section;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
-use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::{Disableable, IconName, Sizable};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::select::{Select, SelectItem, SelectState};
+use gpui_kit::component::{Disableable, IconName, Sizable};
 use magekit_shared::PlatformCookie;
 use std::rc::Rc;
 
@@ -34,7 +34,7 @@ impl SelectItem for CookiePlatformOption {
     type Value = String;
 
     fn title(&self) -> SharedString {
-        self.label.clone()
+        crate::i18n::text(&self.label).into()
     }
 
     fn value(&self) -> &Self::Value {
@@ -44,21 +44,21 @@ impl SelectItem for CookiePlatformOption {
 
 pub fn cookie_platform_options() -> Vec<CookiePlatformOption> {
     [
-        ("抖音", "douyin"),
+        (crate::i18n::tr("抖音"), "douyin"),
         ("Bilibili", "bilibili"),
         ("YouTube", "youtube"),
         ("X / Twitter", "twitter"),
         ("Instagram", "instagram"),
         ("TikTok", "tiktok"),
-        ("微博", "weibo"),
-        ("小红书", "xiaohongshu"),
-        ("斗鱼", "douyu"),
-        ("虎牙", "huya"),
+        (crate::i18n::tr("微博"), "weibo"),
+        (crate::i18n::tr("小红书"), "xiaohongshu"),
+        (crate::i18n::tr("斗鱼"), "douyu"),
+        (crate::i18n::tr("虎牙"), "huya"),
         ("Twitch", "twitch"),
-        ("SOOP 韩国", "sooplive"),
+        (crate::i18n::tr("SOOP 韩国"), "sooplive"),
         ("SOOP Global", "soop_global"),
         ("AfreecaTV", "afreeca"),
-        ("自定义域名…", CUSTOM_COOKIE_PLATFORM),
+        (crate::i18n::tr("自定义域名…"), CUSTOM_COOKIE_PLATFORM),
     ]
     .into_iter()
     .map(|(label, key)| CookiePlatformOption::new(label, key))
@@ -228,10 +228,10 @@ impl RenderOnce for CookieSettingsInner {
                     == cookie_platform_identity(&target_platform)
             });
 
-        Section::new_with_icon("平台 Cookie", IconName::Inbox).child(
+        Section::new_with_icon(crate::i18n::tr("平台 Cookie"), IconName::Inbox).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
@@ -245,7 +245,7 @@ impl RenderOnce for CookieSettingsInner {
                             div()
                                 .text_sm()
                                 .text_color(muted_color)
-                        .child("选择平台后粘贴 Cookie。已有平台会显示「更新 Cookie」，保存后替换原值；其他平台可选择自定义域名。SOOP Global Cookie 请选择对应选项。")
+                        .child(crate::i18n::tr("选择平台后粘贴 Cookie。已有平台会显示「更新 Cookie」，保存后替换原值；其他平台可选择自定义域名。SOOP Global Cookie 请选择对应选项。"))
                         )
                         // 添加新 Cookie 区域
                         .child(
@@ -269,13 +269,13 @@ impl RenderOnce for CookieSettingsInner {
                                                 .text_sm()
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(title_color)
-                                                .child("平台")
+                                                .child(crate::i18n::tr("平台"))
                                         )
                                         .child(Select::new(&platform_select)
                                             .small()
                                             .w_full()
-                                            .placeholder("选择平台")
-                                            .search_placeholder("搜索平台"))
+                                            .placeholder(crate::i18n::tr("选择平台"))
+                                            .search_placeholder(crate::i18n::tr("搜索平台")))
                                 )
                                 .when(custom_platform_selected, |this| {
                                     this.child(
@@ -283,7 +283,7 @@ impl RenderOnce for CookieSettingsInner {
                                             .flex()
                                             .flex_col()
                                             .gap(px(4.0))
-                                            .child(div().text_sm().child("自定义平台域名"))
+                                            .child(div().text_sm().child(crate::i18n::tr("自定义平台域名")))
                                             .child(
                                                 Input::new(&custom_platform_input)
                                                     .small()
@@ -302,10 +302,11 @@ impl RenderOnce for CookieSettingsInner {
                                                 .text_sm()
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(title_color)
-                                                .child("Cookie 内容")
+                                                .child(crate::i18n::tr("Cookie 内容"))
                                         )
                                         .child(
                                             Input::new(&cookie_input)
+                                                .mask_toggle()
                                                 .small()
                                                 .cleanable(true)
                                         )
@@ -314,7 +315,7 @@ impl RenderOnce for CookieSettingsInner {
                                                 div()
                                                     .text_xs()
                                                     .text_color(muted_color)
-                                                    .child("SOOP 登录接口使用 sooplive.com；韩国 Cookie 也会用于该平台的官方认证接口"),
+                                                    .child(crate::i18n::tr("SOOP 登录接口使用 sooplive.com；韩国 Cookie 也会用于该平台的官方认证接口")),
                                             )
                                         })
                                 )
@@ -330,7 +331,7 @@ impl RenderOnce for CookieSettingsInner {
                                                 .small()
                                                 .primary()
                                                 .icon(if is_update { IconName::Check } else { IconName::Plus })
-                                                .label(if is_update { "更新 Cookie" } else { "添加 Cookie" })
+                                                .label(if is_update { crate::i18n::tr("更新 Cookie") } else { crate::i18n::tr("添加 Cookie") })
                                                 .disabled(
                                                     platform.is_empty()
                                                         || (custom_platform_selected
@@ -366,7 +367,7 @@ impl RenderOnce for CookieSettingsInner {
                                     .py(px(24.0))
                                     .text_sm()
                                     .text_color(muted_color)
-                                    .child("暂无配置的 Cookie")
+                                    .child(crate::i18n::tr("暂无配置的 Cookie"))
                             } else {
                                 // Cookie 列表
                                 div()
@@ -378,7 +379,7 @@ impl RenderOnce for CookieSettingsInner {
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(title_color)
-                                            .child(format!("已配置的 Cookie ({})", cookies_len))
+                                            .child(crate::i18n::format("已配置的 Cookie ({})", &[format!("{}", cookies_len)]))
                                     )
                                     .children(
                                         cookies.into_iter().enumerate().map(|(index, cookie)| {
@@ -409,13 +410,13 @@ impl RenderOnce for CookieSettingsInner {
                                     div()
                                         .text_xs()
                                         .text_color(muted_color)
-                                        .child("💡 常见平台可直接选择；自定义选项填写域名，例如 example.com")
+                                        .child(crate::i18n::tr("💡 常见平台可直接选择；自定义选项填写域名，例如 example.com"))
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(muted_color)
-                                        .child("获取 Cookie: 浏览器 F12 → Application/存储 → Cookies → 复制相关 Cookie")
+                                        .child(crate::i18n::tr("获取 Cookie: 浏览器 F12 → Application/存储 → Cookies → 复制相关 Cookie"))
                                 )
                         )
                 )
@@ -483,7 +484,7 @@ fn render_cookie_item(
                                     .rounded(px(4.0))
                                     .bg(gpui::hsla(0.0, 0.0, 0.5, 0.2))
                                     .text_color(muted_color)
-                                    .child("已禁用"),
+                                    .child(crate::i18n::tr("已禁用")),
                             )
                         }),
                 )

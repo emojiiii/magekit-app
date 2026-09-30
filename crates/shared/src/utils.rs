@@ -25,6 +25,7 @@ pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
 
 #[cfg(feature = "tools")]
 #[cfg(not(windows))]
+/// 在非 Windows 平台创建普通命令。
 pub fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     Command::new(program)
 }
@@ -39,13 +40,17 @@ pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::pro
     let mut cmd = tokio::process::Command::new(program);
     // tokio::process::Command 在 Windows 上继承了 std::process::Command 的 creation_flags 方法
     cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.kill_on_drop(true);
     cmd
 }
 
 #[cfg(feature = "tools")]
 #[cfg(not(windows))]
+/// 创建在异步任务被丢弃时自动终止子进程的命令。
 pub fn create_tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
-    tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    command.kill_on_drop(true);
+    command
 }
 
 /// 解析 Deno 可执行文件：优先 MageKit 私有工具目录，其次系统 PATH。
@@ -209,6 +214,70 @@ pub fn normalize_url(url: &str) -> String {
 
     // 如果没有协议，添加 https://
     format!("https://{}", url_trimmed)
+}
+
+/// 仅根据 HTTP(S) URL 的真实主机选择平台，不能信任路径、查询参数或用户名中的域名。
+pub fn platform_from_url(input: &str) -> Option<&'static str> {
+    let input = input.trim();
+    let normalized = if input.contains("://") {
+        input.to_owned()
+    } else {
+        format!("https://{input}")
+    };
+    let url = Url::parse(&normalized).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.');
+    let platforms: &[(&str, &[&str])] = &[
+        ("douyin", &["douyin.com", "iesdouyin.com"]),
+        ("tiktok", &["tiktok.com"]),
+        ("bilibili", &["bilibili.com", "b23.tv"]),
+        ("youtube", &["youtube.com", "youtu.be"]),
+        ("twitter", &["twitter.com", "x.com"]),
+        ("instagram", &["instagram.com"]),
+        ("weibo", &["weibo.com"]),
+        ("xiaohongshu", &["xiaohongshu.com", "xhs.link"]),
+        ("huya", &["huya.com"]),
+        ("douyu", &["douyu.com"]),
+        ("kuaishou", &["kuaishou.com"]),
+        ("soop", &["sooplive.co.kr", "afreecatv.com"]),
+        ("soop_global", &["sooplive.com"]),
+    ];
+    platforms.iter().find_map(|(platform, domains)| {
+        domains
+            .iter()
+            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+            .then_some(*platform)
+    })
+}
+
+/// 验证传给外部工具的单个 HTTP header，拒绝换行注入与无效字段名。
+pub fn validate_http_header(name: &str, value: &str) -> Result<()> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    {
+        anyhow::bail!("Invalid HTTP header name");
+    }
+    if value.chars().any(|character| character.is_control()) {
+        anyhow::bail!("HTTP header value contains control characters");
+    }
+    Ok(())
+}
+
+/// 日志 URL 不包含用户名、密码、签名查询参数或 fragment。
+/// 无效 URL 不回显原始输入，以免泄漏其中的凭据。
+pub fn redact_url_for_log(input: &str) -> String {
+    let Ok(mut url) = Url::parse(input) else {
+        return "<invalid URL>".to_owned();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
 }
 
 /// 获取应用的配置目录
@@ -399,18 +468,19 @@ pub fn current_timestamp() -> u64 {
 
 /// 生成唯一的输出文件路径
 pub fn generate_output_path(base_dir: &Path, title: &str, extension: &str) -> Result<PathBuf> {
+    if extension.is_empty()
+        || extension.len() > 16
+        || !extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        anyhow::bail!("Invalid output file extension");
+    }
     let safe_title = sanitize_filename(title);
     let mut path = base_dir.join(format!("{}.{}", safe_title, extension));
 
     // 如果文件已存在，添加数字后缀
     let mut counter = 1;
     while path.exists() {
-        let stem = path
-            .file_stem()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or("untitled");
-        path = base_dir.join(format!("{}_{}.{}", stem, counter, extension));
+        path = base_dir.join(format!("{}_{}.{}", safe_title, counter, extension));
         counter += 1;
     }
 
@@ -472,6 +542,32 @@ pub fn get_config_file_path() -> Result<PathBuf> {
     Ok(config_dir.join(CONFIG_FILE_NAME))
 }
 
+/// 用仅当前用户可读写的暂存文件原子替换配置，失败时保留旧内容。
+///
+/// 暂存文件与目标同目录，确保跨平台替换时不会出现跨文件系统 rename。
+pub fn write_private_file_atomic(path: &Path, content: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).context("Failed to create configuration directory")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .context("Failed to create private configuration file")?;
+    staged
+        .write_all(content)
+        .context("Failed to write staged configuration")?;
+    staged
+        .as_file()
+        .sync_all()
+        .context("Failed to flush staged configuration")?;
+    staged
+        .persist(path)
+        .map_err(|error| error.error)
+        .context("Failed to publish configuration file")?;
+    Ok(())
+}
+
 /// 保存应用配置到文件
 pub fn save_app_config(config: &crate::types::AppConfig) -> Result<()> {
     let config_path = get_config_file_path()?;
@@ -479,7 +575,7 @@ pub fn save_app_config(config: &crate::types::AppConfig) -> Result<()> {
     let toml_string =
         toml::to_string_pretty(config).context("Failed to serialize config to TOML")?;
 
-    std::fs::write(&config_path, toml_string).context("Failed to write config file")?;
+    write_private_file_atomic(&config_path, toml_string.as_bytes())?;
 
     tracing::info!("Configuration saved to: {:?}", config_path);
     Ok(())
@@ -557,6 +653,96 @@ pub fn truncate_string(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn platform_detection_uses_host_boundaries() {
+        for input in [
+            "https://youtube.com.attacker.invalid/watch",
+            "https://attacker.invalid/youtube.com/watch",
+            "https://attacker.invalid/?next=https://douyin.com/",
+            "https://youtube.com@attacker.invalid/video",
+            "https://notx.com/",
+            "ftp://youtube.com/video",
+            "https://fake-tiktok.invalid/",
+        ] {
+            assert_eq!(platform_from_url(input), None, "{input}");
+        }
+        assert_eq!(
+            platform_from_url("HTTPS://WWW.YOUTUBE.COM/watch"),
+            Some("youtube")
+        );
+        assert_eq!(platform_from_url("b23.tv/abcd"), Some("bilibili"));
+        assert_eq!(
+            platform_from_url("https://v.douyin.com./clip"),
+            Some("douyin")
+        );
+    }
+
+    #[test]
+    fn header_validation_rejects_control_characters_and_invalid_names() {
+        assert!(validate_http_header("X-Token", "value").is_ok());
+        assert!(validate_http_header("Cookie", "a=1; b=2").is_ok());
+        for (name, value) in [
+            ("", "a"),
+            ("Bad:Name", "a"),
+            ("Cookie", "a=1\r\nHost: evil"),
+            ("Authorization", "secret\0value"),
+        ] {
+            assert!(validate_http_header(name, value).is_err());
+        }
+    }
+
+    #[test]
+    fn log_urls_drop_credentials_and_signed_queries() {
+        assert_eq!(
+            redact_url_for_log("https://user:secret@example.com/video?token=secret#secret"),
+            "https://example.com/video"
+        );
+        assert_eq!(
+            redact_url_for_log("not a URL token=secret"),
+            "<invalid URL>"
+        );
+    }
+
+    #[test]
+    fn output_extension_cannot_escape_the_selected_directory() {
+        for extension in [
+            "../../escape",
+            "mp4/../../../escape",
+            "mp4\\evil",
+            ".mp4",
+            "",
+            "mp4:stream",
+        ] {
+            assert!(generate_output_path(Path::new("downloads"), "title", extension).is_err());
+        }
+        assert_eq!(
+            generate_output_path(Path::new("downloads"), "../title", "mp4").unwrap(),
+            Path::new("downloads/_title.mp4")
+        );
+    }
+
+    #[test]
+    fn configuration_replace_is_atomic_and_private() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, "old configuration").unwrap();
+        write_private_file_atomic(&path, b"new configuration").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new configuration");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        let blocked = directory.path().join("existing-directory");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("keep"), "existing").unwrap();
+        assert!(write_private_file_atomic(&blocked, b"replacement").is_err());
+        assert_eq!(std::fs::read(blocked.join("keep")).unwrap(), b"existing");
+    }
 
     #[test]
     fn test_format_file_size() {

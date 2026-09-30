@@ -3,9 +3,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::*;
 use magekit_shared::types::VideoFormat;
 use std::sync::Arc;
 
@@ -23,9 +23,9 @@ pub enum FormatType {
 impl FormatType {
     fn label(&self) -> &'static str {
         match self {
-            FormatType::VideoAudio => "视频+音频",
-            FormatType::VideoOnly => "仅视频",
-            FormatType::AudioOnly => "仅音频",
+            FormatType::VideoAudio => crate::i18n::tr("视频+音频"),
+            FormatType::VideoOnly => crate::i18n::tr("仅视频"),
+            FormatType::AudioOnly => crate::i18n::tr("仅音频"),
         }
     }
 
@@ -66,7 +66,7 @@ impl VideoResolution {
             VideoResolution::HD => "720p",
             VideoResolution::SD => "480p",
             VideoResolution::Low => "360p",
-            VideoResolution::Best => "最佳质量",
+            VideoResolution::Best => crate::i18n::tr("最佳质量"),
         }
     }
 
@@ -111,7 +111,7 @@ pub enum AudioQuality {
 impl AudioQuality {
     fn label(&self) -> &'static str {
         match self {
-            AudioQuality::Best => "最佳",
+            AudioQuality::Best => crate::i18n::tr("最佳"),
             AudioQuality::High => "320 kbps",
             AudioQuality::Medium => "192 kbps",
             AudioQuality::Low => "128 kbps",
@@ -162,7 +162,7 @@ impl AudioFormat {
             AudioFormat::Flac => "FLAC",
             AudioFormat::Wav => "WAV",
             AudioFormat::Opus => "Opus",
-            AudioFormat::Original => "原始格式",
+            AudioFormat::Original => crate::i18n::tr("原始格式"),
         }
     }
 
@@ -369,7 +369,12 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(div().text_sm().text_color(muted).child("下载类型"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(crate::i18n::tr("下载类型")),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -395,7 +400,12 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(div().text_sm().text_color(muted).child("视频质量"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(crate::i18n::tr("视频质量")),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -421,7 +431,12 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(div().text_sm().text_color(muted).child("音频质量"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(crate::i18n::tr("音频质量")),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -446,7 +461,12 @@ impl FormatSelector {
 
         v_flex()
             .gap_2()
-            .child(div().text_sm().text_color(muted).child("音频格式"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(crate::i18n::tr("音频格式")),
+            )
             .child(
                 h_flex()
                     .gap_2()
@@ -481,7 +501,7 @@ impl FormatSelector {
                     .items_center()
                     .gap_2()
                     .child(Checkbox::new("subtitle-enabled").checked(enabled))
-                    .child(div().text_sm().child("下载字幕")),
+                    .child(div().text_sm().child(crate::i18n::tr("下载字幕"))),
             )
             .when(enabled, |this| {
                 this.child(
@@ -491,12 +511,22 @@ impl FormatSelector {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(div().text_sm().text_color(muted).child("语言："))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(muted)
+                                        .child(crate::i18n::tr("语言：")),
+                                )
                                 .child(
                                     h_flex().gap_1().children(
-                                        vec![("zh", "中文"), ("en", "English"), ("ja", "日本語")]
-                                            .into_iter()
-                                            .map(|(code, label)| {
+                                        vec![
+                                            ("zh", crate::i18n::tr("中文")),
+                                            ("en", "English"),
+                                            ("ja", crate::i18n::tr("日本語")),
+                                        ]
+                                        .into_iter()
+                                        .map(
+                                            |(code, label)| {
                                                 let is_selected = self
                                                     .subtitle_options
                                                     .languages
@@ -510,7 +540,8 @@ impl FormatSelector {
                                                 .when(is_selected, |btn| btn.primary())
                                                 .when(!is_selected, |btn| btn.ghost())
                                                 .into_any_element()
-                                            }),
+                                            },
+                                        ),
                                     ),
                                 ),
                         )
@@ -519,14 +550,14 @@ impl FormatSelector {
                                 .items_center()
                                 .gap_2()
                                 .child(Checkbox::new("subtitle-embed").checked(embed))
-                                .child(div().text_sm().child("嵌入字幕到视频")),
+                                .child(div().text_sm().child(crate::i18n::tr("嵌入字幕到视频"))),
                         )
                         .child(
                             h_flex()
                                 .items_center()
                                 .gap_2()
                                 .child(Checkbox::new("subtitle-auto").checked(auto_gen))
-                                .child(div().text_sm().child("包含自动生成字幕")),
+                                .child(div().text_sm().child(crate::i18n::tr("包含自动生成字幕"))),
                         ),
                 )
             })
@@ -553,9 +584,18 @@ impl FormatSelector {
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_sm().text_color(muted).child("可用格式"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(crate::i18n::tr("可用格式")),
+                    )
                     .child(Button::new("toggle-formats").ghost().xsmall().label(
-                        SharedString::from(if show_all { "收起" } else { "显示全部" }),
+                        SharedString::from(if show_all {
+                            crate::i18n::tr("收起")
+                        } else {
+                            crate::i18n::tr("显示全部")
+                        }),
                     )),
             )
             .child(render_format_list_static(
@@ -605,21 +645,21 @@ fn render_format_item_inline(
     let resolution = format
         .resolution
         .clone()
-        .unwrap_or_else(|| "N/A".to_string());
+        .unwrap_or_else(|| crate::i18n::tr("N/A").to_string());
     let filesize = format
         .filesize
         .map(format_filesize)
-        .unwrap_or_else(|| "未知".to_string());
+        .unwrap_or_else(|| crate::i18n::tr("未知").to_string());
     let vcodec = format.vcodec.clone().unwrap_or_default();
     let acodec = format.acodec.clone().unwrap_or_default();
 
     // 确定类型徽章
     let type_badge = if vcodec.is_empty() || vcodec == "none" {
-        "音频"
+        crate::i18n::tr("音频")
     } else if acodec.is_empty() || acodec == "none" {
-        "视频"
+        crate::i18n::tr("视频")
     } else {
-        "视频+音频"
+        crate::i18n::tr("视频+音频")
     };
 
     h_flex()

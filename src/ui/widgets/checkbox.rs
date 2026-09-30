@@ -4,7 +4,7 @@
 
 use gpui::*;
 use gpui::prelude::FluentBuilder;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 
 /// 复选框组件
 #[derive(IntoElement)]

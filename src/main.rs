@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use gpui::*;
-use gpui_component::{Root, TitleBar};
+use gpui_kit::component::{Root, TitleBar};
 use gpui_router::init as router_init;
 use std::{path::PathBuf, sync::Arc};
 use tracing_subscriber::{
@@ -18,6 +18,7 @@ use tracing_subscriber::{
 
 mod app;
 mod diagnostic_log;
+mod i18n;
 #[cfg(windows)]
 mod process_job;
 mod theme;
@@ -63,11 +64,12 @@ fn main() -> Result<()> {
     };
 
     // 注册图标资源
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
 
     app.run(move |cx| {
         // 必须在GPUI组件使用前调用
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
+        install_magekit_themes(cx);
 
         // 设置 HTTP 客户端，用于加载远程图片
         let http_client =
@@ -76,16 +78,23 @@ fn main() -> Result<()> {
 
         // 加载主题文件
         let themes_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes");
-        if let Err(err) = gpui_component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
-            // 主题加载完成后，尝试应用上次保存的主题
-            tracing::debug!(
-                "🎨 主题加载完成，共 {} 个主题可用",
-                gpui_component::ThemeRegistry::global(cx)
-                    .sorted_themes()
-                    .len()
-            );
-        }) {
-            tracing::warn!("⚠️ 无法加载主题目录: {}", err);
+        if themes_dir.is_dir() {
+            if let Err(err) = gpui_kit::component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
+                // Custom theme files arrive after startup. Read the current preference
+                // here rather than capturing a stale configuration snapshot.
+                if let Some(state) = cx.try_global::<GlobalAppState>() {
+                    let saved = state.0.config().ui.theme.clone();
+                    apply_saved_kit_theme(&saved, cx);
+                }
+                tracing::debug!(
+                    "🎨 主题加载完成，共 {} 个主题可用",
+                    gpui_kit::component::ThemeRegistry::global(cx)
+                        .sorted_themes()
+                        .len()
+                );
+            }) {
+                tracing::warn!("⚠️ 无法加载主题目录: {}", err);
+            }
         }
 
         // 初始化路由系统
@@ -100,8 +109,12 @@ fn main() -> Result<()> {
             }
         };
 
+        // 在构建任何页面前应用已保存的语言选择。
+        i18n::initialize(&app_state.config().ui.language);
+
         // 设置 Global AppState，供路由页面访问
         cx.set_global(GlobalAppState(app_state.clone()));
+        apply_saved_kit_theme(&app_state.config().ui.theme, cx);
 
         // 打开主窗口（无边框 + 自定义 TitleBar）
         if let Err(e) = cx.open_window(
@@ -126,6 +139,7 @@ fn main() -> Result<()> {
                 is_resizable: true,
                 window_min_size: Some(size(px(800.0), px(600.0))),
                 tabbing_identifier: None,
+                ..TitleBar::window_options()
             },
             |window, cx| {
                 // 创建主窗口组件
@@ -150,4 +164,51 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Restore through Kit so component and Base semantic tokens remain in sync.
+fn apply_saved_kit_theme(saved: &magekit_shared::types::Theme, cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+    use magekit_shared::types::{Theme as SavedTheme, ThemeMode as SavedMode};
+    match saved {
+        SavedTheme::System => Theme::sync_system_appearance(None, cx),
+        SavedTheme::Light => Theme::change(ThemeMode::Light, None, cx),
+        SavedTheme::Dark => Theme::change(ThemeMode::Dark, None, cx),
+        SavedTheme::Custom(config) => {
+            let selected = ThemeRegistry::global(cx)
+                .themes()
+                .get(match config.name.as_str() {
+                    "Default Light" => "MageKit Light",
+                    "Default Dark" => "MageKit Dark",
+                    other => other,
+                })
+                .cloned();
+            if let Some(selected) = selected {
+                Theme::update(cx, |theme| theme.apply_config(&selected));
+            } else {
+                Theme::change(
+                    match config.mode {
+                        SavedMode::Dark => ThemeMode::Dark,
+                        SavedMode::Light => ThemeMode::Light,
+                    },
+                    None,
+                    cx,
+                );
+            }
+        }
+    }
+}
+
+fn install_magekit_themes(cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeRegistry};
+    ThemeRegistry::global_mut(cx)
+        .load_themes_from_str(include_str!("../themes/magekit.json"))
+        .expect("bundled MageKit themes must be valid");
+    let themes = ThemeRegistry::global(cx).themes();
+    let light = themes.get("MageKit Light").unwrap().clone();
+    let dark = themes.get("MageKit Dark").unwrap().clone();
+    Theme::update(cx, |theme| {
+        theme.light_theme = light;
+        theme.dark_theme = dark;
+    });
 }

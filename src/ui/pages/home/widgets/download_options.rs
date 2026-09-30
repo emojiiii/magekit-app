@@ -3,7 +3,7 @@
 //! 提供下载配置选项
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 use crate::ui::widgets::Checkbox;
 
 /// 下载选项数据
@@ -88,7 +88,7 @@ impl RenderOnce for DownloadOptionsCard {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(title_color)
-                    .child("⚙️ 下载选项")
+                    .child(crate::i18n::tr("⚙️ 下载选项"))
             )
             .child(
                 div()
@@ -96,7 +96,7 @@ impl RenderOnce for DownloadOptionsCard {
                     .flex_wrap()
                     .gap(px(24.0))
                     .child({
-                        let mut cb = Checkbox::new("opt-metadata", "嵌入元数据")
+                        let mut cb = Checkbox::new("opt-metadata", crate::i18n::tr("嵌入元数据"))
                             .checked(self.options.embed_metadata);
                         if let Some(handler) = self.on_toggle_metadata {
                             cb = cb.on_toggle(move |ev, window, cx| handler(ev, window, cx));
@@ -104,7 +104,7 @@ impl RenderOnce for DownloadOptionsCard {
                         cb
                     })
                     .child({
-                        let mut cb = Checkbox::new("opt-thumbnail", "嵌入缩略图")
+                        let mut cb = Checkbox::new("opt-thumbnail", crate::i18n::tr("嵌入缩略图"))
                             .checked(self.options.embed_thumbnail);
                         if let Some(handler) = self.on_toggle_thumbnail {
                             cb = cb.on_toggle(move |ev, window, cx| handler(ev, window, cx));
@@ -112,7 +112,7 @@ impl RenderOnce for DownloadOptionsCard {
                         cb
                     })
                     .child({
-                        let mut cb = Checkbox::new("opt-subtitles", "下载字幕")
+                        let mut cb = Checkbox::new("opt-subtitles", crate::i18n::tr("下载字幕"))
                             .checked(self.options.download_subtitles);
                         if let Some(handler) = self.on_toggle_subtitles {
                             cb = cb.on_toggle(move |ev, window, cx| handler(ev, window, cx));
@@ -120,7 +120,7 @@ impl RenderOnce for DownloadOptionsCard {
                         cb
                     })
                     .child({
-                        let mut cb = Checkbox::new("opt-audio", "仅提取音频")
+                        let mut cb = Checkbox::new("opt-audio", crate::i18n::tr("仅提取音频"))
                             .checked(self.options.audio_only);
                         if let Some(handler) = self.on_toggle_audio {
                             cb = cb.on_toggle(move |ev, window, cx| handler(ev, window, cx));
@@ -154,7 +154,7 @@ impl OutputPathCard {
 
 impl RenderOnce for OutputPathCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        use gpui_component::button::{Button, ButtonVariants};
+        use gpui_kit::component::button::{Button, ButtonVariants};
 
         let card_bg = cx.theme().secondary;
         let border_color = cx.theme().border;
@@ -177,7 +177,7 @@ impl RenderOnce for OutputPathCard {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(title_color)
-                    .child("📁 保存位置")
+                    .child(crate::i18n::tr("📁 保存位置"))
             )
             .child(
                 div()
@@ -201,7 +201,7 @@ impl RenderOnce for OutputPathCard {
                             .child(self.path)
                     )
                     .child({
-                        let mut btn = Button::new("browse-btn").ghost().label("浏览");
+                        let mut btn = Button::new("browse-btn").ghost().label(crate::i18n::tr("浏览"));
                         if let Some(handler) = self.on_browse {
                             btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
                         }

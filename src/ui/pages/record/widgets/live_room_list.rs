@@ -1,7 +1,7 @@
 //! 直播间列表组件
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 use std::sync::Arc;
 
 use super::{LiveRoomStatus, LiveStatus, RecordingStatus};
@@ -101,13 +101,13 @@ impl Render for LiveRoomList {
                             div()
                                 .text_lg()
                                 .text_color(muted_color)
-                                .child("暂无监控的直播间"),
+                                .child(crate::i18n::tr("暂无监控的直播间")),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(muted_color)
-                                .child("点击上方添加直播间按钮开始监控"),
+                                .child(crate::i18n::tr("点击上方添加直播间按钮开始监控")),
                         ),
                 )
                 .into_any_element();
@@ -226,7 +226,7 @@ impl Render for LiveRoomList {
                                                             div()
                                                                 .text_xs()
                                                                 .text_color(gpui::red())
-                                                                .child("录制中"),
+                                                                .child(crate::i18n::tr("录制中")),
                                                         ),
                                                 )
                                             } else {
@@ -244,20 +244,20 @@ impl Render for LiveRoomList {
                                 .child(
                                     if is_live && !is_recording {
                                         Some(
-                                            gpui_component::button::Button::new("start-record")
-                                                .label("录制")
-                                                .style(gpui_component::button::ButtonStyle::Primary)
-                                                .size(gpui_component::button::ButtonSize::Sm)
+                                            gpui_kit::component::button::Button::new("start-record")
+                                                .label(crate::i18n::tr("录制"))
+                                                .style(gpui_kit::component::button::ButtonStyle::Primary)
+                                                .size(gpui_kit::component::button::ButtonSize::Sm)
                                                 .on_click(cx.listener(move |this, _ev, window, cx| {
                                                     this.start_recording(room_id, window, cx);
                                                 })),
                                         )
                                     } else if is_recording {
                                         Some(
-                                            gpui_component::button::Button::new("stop-record")
-                                                .label("停止")
-                                                .style(gpui_component::button::ButtonStyle::Destructive)
-                                                .size(gpui_component::button::ButtonSize::Sm)
+                                            gpui_kit::component::button::Button::new("stop-record")
+                                                .label(crate::i18n::tr("停止"))
+                                                .style(gpui_kit::component::button::ButtonStyle::Destructive)
+                                                .size(gpui_kit::component::button::ButtonSize::Sm)
                                                 .on_click(cx.listener(move |this, _ev, window, cx| {
                                                     this.stop_recording(room_id, window, cx);
                                                 })),
@@ -267,10 +267,10 @@ impl Render for LiveRoomList {
                                     },
                                 )
                                 .child(
-                                    gpui_component::button::Button::new("remove-room")
-                                        .label("移除")
-                                        .style(gpui_component::button::ButtonStyle::Ghost)
-                                        .size(gpui_component::button::ButtonSize::Sm)
+                                    gpui_kit::component::button::Button::new("remove-room")
+                                        .label(crate::i18n::tr("移除"))
+                                        .style(gpui_kit::component::button::ButtonStyle::Ghost)
+                                        .size(gpui_kit::component::button::ButtonSize::Sm)
                                         .on_click(cx.listener(move |this, _ev, window, cx| {
                                             this.remove_room(room_id, window, cx);
                                         })),
@@ -285,9 +285,9 @@ impl Render for LiveRoomList {
 impl LiveRoomStatus {
     fn status_to_string(&self) -> &'static str {
         match self.status {
-            LiveStatus::Live => "🔴 直播中",
-            LiveStatus::Offline => "⚫ 未开播",
-            LiveStatus::Playback => "🟡 轮播中",
+            LiveStatus::Live => crate::i18n::tr("🔴 直播中"),
+            LiveStatus::Offline => crate::i18n::tr("⚫ 未开播"),
+            LiveStatus::Playback => crate::i18n::tr("🟡 轮播中"),
         }
     }
 }

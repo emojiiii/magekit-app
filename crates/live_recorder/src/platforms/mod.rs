@@ -44,12 +44,19 @@ pub trait PlatformHandler: Send + Sync {
 
     /// 检查URL是否支持
     fn supports_url(&self, url: &str) -> bool {
-        for pattern in self.supported_url_patterns() {
-            if url.contains(pattern) {
-                return true;
-            }
+        let Ok(parsed) = url::Url::parse(url) else {
+            return false;
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return false;
         }
-        false
+        let Some(host) = parsed.host_str() else {
+            return false;
+        };
+        let host = host.trim_end_matches('.');
+        self.supported_url_patterns()
+            .iter()
+            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
     }
 
     /// 从URL提取房间ID或其他标识符
@@ -103,3 +110,20 @@ pub use huya::HuyaHandler;
 pub use kuaishou::KuaishouHandler;
 pub use soop::SoopKrHandler;
 pub use soop_global::SoopGlobalHandler;
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    #[test]
+    fn platform_routing_uses_domain_boundaries() {
+        let handler = HuyaHandler::new();
+        assert!(handler.supports_url("https://www.huya.com/123"));
+        for value in [
+            "https://huya.com.evil.example/123",
+            "https://evil.example/?next=huya.com",
+            "file:///huya.com",
+        ] {
+            assert!(!handler.supports_url(value));
+        }
+    }
+}

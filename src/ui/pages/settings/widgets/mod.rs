@@ -15,3 +15,6 @@ pub use download_settings::*;
 pub use proxy_settings::*;
 pub use soop_credentials::*;
 pub use theme_settings::*;
+
+mod language_settings;
+pub use language_settings::LanguageSettingsCard;
