@@ -84,3 +84,5 @@ jobs:
         run: python3 scripts/check_i18n.py
       - name: Test locale resolution and translation catalogs
         run: cargo test --bin magekit i18n --locked
+      - name: Test external label provenance
+        run: cargo test --bin magekit video_preview::tests --locked

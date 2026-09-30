@@ -39,7 +39,7 @@ rustc --edition=2024 --test src/i18n/core.rs -o /tmp/magekit-i18n-tests
 ```sh
 cargo test -p magekit-shared language_tests --locked
 cargo test --bin magekit i18n --locked
-cargo test --bin magekit format_label_tests --locked
+cargo test --bin magekit video_preview::tests --locked
 ```
 
 手动验收：
