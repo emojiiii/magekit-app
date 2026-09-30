@@ -88,3 +88,11 @@ jobs:
         run: cargo test -p download -p magekit-extractor -p magekit-tool-manager -p magekit-capture --locked
       - name: Test recording URL domain boundaries
         run: cargo test -p live_recorder --lib security_tests --locked
+      - name: Verify official Deno release installation on Windows
+        if: runner.os == 'Windows'
+        run: cargo test -p magekit-tool-manager --locked deno_runtime::tests::live_official_release_installs_in_temporary_directory -- --ignored --exact
+      - name: Test recording cover source selection and cache freshness
+        run: cargo test -p live_recorder --lib cover --locked
+      - name: Test cover image metadata and original-byte caching
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s crates/live_recorder/tests -p test_cover_images.py

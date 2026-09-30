@@ -500,17 +500,37 @@ class RoomPageMetadata(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.images = []
+        self.dimensions = {}
+        self._current_og_image = None
 
     def handle_starttag(self, tag, attrs):
         if tag.lower() != "meta":
             return
         values = {key.lower(): value for key, value in attrs if key and value}
         name = (values.get("property") or values.get("name") or "").lower()
-        if name in ("og:image", "og:image:url", "og:image:secure_url",
-                    "twitter:image", "twitter:image:src"):
-            image = values.get("content", "").strip()
-            if image:
-                self.images.append(image)
+        content = values.get("content", "").strip()
+        if name in ("og:image:width", "og:image:height") and self._current_og_image:
+            try:
+                dimension = int(content)
+                if 0 < dimension <= 100_000:
+                    self.dimensions[self._current_og_image][name.rsplit(":", 1)[-1]] = dimension
+            except ValueError:
+                pass
+        elif name in ("og:image", "og:image:url", "og:image:secure_url",
+                      "twitter:image", "twitter:image:src") and content:
+            self.images.append(content)
+            self.dimensions.setdefault(content, {})
+            if name.startswith("og:"):
+                self._current_og_image = content
+
+    def ranked_images(self):
+        # OG image order is not a quality guarantee. When dimensions are supplied,
+        # prefer the largest source, preserving publisher order for equal/unknown
+        # sizes and leaving signed CDN URLs untouched.
+        return sorted(self.images, key=lambda image: (
+            self.dimensions[image].get("width", 0)
+            * self.dimensions[image].get("height", 0)
+        ), reverse=True)
 
 
 def huya_cover_url(session, url):
@@ -595,7 +615,7 @@ def page_cover_url(session, url):
         encoding = getattr(response, "encoding", None) or "utf-8"
         metadata.feed(content.decode(encoding, errors="replace"))
         base_url = getattr(response, "url", None) or url
-        for image in metadata.images:
+        for image in metadata.ranked_images():
             image = urljoin(base_url, image)
             parsed = urlparse(image)
             if parsed.scheme in ("http", "https") and parsed.hostname:

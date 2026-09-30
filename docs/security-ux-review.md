@@ -72,3 +72,12 @@
 8. 没有验证真实登录/付费内容、线上直播长时重连、所有平台和网络代理协议，也未运行完整依赖漏洞数据库审计。跨平台编译通过不等于跨平台原生交互通过
 
 更新校验依据：[yt-dlp 官方发布文件](https://github.com/yt-dlp/yt-dlp#release-files)、[官方 nightly releases](https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest)。
+
+
+## 2026-09-30 跟进：Deno 安装与封面清晰度
+
+- Windows 安装失败已用官方 v2.9.7 发布文件确认：Deno Windows `.sha256sum` 是 PowerShell `Algorithm / Hash / Path` 格式，原实现只接受首列为摘要的 GNU 格式。现仅接受官方这两种格式，绑定 ZIP 文件名和唯一 SHA-256，支持可选 UTF-8 BOM；错误算法、重复字段、错文件名、HTML 响应仍拒绝。版本、校验文件、压缩包按流限制大小，解压、SHA 和实际运行版本检查失败会保留现有运行时。
+- 官方源证据：[Windows 生成步骤](https://github.com/denoland/deno/blob/v2.9.7/.github/workflows/ci.ts#L901-L903)。13 项针对性回归通过，另以官方 Linux v2.9.7 完成真实下载、校验、解压、执行和隔离目录安装；Windows 实际执行交由新增 CI 检查，不能把 Linux 结果当作 Windows 验收。
+- Douyin 原先优先选 `avatar_thumb`，现优先原始封面、直播封面及较大的头像，保留签名 URL；网页多个 OpenGraph 图片按已声明尺寸优先选更大来源。缓存每次启动重新确认来源、过期后重新获取，刷新成功后清除 GPUI 已解码的旧图，原图字节保留。封面显示采用等比缩小，避免把小头像放大铺满卡片。
+- 封面测试：5 项 Rust 来源/缓存回归与 4 项 Python 来源排序、字节保留和失败回退测试通过。站点仅提供低分辨率源时无法凭空恢复细节；本轮不做签名 URL 尺寸参数猜改或人工锐化。
+- 既有 Douyin 处理器包含公开源码中长期硬编码的 Cookie/访客会话常量；本轮没有加入用户凭证。这些值可能失效并触发站点风控，仍是维护风险，后续应替换为规范的访客会话获取策略。

@@ -308,9 +308,15 @@ impl DouyinHandler {
 
     fn avatar_url(data: &serde_json::Value) -> Option<String> {
         let user = data.get("user")?;
-        ["avatar_thumb", "avatar_medium", "avatar_large", "avatar"]
-            .iter()
-            .find_map(|key| user.get(*key).and_then(Self::image_url_from_value))
+        [
+            "avatar_larger",
+            "avatar_large",
+            "avatar_medium",
+            "avatar",
+            "avatar_thumb",
+        ]
+        .iter()
+        .find_map(|key| user.get(*key).and_then(Self::image_url_from_value))
     }
 
     /// 解析流URL
@@ -408,15 +414,18 @@ impl DouyinHandler {
             // 1. cover 是一个对象，包含 url_list 数组
             // 2. cover 直接是字符串
             // 3. cover 是数组（旧版本）
-            cover_url: room_info
-                .get("cover")
-                .and_then(Self::image_url_from_value)
-                .or_else(|| {
-                    ["cover_url", "share_cover", "live_cover"]
-                        .iter()
-                        .find_map(|key| room_info.get(*key).and_then(Self::image_url_from_value))
-                })
-                .or_else(|| Self::avatar_url(data)),
+            // Prefer an explicitly original/live cover before share images. Keep CDN
+            // URLs intact: rewriting size suffixes can invalidate signed image URLs.
+            cover_url: [
+                "origin_cover",
+                "cover",
+                "live_cover",
+                "cover_url",
+                "share_cover",
+            ]
+            .iter()
+            .find_map(|key| room_info.get(*key).and_then(Self::image_url_from_value))
+            .or_else(|| Self::avatar_url(data)),
             extra: HashMap::new(),
         };
 
@@ -642,5 +651,72 @@ impl PlatformHandler for DouyinHandler {
         let (streams, room) = Self::parse_stream_urls(&stream_data)?;
 
         Ok(StreamInfo { room, streams })
+    }
+}
+
+#[cfg(test)]
+mod cover_tests {
+    use super::DouyinHandler;
+    use serde_json::json;
+
+    #[test]
+    fn offline_room_prefers_large_avatar_to_thumbnail() {
+        let (_, room) = DouyinHandler::parse_stream_urls(&json!({"data": {
+            "data": [], "user": {
+                "nickname": "Anchor",
+                "avatar_thumb": {"url_list": ["https://p.douyinpic.com/thumb.jpg"]},
+                "avatar_large": {"url_list": ["https://p.douyinpic.com/large.jpg"]},
+                "avatar_larger": {"url_list": ["https://p.douyinpic.com/original.jpg?signature=keep"]}
+            }
+        }})).unwrap();
+        assert_eq!(
+            room.cover_url.as_deref(),
+            Some("https://p.douyinpic.com/original.jpg?signature=keep")
+        );
+    }
+
+    #[test]
+    fn original_cover_precedes_share_cover_and_avatar() {
+        let (_, room) = DouyinHandler::parse_stream_urls(&json!({"data": {
+            "data": [{"status": 4,
+                "origin_cover": {"url_list": ["//p.douyinpic.com/original.jpg"]},
+                "cover": "https://p.douyinpic.com/small.jpg",
+                "share_cover": "https://p.douyinpic.com/share.jpg"
+            }],
+            "user": {"avatar_larger": "https://p.douyinpic.com/avatar.jpg"}
+        }}))
+        .unwrap();
+        assert_eq!(
+            room.cover_url.as_deref(),
+            Some("https://p.douyinpic.com/original.jpg")
+        );
+    }
+
+    #[test]
+    fn unusable_large_images_fall_back_to_legacy_thumbnail() {
+        let image = DouyinHandler::avatar_url(&json!({"user": {
+            "avatar_larger": {"url_list": ["", "not-an-image-url"]},
+            "avatar_large": null,
+            "avatar_thumb": {"url_list": ["//p.douyinpic.com/thumb.jpg"]}
+        }}));
+        assert_eq!(image.as_deref(), Some("https://p.douyinpic.com/thumb.jpg"));
+    }
+
+    #[test]
+    fn legacy_cover_shapes_remain_supported() {
+        for image in [
+            json!("https://p.douyinpic.com/cover.jpg"),
+            json!(["", "https://p.douyinpic.com/cover.jpg"]),
+            json!({"url_list": ["https://p.douyinpic.com/cover.jpg"]}),
+        ] {
+            let (_, room) = DouyinHandler::parse_stream_urls(&json!({"data": {
+                "data": [{"status": 4, "cover": image}], "user": {}
+            }}))
+            .unwrap();
+            assert_eq!(
+                room.cover_url.as_deref(),
+                Some("https://p.douyinpic.com/cover.jpg")
+            );
+        }
     }
 }

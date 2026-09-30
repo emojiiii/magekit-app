@@ -403,10 +403,9 @@ impl RecordingPage {
                     current_task: None,
                     last_error: None,
                     cover_url: room.cached_cover_url.clone(),
-                    cover_lookup_attempted: room
-                        .cached_cover_url
-                        .as_ref()
-                        .is_some_and(|source| PathBuf::from(source).is_file()),
+                    // A disk cache is a useful placeholder, not proof that the platform's
+                    // best cover has been checked during this application session.
+                    cover_lookup_attempted: false,
                     title: room.cached_title.clone(),
                     soop_hint: None,
                     soop_prefetch_inflight: false,
@@ -718,7 +717,8 @@ impl RecordingPage {
                                     state.title = title.clone();
                                 }
                                 // 只有拿到新封面时才替换历史缓存；暂时没有封面或探测失败时保留旧图过渡。
-                                if cover_url.is_some() {
+                                if let Some(source) = &cover_url {
+                                    cover_image_source(source.clone()).remove_asset(cx);
                                     state.cover_url = cover_url.clone();
                                 }
                             }
@@ -1057,6 +1057,9 @@ impl RecordingPage {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
                             state.status = status;
                             state.last_error = None;
+                            if let Some(source) = &cover_url {
+                                cover_image_source(source.clone()).remove_asset(cx);
+                            }
                             state.cover_url = cover_url;
                             state.cover_lookup_attempted = true;
                             state.title = title;
@@ -2114,7 +2117,8 @@ impl RecordingPage {
                             if title.is_some() {
                                 state.title = title.clone();
                             }
-                            if cover_url.is_some() {
+                            if let Some(source) = &cover_url {
+                                cover_image_source(source.clone()).remove_asset(cx);
                                 state.cover_url = cover_url.clone();
                             }
                         }
@@ -2894,7 +2898,7 @@ impl RecordingPage {
                         el.child(
                             img(cover_image_source(url))
                                 .size_full()
-                                .object_fit(ObjectFit::Cover)
+                                .object_fit(ObjectFit::ScaleDown)
                                 .with_fallback(|| {
                                     div()
                                         .size_full()

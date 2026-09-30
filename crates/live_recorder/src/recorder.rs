@@ -639,13 +639,35 @@ async fn cache_douyin_image(
         return None;
     }
     let path = cover_cache_path(image_url).ok()?;
-    if tokio::fs::metadata(&path)
+    let cached = tokio::fs::metadata(&path)
         .await
-        .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
-    {
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() > 0);
+    if cached.as_ref().is_some_and(|metadata| {
+        cover_cache_is_fresh(metadata.modified().ok(), std::time::SystemTime::now())
+    }) {
         return Some(path);
     }
+    download_douyin_image(image_url, room_url, proxy, &path)
+        .await
+        .or_else(|| cached.map(|_| path))
+}
 
+fn cover_cache_is_fresh(
+    modified: Option<std::time::SystemTime>,
+    now: std::time::SystemTime,
+) -> bool {
+    modified
+        .and_then(|time| now.duration_since(time).ok())
+        .is_some_and(|age| age < Duration::from_secs(6 * 60 * 60))
+}
+
+async fn download_douyin_image(
+    image_url: &str,
+    room_url: &str,
+    proxy: Option<&str>,
+    path: &Path,
+) -> Option<PathBuf> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36");
@@ -689,11 +711,11 @@ async fn cache_douyin_image(
             .await
             .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
         {
-            return Some(path);
+            return Some(path.to_path_buf());
         }
         return None;
     }
-    Some(path)
+    Some(path.to_path_buf())
 }
 
 fn safe_component(value: &str) -> String {
@@ -1166,6 +1188,25 @@ impl Drop for RecordingHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cover_cache_refreshes_stale_or_invalid_timestamps() {
+        let now = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(100_000);
+        assert!(cover_cache_is_fresh(
+            Some(now - Duration::from_secs(60)),
+            now
+        ));
+        assert!(!cover_cache_is_fresh(
+            Some(now - Duration::from_secs(6 * 60 * 60)),
+            now
+        ));
+        assert!(!cover_cache_is_fresh(
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
+        assert!(!cover_cache_is_fresh(None, now));
+    }
+
     #[test]
     fn filename_components_cannot_escape_directory() {
         assert_eq!(safe_component("../a\\b:c\n"), "_a_b_c_");
