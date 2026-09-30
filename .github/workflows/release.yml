@@ -32,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Plan version and changelog
@@ -50,6 +51,8 @@ jobs:
       MAGEKIT_RELEASE_VERSION: ${{ needs.prepare.outputs.app_version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -178,6 +181,8 @@ jobs:
       MAGEKIT_RELEASE_VERSION: ${{ needs.prepare.outputs.app_version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -240,6 +245,8 @@ jobs:
       MAGEKIT_RELEASE_VERSION: ${{ needs.prepare.outputs.app_version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -397,6 +404,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download all artifacts
@@ -437,18 +445,13 @@ jobs:
             exit 1
           fi
 
-      - name: Confirm main still points to this build
+      - name: Check for newer build inputs on main
         id: current
         run: |
           set -euo pipefail
-          main_commit="$(git ls-remote origin refs/heads/main | cut -f1)"
-          test -n "$main_commit"
-          if [ "$main_commit" = "$GITHUB_SHA" ]; then
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
-          else
-            echo "main advanced to $main_commit; the newer run will publish all pending changes"
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-          fi
+          git fetch --no-tags origin main
+          main_commit="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/release.py can-publish --main-commit "$main_commit"
 
       - name: Create Release
         if: steps.current.outputs.publish == 'true'
