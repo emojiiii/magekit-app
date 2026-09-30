@@ -28,7 +28,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::{Tag, TagVariant};
 use gpui_kit::component::{ActiveTheme, Disableable};
-use gpui_kit::component::{Icon, IconName, h_flex, v_flex};
+use gpui_kit::component::{ColorName, Icon, IconName, h_flex, v_flex};
 use live_recorder::{
     LiveRecorder, RecordConfig, RecordStatus, error::RecorderError, recorder::RecordingHandle,
 };
@@ -58,6 +58,21 @@ fn cover_image_source(source: String) -> gpui::ImageSource {
 
 fn is_placeholder_anchor_name(name: &str) -> bool {
     matches!(name.trim(), "" | "Unknown" | "获取中..." | "获取失败") || name.starts_with("Unknown-")
+}
+
+fn room_platform_color(platform: &str) -> ColorName {
+    match platform {
+        "douyin" | "抖音直播" | "tiktok" => ColorName::Rose,
+        "bilibili" | "B站直播" => ColorName::Sky,
+        "huya" | "虎牙直播" => ColorName::Amber,
+        "douyu" | "斗鱼直播" => ColorName::Orange,
+        "kuaishou" | "快手直播" => ColorName::Violet,
+        "soop" | "SOOP" => ColorName::Indigo,
+        "twitch" => ColorName::Purple,
+        "youtube" => ColorName::Red,
+        "kick" => ColorName::Green,
+        _ => ColorName::Gray,
+    }
 }
 
 /// 运行时房间状态（用于 UI 显示）
@@ -2996,8 +3011,35 @@ impl RecordingPage {
                     LiveRoomStatus::Checking => TagVariant::Info,
                     LiveRoomStatus::Error(_) => TagVariant::Danger,
                     LiveRoomStatus::Playback => TagVariant::Warning,
-                    _ => TagVariant::Secondary,
+                    _ => TagVariant::Color(ColorName::Gray),
                 },
+            )
+        };
+        let platform_color = room_platform_color(&room.platform);
+        let platform_tag = || {
+            Tag::color(platform_color)
+                // Opaque Kit palette backgrounds keep labels readable over any cover.
+                .bg(platform_color.scale(if theme.is_dark() { 950 } else { 50 }))
+                .text_color(platform_color.scale(if theme.is_dark() { 300 } else { 700 }))
+                .small()
+                .child(platform.to_string())
+        };
+        let status_icon = if is_recording {
+            gpui_kit::assets::IconName::Square
+        } else {
+            match state.status {
+                LiveRoomStatus::Live => gpui_kit::assets::IconName::Radio,
+                LiveRoomStatus::Checking => gpui_kit::assets::IconName::RefreshCw,
+                LiveRoomStatus::Error(_) => gpui_kit::assets::IconName::TriangleAlert,
+                _ => gpui_kit::assets::IconName::Circle,
+            }
+        };
+        let status_tag = || {
+            Tag::new().with_variant(variant).small().child(
+                h_flex()
+                    .gap_1()
+                    .child(Icon::new(status_icon).size(px(10.0)))
+                    .child(status.clone()),
             )
         };
         let placeholder_color = theme.muted_foreground;
@@ -3017,7 +3059,9 @@ impl RecordingPage {
             .flex_shrink_0()
             .overflow_hidden()
             .bg(theme.muted)
-            .when(list, |el| el.w(px(128.0)).h(px(76.0)))
+            // Cross-axis stretch follows the complete row, including wrapped
+            // metadata/errors. A fixed image height leaves a blank strip below it.
+            .when(list, |el| el.w(px(144.0)).min_h(px(96.0)))
             .when(!list, |el| el.w_full().aspect_ratio(16.0 / 9.0))
             .when_some(state.cover_url.clone(), |el, source| {
                 el.child(
@@ -3026,7 +3070,7 @@ impl RecordingPage {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .object_fit(ObjectFit::ScaleDown)
+                        .object_fit(ObjectFit::Cover)
                         .with_loading(|| Spinner::new().into_any_element())
                         .with_fallback(placeholder),
                 )
@@ -3041,13 +3085,8 @@ impl RecordingPage {
                         .right_2()
                         .justify_between()
                         .gap_1()
-                        .child(Tag::secondary().small().child(platform.to_string()))
-                        .child(
-                            Tag::new()
-                                .with_variant(variant)
-                                .small()
-                                .child(status.clone()),
-                        ),
+                        .child(platform_tag())
+                        .child(status_tag()),
                 )
             });
         let primary =
@@ -3133,16 +3172,15 @@ impl RecordingPage {
                             .child(subtitle),
                     )
                     .when(list, |el| {
+                        el.child(h_flex().gap_2().child(platform_tag()).child(status_tag()))
+                    })
+                    .when_some(state.last_error.as_ref(), |el, error| {
                         el.child(
-                            h_flex()
-                                .gap_2()
-                                .child(Tag::secondary().small().child(platform.to_string()))
-                                .child(
-                                    Tag::new()
-                                        .with_variant(variant)
-                                        .small()
-                                        .child(status.clone()),
-                                ),
+                            div()
+                                .text_xs()
+                                .text_color(theme.danger)
+                                .truncate()
+                                .child(crate::i18n::text(error)),
                         )
                     }),
             )
@@ -3166,21 +3204,11 @@ impl RecordingPage {
                 div()
                     .flex()
                     .min_w_0()
+                    .items_stretch()
                     .when(!list, |el| el.flex_col())
                     .child(cover)
                     .child(footer),
             )
-            .when_some(state.last_error.as_ref(), |el, error| {
-                el.child(
-                    div()
-                        .px_3()
-                        .pb_2()
-                        .text_xs()
-                        .text_color(theme.danger)
-                        .truncate()
-                        .child(crate::i18n::text(error)),
-                )
-            })
     }
 }
 
