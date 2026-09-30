@@ -295,13 +295,9 @@ impl AppState {
     /// 更新配置
     pub async fn update_config(&self, new_config: AppConfig) -> Result<()> {
         let mut config = self.config.write().await;
+        save_app_config(&new_config)?;
         *config = new_config.clone();
-
-        if let Err(e) = save_app_config(&new_config) {
-            tracing::error!("Failed to save config to file: {}", e);
-        } else {
-            tracing::info!("Config saved successfully");
-        }
+        drop(config);
 
         let _ = self
             .event_tx

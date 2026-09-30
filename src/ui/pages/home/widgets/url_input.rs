@@ -2,6 +2,7 @@
 //!
 //! 提供视频链接输入和解析功能
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
@@ -14,6 +15,8 @@ pub struct UrlInputCard {
     input_state: Entity<InputState>,
     is_loading: bool,
     is_empty: bool,
+    disabled: bool,
+    on_cancel: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_parse: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -23,8 +26,22 @@ impl UrlInputCard {
             input_state: input_state.clone(),
             is_loading: false,
             is_empty: true,
+            disabled: false,
+            on_cancel: None,
             on_parse: None,
         }
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+    pub fn on_cancel(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_cancel = Some(Box::new(handler));
+        self
     }
 
     pub fn loading(mut self, loading: bool) -> Self {
@@ -54,23 +71,9 @@ impl RenderOnce for UrlInputCard {
             crate::i18n::tr("解析")
         };
 
-        // 使用主题颜色
-        let is_dark = cx.theme().mode.is_dark();
-        let bg_color = if is_dark {
-            rgb(0x18181b)
-        } else {
-            rgb(0xffffff)
-        };
-        let border_color = if is_dark {
-            rgb(0x27272a)
-        } else {
-            rgb(0xf0f0f0)
-        };
-        let label_color = if is_dark {
-            rgb(0xa1a1aa)
-        } else {
-            rgb(0x6b7280)
-        };
+        let bg_color = cx.theme().background;
+        let border_color = cx.theme().border;
+        let label_color = cx.theme().muted_foreground;
 
         div()
             .flex()
@@ -94,20 +97,37 @@ impl RenderOnce for UrlInputCard {
                     .flex()
                     .gap(px(12.0))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.input_state).cleanable(true)),
+                        div().flex_1().min_w_0().child(
+                            Input::new(&self.input_state)
+                                .id("home-url-input")
+                                .cleanable(true)
+                                .disabled(self.disabled)
+                                .aria_label(crate::i18n::tr("视频链接")),
+                        ),
                     )
                     .child({
                         // 蓝色解析按钮
                         let mut btn = Button::new("parse-btn")
                             .primary()
                             .label(button_label)
-                            .disabled(self.is_loading || self.is_empty);
+                            .loading(self.is_loading)
+                            .disabled(self.disabled || self.is_loading || self.is_empty);
                         if let Some(handler) = self.on_parse {
                             btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
                         }
                         btn
+                    })
+                    .when(self.is_loading, |row| {
+                        row.child(
+                            Button::new("cancel-parse")
+                                .outline()
+                                .label(crate::i18n::tr("取消"))
+                                .when_some(self.on_cancel, |button, handler| {
+                                    button.on_click(move |event, window, cx| {
+                                        handler(event, window, cx)
+                                    })
+                                }),
+                        )
                     }),
             )
     }

@@ -22,35 +22,12 @@ pub struct VideoDownloader {
 
 /// 从 URL 中提取平台名称
 fn extract_platform_from_url(url: &str) -> Option<String> {
-    let url_lower = url.to_lowercase();
-    if url_lower.contains("bilibili.com") || url_lower.contains("b23.tv") {
-        Some("bilibili".to_string())
-    } else if url_lower.contains("youtube.com") || url_lower.contains("youtu.be") {
-        Some("youtube".to_string())
-    } else if url_lower.contains("twitter.com") || url_lower.contains("x.com") {
-        Some("twitter".to_string())
-    } else if url_lower.contains("instagram.com") {
-        Some("instagram".to_string())
-    } else if url_lower.contains("tiktok.com") {
-        Some("tiktok".to_string())
-    } else if url_lower.contains("douyin.com") {
-        Some("douyin".to_string())
-    } else if url_lower.contains("weibo.com") {
-        Some("weibo".to_string())
-    } else if url_lower.contains("xiaohongshu.com") || url_lower.contains("xhs.link") {
-        Some("xiaohongshu".to_string())
-    } else {
-        None
-    }
+    magekit_shared::platform_from_url(url).map(str::to_owned)
 }
 
 /// 获取指定平台的 Cookie 字符串
 fn get_cookie_string(platform: &str, cookies: &[PlatformCookie]) -> Option<String> {
-    let platform_lower = platform.to_lowercase();
-    cookies
-        .iter()
-        .find(|c| c.enabled && c.platform.to_lowercase().contains(&platform_lower))
-        .map(|c| c.cookie.clone())
+    magekit_extractor::cookies::build_cookie_header(Some(platform), Some(cookies))
 }
 
 impl VideoDownloader {

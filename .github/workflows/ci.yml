@@ -82,7 +82,9 @@ jobs:
       - name: Check translation catalog coverage
         if: runner.os == 'Linux'
         run: python3 scripts/check_i18n.py
-      - name: Test locale resolution and translation catalogs
-        run: cargo test --bin magekit i18n --locked
-      - name: Test external label provenance
-        run: cargo test --bin magekit video_preview::tests --locked
+      - name: Test UI workflow, locale, and external-label regressions
+        run: cargo test --bin magekit --locked
+      - name: Test credential boundaries, download cancellation, update integrity, and task persistence
+        run: cargo test -p download -p magekit-extractor -p magekit-tool-manager -p magekit-capture --locked
+      - name: Test recording URL domain boundaries
+        run: cargo test -p live_recorder --lib security_tests --locked

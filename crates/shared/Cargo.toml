@@ -22,3 +22,6 @@ toml = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { workspace = true, optional = true }
 which = { version = "8", optional = true }
+
+# 原子替换私有配置文件，避免截断和宽松的默认权限
+tempfile = "3"

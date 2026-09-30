@@ -2,7 +2,46 @@ use std::path::PathBuf;
 use std::{collections::hash_map::DefaultHasher, hash::Hasher, path::Path};
 
 use crate::config::DownloadRequest;
-use crate::error::DownloadResult;
+use crate::error::{DownloadError, DownloadResult};
+
+/// 在调用网络或外部工具之前验证请求边界。
+pub fn validate_request(request: &DownloadRequest) -> DownloadResult<()> {
+    if !matches!(request.url.scheme(), "http" | "https") || request.url.host_str().is_none() {
+        return Err(DownloadError::InvalidRequest(
+            "Only HTTP(S) URLs are supported".into(),
+        ));
+    }
+    for (name, value) in &request.extra.headers {
+        magekit_shared::validate_http_header(name, value)
+            .map_err(|error| DownloadError::InvalidRequest(error.to_string()))?;
+    }
+    if let Some(cookie) = &request.extra.cookie {
+        magekit_shared::validate_http_header("Cookie", cookie)
+            .map_err(|error| DownloadError::InvalidRequest(error.to_string()))?;
+    }
+    if request.output.full_path.is_none()
+        && let Some(template) = &request.output.template
+    {
+        validate_output_template(template)?;
+    }
+    Ok(())
+}
+
+/// 模板相对于输出目录；显式 full_path 则由调用方负责选择完整目标。
+pub fn validate_output_template(template: &str) -> DownloadResult<()> {
+    // 同时识别两个平台的路径分隔符，避免配置跨平台后变成绝对路径/目录穿越。
+    if template.is_empty()
+        || template.starts_with(['/', '\\'])
+        || template.as_bytes().get(1) == Some(&b':')
+        || template.chars().any(char::is_control)
+        || template.split(['/', '\\']).any(|part| part == "..")
+    {
+        return Err(DownloadError::InvalidRequest(
+            "Output template must stay inside the selected output directory".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// 根据请求与 URL 生成输出路径
 ///
@@ -54,6 +93,7 @@ pub fn resolve_output_path(request: &DownloadRequest, url: &url::Url) -> Downloa
         tmpl
     };
 
+    validate_output_template(&filename)?;
     Ok(dir.join(filename))
 }
 

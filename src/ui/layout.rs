@@ -217,15 +217,18 @@ impl RenderOnce for AppLayout {
                                     };
                                     let app_state_for_thread = app_state.clone();
                                     std::thread::spawn(move || {
-                                        let mut config = app_state_for_thread.config();
+                                        let mut config =
+                                            app_state_for_thread.config.blocking_write();
+                                        let previous = config.ui.theme.clone();
                                         config.ui.theme = AppTheme::Custom(ThemeConfig {
                                             name: theme_name,
                                             mode,
                                         });
-                                        let _ = app_state_for_thread.runtime.block_on(async {
-                                            let _ =
-                                                app_state_for_thread.update_config(config).await;
-                                        });
+                                        if let Err(error) = magekit_shared::save_app_config(&config)
+                                        {
+                                            config.ui.theme = previous;
+                                            tracing::error!("Failed to persist theme: {}", error);
+                                        }
                                     });
 
                                     window.refresh();

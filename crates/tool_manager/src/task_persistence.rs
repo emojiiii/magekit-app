@@ -8,7 +8,8 @@ use magekit_shared::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 /// 持久化任务数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +70,10 @@ impl PersistedTasks {
     /// 保存任务列表到磁盘
     pub fn save(&self) -> ToolManagerResult<()> {
         let path = Self::get_tasks_file_path()?;
+        self.save_to(&path)
+    }
 
+    fn save_to(&self, path: &Path) -> ToolManagerResult<()> {
         // 确保目录存在
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -84,12 +88,15 @@ impl PersistedTasks {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| ToolManagerError::config(format!("Failed to serialize tasks: {}", e)))?;
 
-        std::fs::write(&path, content).map_err(|e| {
-            ToolManagerError::config(format!(
-                "Failed to write tasks file {}: {}",
-                path.display(),
-                e
-            ))
+        // 同目录暂存后原子替换，写入失败/中断时保留旧文件，且默认权限不公开 Cookies。
+        let parent = path
+            .parent()
+            .ok_or_else(|| ToolManagerError::config("Tasks path has no parent"))?;
+        let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+        staged.write_all(content.as_bytes())?;
+        staged.as_file().sync_all()?;
+        staged.persist(path).map_err(|error| {
+            ToolManagerError::config(format!("Failed to publish tasks file: {}", error.error))
         })?;
 
         tracing::debug!("Tasks saved to: {:?}", path);
@@ -121,12 +128,8 @@ impl PersistedTasks {
 
     /// 清除已完成的任务
     pub fn clear_completed_tasks(&mut self) {
-        self.tasks.retain(|_, task| {
-            !matches!(
-                task.status.state,
-                TaskState::Completed | TaskState::Cancelled
-            )
-        });
+        self.tasks
+            .retain(|_, task| !matches!(task.status.state, TaskState::Completed));
     }
 
     /// 清除所有任务
@@ -176,7 +179,7 @@ pub struct TaskPersistence {
 impl TaskPersistence {
     /// 创建新的持久化管理器
     pub fn new() -> ToolManagerResult<Self> {
-        let mut tasks = PersistedTasks::load().unwrap_or_default();
+        let mut tasks = PersistedTasks::load()?;
 
         // 启动时清理：去重（保留最新任务）
         let dedup_count = tasks.deduplicate_by_url();
@@ -184,8 +187,10 @@ impl TaskPersistence {
             tracing::info!("🧹 清理了 {} 个重复任务", dedup_count);
         }
 
-        // 保存清理后的任务列表
-        let _ = tasks.save();
+        // 只有发生去重时才保存；加载失败时绝不能写入空列表。
+        if dedup_count > 0 {
+            tasks.save()?;
+        }
 
         Ok(Self {
             tasks,
@@ -219,6 +224,47 @@ impl TaskPersistence {
             self.tasks.save()?;
         }
         Ok(())
+    }
+
+    /// 重启任务的参数、预算和状态一起保存，保存失败时保留旧记录。
+    pub(crate) fn store_restarted_task(
+        &mut self,
+        status: TaskStatus,
+        retry_count: u32,
+        max_retries: u32,
+        options: DownloadOptions,
+        cookies: Option<Vec<PlatformCookie>>,
+    ) -> ToolManagerResult<()> {
+        let task_id = status.id;
+        let previous = self.tasks.tasks.insert(
+            task_id,
+            PersistedTask {
+                status,
+                retry_count,
+                max_retries,
+                options: Some(options),
+                cookies,
+            },
+        );
+        if self.auto_save
+            && let Err(error) = self.tasks.save()
+        {
+            if let Some(previous) = previous {
+                self.tasks.tasks.insert(task_id, previous);
+            } else {
+                self.tasks.tasks.remove(&task_id);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        Self {
+            tasks: PersistedTasks::default(),
+            auto_save: false,
+        }
     }
 
     /// 更新任务状态（如果不存在则添加）
@@ -280,10 +326,14 @@ impl TaskPersistence {
 
     /// 移除任务
     pub fn remove_task(&mut self, task_id: TaskId) -> ToolManagerResult<()> {
-        self.tasks.remove_task(task_id);
-
-        if self.auto_save {
-            self.tasks.save()?;
+        let removed = self.tasks.tasks.remove(&task_id);
+        if self.auto_save
+            && let Err(error) = self.tasks.save()
+        {
+            if let Some(task) = removed {
+                self.tasks.tasks.insert(task_id, task);
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -305,10 +355,13 @@ impl TaskPersistence {
 
     /// 清除已完成的任务
     pub fn clear_completed(&mut self) -> ToolManagerResult<()> {
+        let previous = self.tasks.clone();
         self.tasks.clear_completed_tasks();
-
-        if self.auto_save {
-            self.tasks.save()?;
+        if self.auto_save
+            && let Err(error) = self.tasks.save()
+        {
+            self.tasks = previous;
+            return Err(error);
         }
         Ok(())
     }
@@ -321,9 +374,9 @@ impl TaskPersistence {
 
 impl Default for TaskPersistence {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            tasks: PersistedTasks::default(),
-            auto_save: true,
+        Self::new().unwrap_or_else(|error| {
+            tracing::error!("⚠️ Task history could not be loaded; automatic persistence disabled to preserve the original file: {error}");
+            Self { tasks: PersistedTasks::default(), auto_save: false }
         })
     }
 }
@@ -331,6 +384,67 @@ impl Default for TaskPersistence {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_atomically_replaces_existing_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.json");
+        std::fs::write(&path, "previous history").unwrap();
+        let tasks = PersistedTasks::default();
+        tasks.save_to(&path).unwrap();
+        let saved: PersistedTasks = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.tasks.is_empty());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn failed_publish_preserves_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("tasks.json");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("keep"), "existing").unwrap();
+        assert!(PersistedTasks::default().save_to(&destination).is_err());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("keep")).unwrap(),
+            "existing"
+        );
+    }
+
+    #[test]
+    fn clear_completed_preserves_failed_and_cancelled_tasks() {
+        let mut tasks = PersistedTasks::default();
+        for state in [
+            TaskState::Completed,
+            TaskState::Cancelled,
+            TaskState::Failed("retry me".into()),
+            TaskState::Paused,
+        ] {
+            let mut status = TaskStatus::new(TaskId::new_v4(), "https://example.com".into(), None);
+            status.state = state;
+            tasks.upsert_task(PersistedTask {
+                status,
+                retry_count: 0,
+                max_retries: 3,
+                options: None,
+                cookies: None,
+            });
+        }
+        tasks.clear_completed_tasks();
+        assert_eq!(tasks.tasks.len(), 3);
+        assert!(
+            !tasks
+                .tasks
+                .values()
+                .any(|task| matches!(task.status.state, TaskState::Completed))
+        );
+    }
 
     #[test]
     fn test_persisted_tasks_default() {

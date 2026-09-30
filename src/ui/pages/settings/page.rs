@@ -7,7 +7,10 @@ use super::widgets::{
 };
 use crate::app::{AppEvent, AppState};
 use crate::i18n::Language;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
@@ -16,6 +19,7 @@ use magekit_shared::PlatformCookie;
 use magekit_shared::types::Theme as AppTheme;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 设置页面
 pub struct SettingsPage {
@@ -49,6 +53,12 @@ pub struct SettingsPage {
     debug_mode: bool,
     // 是否有未保存的更改
     has_changes: bool,
+    save_generation: Arc<AtomicU64>,
+    save_error: Option<String>,
+    is_saving: bool,
+    proxy_test_generation: u64,
+    soop_username: String,
+    soop_password: String,
 }
 
 impl SettingsPage {
@@ -101,7 +111,7 @@ impl SettingsPage {
         let cookie_custom_platform_input =
             cx.new(|cx| crate::i18n::input("例如: example.com", window, cx));
         let cookie_content_input =
-            cx.new(|cx| crate::i18n::input("粘贴完整的 Cookie 字符串", window, cx));
+            cx.new(|cx| crate::i18n::input("粘贴完整的 Cookie 字符串", window, cx).masked(true));
 
         let soop_username = config.live_record.soop_username.clone();
         let soop_username_input = cx.new(|cx| {
@@ -154,6 +164,12 @@ impl SettingsPage {
                 magekit_shared::LogLevel::Debug | magekit_shared::LogLevel::Trace
             ),
             has_changes: false,
+            save_generation: Arc::new(AtomicU64::new(0)),
+            save_error: None,
+            is_saving: false,
+            proxy_test_generation: 0,
+            soop_username: config.live_record.soop_username.clone(),
+            soop_password: config.live_record.soop_password.clone(),
         }
     }
 
@@ -293,6 +309,7 @@ impl SettingsPage {
 
     fn set_proxy_mode(&mut self, mode: ProxyMode, cx: &mut Context<Self>) {
         self.proxy_mode = mode;
+        self.proxy_test_generation = self.proxy_test_generation.wrapping_add(1);
         self.proxy_test_status = ProxyTestStatus::Idle;
         self.has_changes = true;
         // 同步输入框内容到 proxy_url
@@ -307,6 +324,7 @@ impl SettingsPage {
         let input_text = self.proxy_input.read(cx).text().to_string();
         if input_text != self.proxy_url {
             self.proxy_url = input_text;
+            self.proxy_test_generation = self.proxy_test_generation.wrapping_add(1);
             self.has_changes = true;
             self.proxy_test_status = ProxyTestStatus::Idle;
             self.save_settings(cx);
@@ -314,69 +332,49 @@ impl SettingsPage {
     }
 
     fn test_proxy(&mut self, cx: &mut Context<Self>) {
-        // 获取代理 URL
-        let proxy_url = if self.proxy_mode == ProxyMode::Custom {
-            self.proxy_input.read(cx).text().to_string()
-        } else {
+        if self.proxy_mode != ProxyMode::Custom
+            || self.proxy_test_status == ProxyTestStatus::Testing
+        {
             return;
-        };
-
-        if proxy_url.is_empty() {
+        }
+        let proxy_url = self.proxy_input.read(cx).value().trim().to_string();
+        let Some((host, port)) = proxy_endpoint(&proxy_url) else {
             self.proxy_test_status = ProxyTestStatus::Failed;
             cx.notify();
             return;
-        }
-
+        };
+        self.proxy_test_generation = self.proxy_test_generation.wrapping_add(1);
+        let generation = self.proxy_test_generation;
         self.proxy_test_status = ProxyTestStatus::Testing;
+        let runtime = self.app_state.runtime.clone();
         cx.notify();
-
         cx.spawn(async move |this, cx| {
-            // 测试代理连接 - 使用简单的 TCP 连接测试
-            let result = smol::unblock(move || {
-                // 简单解析代理 URL (http://host:port 或 socks5://host:port)
-                let url = proxy_url.trim();
-                let url = url.strip_prefix("http://").unwrap_or(
-                    url.strip_prefix("https://")
-                        .unwrap_or(url.strip_prefix("socks5://").unwrap_or(url)),
-                );
-
-                // 分离 host 和 port
-                let parts: Vec<&str> = url.split(':').collect();
-                let host = parts.first().unwrap_or(&"127.0.0.1");
-                let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(7890);
-
-                // 尝试 TCP 连接
-                use std::net::TcpStream;
-                let addr = format!("{}:{}", host, port);
-                match addr.parse::<std::net::SocketAddr>() {
-                    Ok(socket_addr) => {
-                        TcpStream::connect_timeout(&socket_addr, std::time::Duration::from_secs(5))
-                            .is_ok()
-                    }
-                    Err(_) => {
-                        // 如果解析失败，尝试 DNS 解析
-                        use std::net::ToSocketAddrs;
-                        if let Ok(mut addrs) = addr.to_socket_addrs() {
-                            if let Some(socket_addr) = addrs.next() {
-                                return TcpStream::connect_timeout(
-                                    &socket_addr,
-                                    std::time::Duration::from_secs(5),
-                                )
-                                .is_ok();
-                            }
-                        }
-                        false
-                    }
-                }
+            // DNS 和 TCP 连接都受同一个超时限制；这里只检测端口可达性。
+            let reachable = smol::unblock(move || {
+                runtime.block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        tokio::net::TcpStream::connect((host.as_str(), port)),
+                    )
+                    .await
+                    .is_ok_and(|result| result.is_ok())
+                })
             })
             .await;
-
             let _ = this.update(cx, |this, cx| {
-                this.proxy_test_status = if result {
-                    ProxyTestStatus::Success
+                if this.proxy_test_generation != generation || this.proxy_mode != ProxyMode::Custom
+                {
+                    return;
+                }
+                if this.proxy_input.read(cx).value().trim() != proxy_url {
+                    this.proxy_test_status = ProxyTestStatus::Idle;
                 } else {
-                    ProxyTestStatus::Failed
-                };
+                    this.proxy_test_status = if reachable {
+                        ProxyTestStatus::Success
+                    } else {
+                        ProxyTestStatus::Failed
+                    };
+                }
                 cx.notify();
             });
         })
@@ -421,17 +419,36 @@ impl SettingsPage {
         let embed_thumbnail = self.embed_thumbnail;
         let auto_check_updates = self.auto_check_updates;
         let debug_mode = self.debug_mode;
-        let theme_name = self.theme_name.to_string();
+        let theme_name = cx.theme().theme_name().to_string();
         let proxy_mode = self.proxy_mode;
         let proxy_url = self.proxy_url.clone();
         let cookies = self.cookies.clone();
-        let soop_username = self.soop_username_input.read(cx).value().to_string();
-        let soop_password = self.soop_password_input.read(cx).value().to_string();
+        // 账号字段只有点击“保存账号”才提交，其他开关不能意外保存输入中的凭据。
+        let soop_username = self.soop_username.clone();
+        let soop_password = self.soop_password.clone();
+        // 每次尝试都使旧回调失效，包括验证失败的输入。
+        let generation = self.save_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        if proxy_mode == ProxyMode::Custom && proxy_endpoint(&proxy_url).is_none() {
+            self.save_error =
+                Some(crate::i18n::tr("请输入有效的 HTTP、HTTPS 或 SOCKS5 代理地址").into());
+            self.has_changes = true;
+            self.is_saving = false;
+            cx.notify();
+            return;
+        }
+        let save_generation = self.save_generation.clone();
+        self.is_saving = true;
+        self.has_changes = true;
+        self.save_error = None;
 
-        cx.spawn(async move |_this, _cx| {
+        cx.spawn(async move |this, cx| {
             // 获取当前配置并更新
-            smol::unblock(move || {
+            let result = smol::unblock(move || -> anyhow::Result<()> {
                 let mut config = app_state.config.blocking_write();
+                if save_generation.load(Ordering::Acquire) != generation {
+                    return Ok(());
+                }
+                let previous = config.clone();
                 config.download.default_output_path = download_path;
                 config.download.max_concurrent_downloads = max_concurrent;
                 config.download.embed_metadata = embed_metadata;
@@ -475,29 +492,44 @@ impl SettingsPage {
 
                 // 锁内修改最新配置；不覆盖并发更新的语言或其他页面的配置。
                 if let Err(error) = magekit_shared::save_app_config(&config) {
-                    tracing::error!("Failed to save settings: {}", error);
+                    *config = previous;
+                    return Err(error);
                 }
                 let saved = config.clone();
                 drop(config);
-                app_state.runtime.block_on(async {
-                    let _ = app_state
-                        .event_tx
-                        .send(AppEvent::ConfigChanged(saved))
-                        .await;
-                });
+                // 这是可选 UI 通知；无人消费的有界事件队列不能阻塞保存完成。
+                let _ = app_state.event_tx.try_send(AppEvent::ConfigChanged(saved));
+                Ok(())
             })
             .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.save_generation.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                this.is_saving = false;
+                match result {
+                    Ok(()) => {
+                        this.has_changes = false;
+                        this.save_error = None;
+                    }
+                    Err(error) => {
+                        this.has_changes = true;
+                        this.save_error = Some(error.to_string());
+                    }
+                }
+                cx.notify();
+            });
         })
         .detach();
 
-        self.has_changes = false;
         cx.notify();
     }
 }
 
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 使用主题颜色
+        // 顶栏也可切换主题，设置页缓存需以全局 Kit 主题为准。
+        self.theme_name = cx.theme().theme_name().clone();
         let theme = cx.theme();
         let title_color = theme.foreground;
         let desc_color = theme.muted_foreground;
@@ -547,6 +579,32 @@ impl Render for SettingsPage {
                                             )),
                                     ),
                             )
+                            .when(self.is_saving, |el| {
+                                el.child(Alert::info(
+                                    "settings-saving",
+                                    crate::i18n::tr("正在保存设置..."),
+                                ))
+                            })
+                            .when_some(self.save_error.clone(), |el, error| {
+                                el.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .child(Alert::error(
+                                            "settings-save-error",
+                                            crate::i18n::format("设置尚未保存: {}", &[error]),
+                                        ))
+                                        .child(
+                                            Button::new("retry-save-settings")
+                                                .outline()
+                                                .label(crate::i18n::tr("重试保存"))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.save_settings(cx)
+                                                })),
+                                        ),
+                                )
+                            })
                             // 外观设置（主题切换）
                             .child(
                                 ThemeSettingsCard::new(self.theme_name.clone()).on_theme_change(
@@ -648,6 +706,10 @@ impl Render for SettingsPage {
                                 )
                                 .on_save(move |_window, cx| {
                                     let _ = entity.update(cx, |this, cx| {
+                                        this.soop_username =
+                                            this.soop_username_input.read(cx).value().to_string();
+                                        this.soop_password =
+                                            this.soop_password_input.read(cx).value().to_string();
                                         this.save_settings(cx);
                                     });
                                 })
@@ -670,5 +732,54 @@ impl Render for SettingsPage {
                             .child(AboutSection),
                     ),
             )
+    }
+}
+
+/// 使用 URL 解析器处理认证、IPv6 和协议默认端口，拒绝静默改连 7890。
+fn proxy_endpoint(value: &str) -> Option<(String, u16)> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    let default_port = match url.scheme() {
+        "http" => 80,
+        "https" => 443,
+        "socks5" | "socks5h" => 1080,
+        _ => return None,
+    };
+    if url.query().is_some() || url.fragment().is_some() || !matches!(url.path(), "" | "/") {
+        return None;
+    }
+    let host = match url.host()? {
+        url::Host::Domain(host) => host.to_string(),
+        url::Host::Ipv4(host) => host.to_string(),
+        url::Host::Ipv6(host) => host.to_string(),
+    };
+    Some((host, url.port().unwrap_or(default_port)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::proxy_endpoint;
+    #[test]
+    fn proxy_endpoint_supports_credentials_ipv6_and_defaults() {
+        assert_eq!(
+            proxy_endpoint("http://user:pass@example.com:8080"),
+            Some(("example.com".into(), 8080))
+        );
+        assert_eq!(
+            proxy_endpoint("socks5://[::1]:1081"),
+            Some(("::1".into(), 1081))
+        );
+        assert_eq!(
+            proxy_endpoint("https://example.com"),
+            Some(("example.com".into(), 443))
+        );
+        for value in [
+            "",
+            "localhost",
+            "file:///tmp/a",
+            "http://host:bad",
+            "http://host/path",
+        ] {
+            assert_eq!(proxy_endpoint(value), None);
+        }
     }
 }

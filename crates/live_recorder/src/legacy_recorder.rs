@@ -51,8 +51,6 @@ fn find_cookie_for_request(
     platform_name: &str,
     cookies: &[PlatformCookie],
 ) -> Option<PlatformCookies> {
-    let platform_lower = platform_name.to_lowercase();
-
     // 1) 优先按“平台名”精确匹配（避免 sooplive/sooplive.com 这类包含关系误匹配）
     for cookie in cookies {
         if !cookie.enabled {
@@ -97,38 +95,7 @@ fn find_cookie_for_request(
         }
     }
 
-    // 3) 兼容历史行为：非 SOOP 平台允许通过“URL 子串”粗匹配
-    // SOOP 已拆分 KR/Global 为两个平台，必须避免子串匹配导致 cookie 误用。
-    if platform_lower.starts_with("sooplive") {
-        tracing::debug!(
-            "🍪 未找到匹配的 Cookie: platform={} url={}",
-            platform_name,
-            url
-        );
-        return None;
-    }
-
-    let url_lower = url.to_lowercase();
-    for cookie in cookies {
-        if !cookie.enabled {
-            continue;
-        }
-        let platform = cookie.platform.to_lowercase();
-        if url_lower.contains(&platform) {
-            tracing::debug!("🍪 找到匹配的 Cookie: platform={}", cookie.platform);
-            return Some(PlatformCookies {
-                cookie: Some(cookie.cookie.clone()),
-                username: None,
-                password: None,
-            });
-        }
-    }
-
-    tracing::debug!(
-        "🍪 未找到匹配的 Cookie: platform={} url={}",
-        platform_name,
-        url
-    );
+    // 未匹配的 Cookie 不得通过 URL 路径或查询字符串跨平台发送。
     None
 }
 

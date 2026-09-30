@@ -12,16 +12,18 @@ use chrono::Utc;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::WindowExt;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tag::{Tag, TagVariant};
 use gpui_kit::component::v_flex;
+use gpui_kit::component::{ActiveTheme, Disableable};
 use live_recorder::{
     LiveRecorder, RecordConfig, RecordStatus, error::RecorderError, recorder::RecordingHandle,
 };
@@ -41,7 +43,6 @@ use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 static CONFIG_SAVE_GENERATION: AtomicU64 = AtomicU64::new(0);
-static CONFIG_FILE_SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn cover_image_source(source: String) -> gpui::ImageSource {
     if source.starts_with("http://") || source.starts_with("https://") {
@@ -832,63 +833,56 @@ impl RecordingPage {
         .detach();
     }
 
-    /// 保存配置到文件
+    /// 在配置锁内合并本页字段并写盘，避免后台旧快照覆盖其他页面的新设置。
     fn save_config(&self) {
+        CONFIG_SAVE_GENERATION.fetch_add(1, Ordering::AcqRel);
         let mut config = self.app_state.config.blocking_write();
+        let previous = config.clone();
         config.monitored_rooms = self.monitored_rooms.clone();
-        // 设置页维护 SOOP 登录信息，避免录制页缓存覆盖用户刚保存的凭据。
-        let soop_username = config.live_record.soop_username.clone();
-        let soop_password = config.live_record.soop_password.clone();
+        let credentials = (
+            config.live_record.soop_username.clone(),
+            config.live_record.soop_password.clone(),
+        );
         config.live_record = self.record_config.clone();
-        config.live_record.soop_username = soop_username;
-        config.live_record.soop_password = soop_password;
-
-        // 保存到文件（需要克隆，因为 save_app_config 需要 &AppConfig）
-        let config_clone = config.clone();
-        drop(config); // 释放锁
-
-        let generation = CONFIG_SAVE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-        let _save_guard = CONFIG_FILE_SAVE_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if CONFIG_SAVE_GENERATION.load(Ordering::Acquire) != generation {
-            return;
-        }
-
-        if let Err(e) = magekit_shared::utils::save_app_config(&config_clone) {
-            tracing::error!("❌ 保存配置失败: {}", e);
-        } else {
-            tracing::debug!("✅ 配置已保存");
+        (
+            config.live_record.soop_username,
+            config.live_record.soop_password,
+        ) = credentials;
+        if let Err(error) = magekit_shared::save_app_config(&config) {
+            *config = previous;
+            tracing::error!("Failed to save recording settings: {}", error);
         }
     }
 
-    /// 后台持久化状态轮询产生的缓存，避免文件写入阻塞 GPUI 更新。
+    /// 轮询持久化只携带录制字段，获取共享配置锁后再合并最新配置。
     fn save_config_background(&self, cx: &mut Context<Self>) {
-        let mut config = self.app_state.config.blocking_write();
-        config.monitored_rooms = self.monitored_rooms.clone();
-        let soop_username = config.live_record.soop_username.clone();
-        let soop_password = config.live_record.soop_password.clone();
-        config.live_record = self.record_config.clone();
-        config.live_record.soop_username = soop_username;
-        config.live_record.soop_password = soop_password;
-        let config_clone = config.clone();
-        drop(config);
-
+        let app_state = self.app_state.clone();
+        let rooms = self.monitored_rooms.clone();
+        let record_config = self.record_config.clone();
         let generation = CONFIG_SAVE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
         cx.spawn(async move |_this, _cx| {
-            let result = smol::unblock(move || {
-                let _save_guard = CONFIG_FILE_SAVE_LOCK
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            smol::unblock(move || {
+                let mut config = app_state.config.blocking_write();
                 if CONFIG_SAVE_GENERATION.load(Ordering::Acquire) != generation {
-                    return Ok(());
+                    return;
                 }
-                magekit_shared::utils::save_app_config(&config_clone)
+                let previous = config.clone();
+                config.monitored_rooms = rooms;
+                let credentials = (
+                    config.live_record.soop_username.clone(),
+                    config.live_record.soop_password.clone(),
+                );
+                config.live_record = record_config;
+                (
+                    config.live_record.soop_username,
+                    config.live_record.soop_password,
+                ) = credentials;
+                if let Err(error) = magekit_shared::save_app_config(&config) {
+                    *config = previous;
+                    tracing::error!("Failed to save recording settings: {}", error);
+                }
             })
             .await;
-            if let Err(e) = result {
-                tracing::error!("❌ 保存配置失败: {}", e);
-            }
         })
         .detach();
     }
@@ -898,19 +892,22 @@ impl RecordingPage {
         let url_input = self.url_input.clone();
         let this = cx.entity().clone();
 
-        window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_dialog(cx, move |dialog, _window, cx| {
             let url_input = url_input.clone();
             let this = this.clone();
+            let value = url_input.read(cx).value();
+            let valid = recording_platform(value.trim()).is_some();
+            let show_validation = !value.trim().is_empty() && !valid;
 
             dialog
                 .title(crate::i18n::tr("添加直播间"))
-                .h(px(320.0))
                 .child(
                     v_flex()
                         .gap_4()
                         .child(div().text_sm().child(crate::i18n::tr("请输入直播间链接")))
                         .child(Input::new(&url_input).cleanable(true))
-                        .child(div().text_xs().text_color(gpui::rgb(0x888888)).child(
+                        .when(show_validation, |el| el.child(Alert::error("room-url-invalid", crate::i18n::tr("请输入支持的直播平台的完整 HTTP 或 HTTPS 链接"))))
+                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
                             crate::i18n::tr("抖音使用原生录制；B站、虎牙、斗鱼、SOOP 等平台使用 Streamlink；快手暂不支持"),
                         )),
                 )
@@ -919,18 +916,15 @@ impl RecordingPage {
                     let this = this.clone();
 
                     DialogFooter::new().children([
-                        Button::new("confirm-add").primary().label(crate::i18n::tr("添加")).on_click(
+                        Button::new("confirm-add").primary().disabled(!valid).label(crate::i18n::tr("添加")).on_click(
                             move |_event, window, cx| {
                                 let url = url_input.read(cx).text().to_string().trim().to_string();
 
-                                if !url.is_empty() {
-                                    let this = this.clone();
-                                    let _ = this.update(cx, |this, cx| {
-                                        this.add_room(url, window, cx);
-                                    });
+                                let added = this.update(cx, |this, cx| this.add_room(url, window, cx));
+                                if added {
+                                    url_input.update(cx, |input, cx| input.set_value("", window, cx));
+                                    window.close_dialog(cx);
                                 }
-
-                                window.close_dialog(cx);
                             },
                         ),
                         Button::new("cancel-add")
@@ -944,39 +938,31 @@ impl RecordingPage {
     }
 
     /// 添加直播间 - 立即添加到列表，后台获取信息
-    fn add_room(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_room(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(platform) = recording_platform(&url) else {
+            window.push_notification(
+                Notification::error(crate::i18n::tr(
+                    "请输入支持的直播平台的完整 HTTP 或 HTTPS 链接",
+                )),
+                cx,
+            );
+            return false;
+        };
         // 检查是否已存在
         if self.monitored_rooms.iter().any(|r| r.url == url) {
             window.push_notification(
                 Notification::warning(crate::i18n::tr("该直播间已在监控列表中")),
                 cx,
             );
-            return;
+            return false;
         }
 
         tracing::info!("🚀 开始添加直播间: {}", url);
 
-        // 从 URL 推断平台（使用稳定的 platform id，UI 再做展示映射）
-        let platform = if url.contains("douyin") || url.contains("live.douyin") {
-            "douyin".to_string()
-        } else if url.contains("bilibili") || url.contains("live.bilibili") {
-            "bilibili".to_string()
-        } else if url.contains("huya") {
-            "huya".to_string()
-        } else if url.contains("douyu") {
-            "douyu".to_string()
-        } else if url.contains("kuaishou") || url.contains("live.kuaishou") {
-            "kuaishou".to_string()
-        } else if url.contains("soop") || url.contains("afreeca") {
-            "soop".to_string()
-        } else {
-            "unknown".to_string()
-        };
-
         // 立即创建房间并添加到列表
         let mut monitored_room = MonitoredRoom::new(
             url.clone(),
-            platform,
+            platform.to_string(),
             String::new(),           // room_id 稍后获取
             "获取中...".to_string(), // anchor_name 稍后获取
         );
@@ -1132,6 +1118,7 @@ impl RecordingPage {
             }
         })
         .detach();
+        true
     }
 
     /// 格式化错误消息（友好显示）
@@ -1968,6 +1955,49 @@ impl RecordingPage {
             }
         })
         .detach();
+    }
+
+    fn confirm_remove_room(&mut self, room_id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .room_states
+            .get(&room_id)
+            .is_some_and(|state| state.is_recording)
+        {
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("请先停止录制再删除")),
+                cx,
+            );
+            return;
+        }
+        let Some(room) = self.monitored_rooms.iter().find(|room| room.id == room_id) else {
+            return;
+        };
+        let name = room.anchor_name.clone();
+        let entity = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let entity = entity.clone();
+            dialog
+                .title(crate::i18n::tr("移除直播间"))
+                .child(crate::i18n::format(
+                    "移除 {} 的监控配置？已录制的文件会保留。",
+                    &[name.clone()],
+                ))
+                .footer(
+                    DialogFooter::new().children([
+                        Button::new("cancel-remove-room")
+                            .label(crate::i18n::tr("取消"))
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                        Button::new("confirm-remove-room")
+                            .danger()
+                            .label(crate::i18n::tr("移除"))
+                            .on_click(move |_, window, cx| {
+                                let _ = entity
+                                    .update(cx, |this, cx| this.remove_room(room_id, window, cx));
+                                window.close_dialog(cx);
+                            }),
+                    ]),
+                )
+        });
     }
 
     /// 删除直播间
@@ -2818,25 +2848,12 @@ impl RecordingPage {
             .as_ref()
             .map(|e| truncate_string(&crate::i18n::text(e), 60));
 
-        // 根据状态获取颜色
-        let status_color = match &state.status {
-            LiveRoomStatus::Live => gpui::rgb(0x22c55e),      // 绿色
-            LiveRoomStatus::Recording => gpui::rgb(0xef4444), // 红色
-            LiveRoomStatus::Playback => gpui::rgb(0xeab308),  // 黄色
-            LiveRoomStatus::Checking => gpui::rgb(0x3b82f6),  // 蓝色
-            LiveRoomStatus::Error(_) => gpui::rgb(0xef4444),  // 红色
-            _ => gpui::rgb(0x6b7280),                         // 灰色
-        };
-
-        // 平台颜色映射
-        let platform_color = match room.platform.as_str() {
-            "douyin" | "抖音直播" => gpui::rgb(0x000000),   // 黑色
-            "bilibili" | "B站直播" => gpui::rgb(0xfb7299),  // B站粉
-            "huya" | "虎牙直播" => gpui::rgb(0xff9600),     // 虎牙橙
-            "douyu" | "斗鱼直播" => gpui::rgb(0xff5d23),    // 斗鱼橙
-            "kuaishou" | "快手直播" => gpui::rgb(0xff4906), // 快手橙
-            "soop" => gpui::rgb(0x5b6edc),                  // SOOP 蓝紫
-            _ => gpui::rgb(0x6366f1),                       // 默认紫色
+        let status_variant = match &state.status {
+            LiveRoomStatus::Live => TagVariant::Success,
+            LiveRoomStatus::Recording | LiveRoomStatus::Error(_) => TagVariant::Danger,
+            LiveRoomStatus::Playback => TagVariant::Warning,
+            LiveRoomStatus::Checking => TagVariant::Info,
+            _ => TagVariant::Secondary,
         };
 
         // 平台显示名称
@@ -2858,14 +2875,14 @@ impl RecordingPage {
             .border_color(border_color)
             .rounded_xl()
             .gap_3()
-            .hover(|el| el.bg(theme.muted).cursor_pointer())
+            .hover(|el| el.bg(theme.muted))
             // 封面图区域
             .child(
                 div()
                     .relative()
                     .w(px(120.0))
                     .h(px(68.0))
-                    .bg(gpui::rgb(0x1a1a1a))
+                    .bg(theme.muted)
                     .rounded_lg()
                     .flex()
                     .items_center()
@@ -2982,30 +2999,9 @@ impl RecordingPage {
                                     .overflow_x_hidden()
                                     .child(anchor_name.clone()),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .px(px(6.0))
-                                    .py(px(2.0))
-                                    .bg(platform_color)
-                                    .text_color(gpui::white())
-                                    .rounded(px(4.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .flex_shrink_0()
-                                    .child(platform_display.to_string()),
-                            )
+                            .child(Tag::secondary().small().child(platform_display.to_string()))
                             .when(!is_monitoring, |el| {
-                                el.child(
-                                    div()
-                                        .text_xs()
-                                        .px(px(6.0))
-                                        .py(px(2.0))
-                                        .bg(gpui::rgb(0x6b7280))
-                                        .text_color(gpui::white())
-                                        .rounded(px(4.0))
-                                        .flex_shrink_0()
-                                        .child(crate::i18n::tr("已暂停")),
-                                )
+                                el.child(Tag::secondary().small().child(crate::i18n::tr("已暂停")))
                             }),
                     )
                     // 直播标题
@@ -3024,27 +3020,18 @@ impl RecordingPage {
                             .flex()
                             .items_center()
                             .gap_3()
-                            // 状态指示点 + 文字
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.0))
-                                    .child(
-                                        div().w(px(6.0)).h(px(6.0)).bg(status_color).rounded_full(),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(desc_color)
-                                            .child(crate::i18n::text(state.status.display_name())),
-                                    ),
+                                Tag::new()
+                                    .with_variant(status_variant)
+                                    .outline()
+                                    .small()
+                                    .child(crate::i18n::text(state.status.display_name())),
                             )
                             // 房间号
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(gpui::rgb(0x9ca3af))
+                                    .text_color(desc_color)
                                     .child(format!("#{}", room.room_id)),
                             ),
                     )
@@ -3327,5 +3314,47 @@ impl Render for RecordingPage {
                             .into_any_element()
                     }),
             )
+    }
+}
+
+fn recording_platform(value: &str) -> Option<&'static str> {
+    let parsed = url::Url::parse(value).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return None;
+    }
+    match magekit_shared::platform_from_url(value) {
+        Some(platform @ ("douyin" | "bilibili" | "huya" | "douyu" | "kuaishou")) => Some(platform),
+        Some("soop" | "soop_global" | "sooplive" | "sooplive_global") => Some("soop"),
+        // Streamlink 支持更多站点；合法未知 host 交给实际后端解析。
+        _ => Some("unknown"),
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::recording_platform;
+    #[test]
+    fn recording_urls_use_parsed_hosts() {
+        assert_eq!(
+            recording_platform("https://live.bilibili.com/123"),
+            Some("bilibili")
+        );
+        for url in [
+            "",
+            "file:///tmp/huya",
+            "https://name:secret@example.com/room",
+        ] {
+            assert_eq!(recording_platform(url), None);
+        }
+        for url in [
+            "https://www.twitch.tv/example",
+            "https://huya.com.evil.example/1",
+            "https://evil.example/?next=live.bilibili.com",
+        ] {
+            assert_eq!(recording_platform(url), Some("unknown"));
+        }
     }
 }

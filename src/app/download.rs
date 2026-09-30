@@ -4,13 +4,29 @@
 //! 本模块提供便捷的同步包装方法，供 UI 层调用
 
 use anyhow::Result;
-use magekit_shared::{DownloadOptions, TaskId, TaskState, VideoInfo};
+use magekit_shared::{DownloadOptions, TaskId, VideoInfo};
 use std::path::PathBuf;
 
 use super::state::AppState;
 use super::types::DownloadVideoOptions;
 
 impl AppState {
+    /// 仅接受完整的 HTTP(S) 媒体地址，避免把分享文案、文件路径或凭据作为请求发送。
+    pub fn validate_media_url(input: &str) -> Result<String> {
+        let value = input.trim();
+        let valid = url::Url::parse(value).ok().filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && !value.chars().any(char::is_whitespace)
+        });
+        if valid.is_none() {
+            anyhow::bail!(crate::i18n::tr("请输入有效的 HTTP 或 HTTPS 链接"));
+        }
+        Ok(value.to_string())
+    }
+
     /// 获取视频信息（在后台线程中运行）
     ///
     /// 调用 tool_manager 的 get_video_info，所有解析逻辑由 extractor 处理
@@ -119,98 +135,91 @@ impl AppState {
         })
     }
 
-    /// 暂停下载任务（同步包装）
-    pub fn pause_download_sync(&self, task_id: TaskId) {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
-
-        // UI 侧需要立即响应：先乐观更新本地缓存，避免“已暂停但按钮未切换”的体验问题
-        {
-            let mut tasks = self.tasks.blocking_write();
-            if let Some(task) = tasks.get_mut(&task_id) {
-                if matches!(task.state, TaskState::Downloading | TaskState::Merging) {
-                    task.state = TaskState::Paused;
-                }
-            }
-        }
-
-        tracing::info!("⏸️ 暂停下载任务: {}", task_id);
-
-        runtime.spawn(async move {
-            if let Err(e) = tool_manager.pause_download(task_id).await {
-                tracing::error!("❌ 暂停任务失败: {}", e);
-            }
-        });
-    }
-
-    /// 恢复下载任务（同步包装）
-    pub fn resume_download_sync(&self, task_id: TaskId) {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
-
-        // 同上：先更新本地缓存，保证按钮即时切换
-        {
-            let mut tasks = self.tasks.blocking_write();
-            if let Some(task) = tasks.get_mut(&task_id) {
-                if matches!(task.state, TaskState::Paused | TaskState::Failed(_)) {
-                    task.state = TaskState::Downloading;
-                }
-            }
-        }
-
-        tracing::info!("▶️ 恢复下载任务: {}", task_id);
-
-        runtime.spawn(async move {
-            if let Err(e) = tool_manager.resume_download(task_id).await {
-                tracing::error!("❌ 恢复任务失败: {}", e);
-            }
-        });
-    }
-
-    /// 取消下载任务（同步包装）
-    pub fn cancel_download_sync(&self, task_id: TaskId) {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
-
-        // 先本地标记，避免 UI 延迟
-        {
-            let mut tasks = self.tasks.blocking_write();
-            if let Some(task) = tasks.get_mut(&task_id) {
-                task.state = TaskState::Cancelled;
-            }
-        }
-
-        tracing::info!("🛑 取消下载任务: {}", task_id);
-
-        runtime.spawn(async move {
-            if let Err(e) = tool_manager.cancel_download(task_id).await {
-                tracing::error!("❌ 取消任务失败: {}", e);
-            }
-        });
-    }
-
-    /// 删除任务（同步包装）
-    pub fn delete_task_sync(&self, task_id: TaskId) {
-        let runtime = self.runtime.clone();
-        let tool_manager = self.tool_manager.clone();
+    /// 任务操作返回可等待的结果；UI 只在成功后更新状态，失败保留原记录。
+    pub fn pause_download_sync(&self, task_id: TaskId) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
         let tasks = self.tasks.clone();
-
-        tracing::info!("🗑️ 删除任务: {}", task_id);
-
-        runtime.spawn(async move {
-            // 先取消（如果正在运行）
-            let _ = tool_manager.cancel_download(task_id).await;
-
-            // 从持久化存储删除
-            if let Err(e) = tool_manager.delete_task_status(task_id).await {
-                tracing::error!("❌ 删除任务失败: {}", e);
+        self.runtime.spawn(async move {
+            manager.pause_download(task_id).await?;
+            if let Some(status) = manager.get_task_status(task_id).await {
+                tasks.write().await.insert(task_id, status);
             }
+            Ok(())
+        })
+    }
 
-            // 从本地缓存删除
+    pub fn resume_download_sync(&self, task_id: TaskId) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
+        let tasks = self.tasks.clone();
+        self.runtime.spawn(async move {
+            manager.resume_download(task_id).await?;
+            if let Some(status) = manager.get_task_status(task_id).await {
+                tasks.write().await.insert(task_id, status);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn cancel_download_sync(&self, task_id: TaskId) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
+        let tasks = self.tasks.clone();
+        self.runtime.spawn(async move {
+            manager.cancel_download(task_id).await?;
+            if let Some(status) = manager.get_task_status(task_id).await {
+                tasks.write().await.insert(task_id, status);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn delete_task_sync(&self, task_id: TaskId) -> tokio::task::JoinHandle<Result<()>> {
+        let manager = self.tool_manager.clone();
+        let tasks = self.tasks.clone();
+        self.runtime.spawn(async move {
+            // 已结束任务不应先被改成“已取消”；删除失败时仍能展示原始状态。
+            if manager
+                .get_task_status(task_id)
+                .await
+                .is_some_and(|task| task.is_active())
             {
-                let mut tasks = tasks.write().await;
-                tasks.remove(&task_id);
+                manager.cancel_download(task_id).await?;
             }
-        });
+            manager.delete_task_status(task_id).await?;
+            tasks.write().await.remove(&task_id);
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppState;
+
+    #[test]
+    fn validates_and_trims_media_urls_without_rewriting_queries() {
+        assert_eq!(
+            AppState::validate_media_url("  https://example.com/watch?v=one&list=two  ").unwrap(),
+            "https://example.com/watch?v=one&list=two"
+        );
+        assert!(AppState::validate_media_url("http://localhost:8080/media.mp4").is_ok());
+    }
+
+    #[test]
+    fn rejects_missing_host_unsupported_schemes_share_text_and_credentials() {
+        for value in [
+            "",
+            "example.com",
+            "file:///tmp/video.mp4",
+            "javascript:alert(1)",
+            "https://",
+            "video https://example.com",
+            "https://example.com/a b",
+            "https://user:password@example.com/video",
+        ] {
+            assert!(
+                AppState::validate_media_url(value).is_err(),
+                "accepted {value}"
+            );
+        }
     }
 }

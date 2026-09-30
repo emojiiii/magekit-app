@@ -306,6 +306,7 @@ impl RenderOnce for CookieSettingsInner {
                                         )
                                         .child(
                                             Input::new(&cookie_input)
+                                                .mask_toggle()
                                                 .small()
                                                 .cleanable(true)
                                         )

@@ -79,8 +79,15 @@ impl DownloadClient {
         callback: &dyn DownloadCallback,
         cancel: CancellationToken,
     ) -> DownloadResult<crate::progress::DownloadOutcome> {
+        crate::utils::validate_request(&request)?;
+        if cancel.is_cancelled() {
+            return Err(DownloadError::Canceled);
+        }
         tracing::info!("🎯 DownloadClient::download() 被调用");
-        tracing::info!("  ├─ URL: {}", request.url);
+        tracing::info!(
+            "  ├─ URL: {}",
+            magekit_shared::redact_url_for_log(request.url.as_str())
+        );
         tracing::info!("  └─ 策略: {:?}", request.strategy);
 
         if matches!(request.strategy, DownloadStrategy::Auto) {
@@ -120,7 +127,11 @@ impl DownloadClient {
 
             match ytdlp.download(primary, callback, cancel.clone()).await {
                 Ok(outcome) => return Ok(outcome),
+                Err(DownloadError::Canceled) => return Err(DownloadError::Canceled),
                 Err(primary_err) => {
+                    if cancel.is_cancelled() {
+                        return Err(DownloadError::Canceled);
+                    }
                     callback.on_log(LogLine {
                         source: LogSource::System,
                         line: format!("Auto fallback: ytdlp failed, try direct: {}", primary_err),
@@ -212,7 +223,7 @@ async fn probe_manifest_kind(
     }
     req = req.header(reqwest::header::RANGE, "bytes=0-2047");
 
-    let resp = tokio::select! {
+    let mut resp = tokio::select! {
         _ = cancel.cancelled() => return None,
         r = req.send() => r.ok()?,
     };
@@ -220,10 +231,16 @@ async fn probe_manifest_kind(
         return None;
     }
 
-    let bytes = tokio::select! {
-        _ = cancel.cancelled() => return None,
-        b = resp.bytes() => b.ok()?,
-    };
+    let mut bytes = Vec::with_capacity(2048);
+    while bytes.len() < 2048 {
+        let chunk = tokio::select! {
+            _ = cancel.cancelled() => return None,
+            chunk = resp.chunk() => chunk.ok()?,
+        };
+        let Some(chunk) = chunk else { break };
+        let remaining = 2048 - bytes.len();
+        bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
 
     let s = String::from_utf8_lossy(&bytes);
     let trimmed = s

@@ -3,9 +3,11 @@
 use crate::app::{AppState, ToolStatus};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::{ActiveTheme, Sizable};
 use magekit_shared::{ToolType, UpdateChannel};
 use magekit_tool_manager::UpdateInfo;
 use std::sync::Arc;
@@ -570,6 +572,7 @@ impl ToolsPage {
                                         crate::i18n::tr("检查更新")
                                     })
                                     .disabled(self.is_checking_updates)
+                                    .loading(self.is_checking_updates)
                                     .on_click(cx.listener(|this, _ev, _window, cx| {
                                         this.check_tool_updates(cx);
                                     })),
@@ -582,7 +585,7 @@ impl ToolsPage {
                                         .right(px(-2.0))
                                         .w(px(8.0))
                                         .h(px(8.0))
-                                        .bg(rgb(0xef4444))
+                                        .bg(cx.theme().danger)
                                         .rounded_full(),
                                 )
                             }),
@@ -592,6 +595,7 @@ impl ToolsPage {
                             .ghost()
                             .label(crate::i18n::tr("刷新"))
                             .disabled(self.is_checking)
+                            .loading(self.is_checking)
                             .on_click(cx.listener(|this, _ev, _window, cx| {
                                 this.refresh_status(cx);
                             })),
@@ -609,18 +613,7 @@ impl ToolsPage {
     }
 
     fn render_error_message(&self, msg: String) -> impl IntoElement {
-        div()
-            .p(px(12.0))
-            .rounded(px(8.0))
-            .bg(Hsla::from(rgb(0x450a0a)).opacity(0.5))
-            .border_1()
-            .border_color(rgb(0xef4444))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0xef4444))
-                    .child(crate::i18n::text(&msg)),
-            )
+        Alert::error("tool-operation-error", crate::i18n::text(&msg))
     }
 
     fn render_tool_cards(&mut self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
@@ -633,7 +626,7 @@ impl ToolsPage {
         let success_color = cx.theme().success;
         let danger_color = cx.theme().danger;
         let primary_color = cx.theme().primary;
-        let warning_color: Hsla = rgb(0xfbbf24).into();
+        let warning_color = cx.theme().warning;
         let update_info = self.update_info.clone();
 
         self.tools
@@ -782,7 +775,7 @@ impl ToolsPage {
                                                             .text_base()
                                                             .font_weight(FontWeight::SEMIBOLD)
                                                             .text_color(title_color)
-                                                            .child(tool_name),
+                                                            .child(tool_name.clone()),
                                                     )
                                                     .child(
                                                         // 状态标签
@@ -890,21 +883,9 @@ impl ToolsPage {
                     )
                     // 进度条 (下载时显示)
                     .when_some(progress_percent, |el, percent| {
-                        el.child(
-                            div()
-                                .w_full()
-                                .h(px(4.0))
-                                .bg(icon_bg)
-                                .rounded(px(2.0))
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .h_full()
-                                        .w(relative(percent / 100.0))
-                                        .bg(primary_color)
-                                        .rounded(px(2.0)),
-                                ),
-                        )
+                        el.child(Progress::new(("tool-progress", idx)).value(percent)
+                            .loading(matches!(&tool.state, ToolInstallState::Downloading(progress) if progress.total == 0))
+                            .accessibility_label(tool_name.clone()).small())
                     })
             })
             .collect()

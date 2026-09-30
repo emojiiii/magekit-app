@@ -9,6 +9,11 @@ pub struct ToolStorage {
 }
 
 impl ToolStorage {
+    #[cfg(test)]
+    pub(crate) fn isolated_for_test(tools_dir: PathBuf) -> Self {
+        Self { tools_dir }
+    }
+
     /// 创建新的工具存储管理器 (同步版本)
     pub fn new_sync() -> ToolManagerResult<Self> {
         let tools_dir = get_tools_dir().map_err(|e| ToolManagerError::internal(e.to_string()))?;
