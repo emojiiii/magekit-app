@@ -180,7 +180,8 @@ impl RuntimeControls {
 
 impl Render for RuntimeControls {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let deno_controls = GroupBox::new().id("deno-card").fill().flex_1().min_w_0()
+        let deno_controls = GroupBox::new().id("deno-card").outline().flex_1().min_w_0()
+            .content_style(StyleRefinement::default().p_4().gap_3().bg(cx.theme().secondary).rounded_lg())
             .child(div().flex().items_center().justify_between().gap_3()
                 .child(div().flex().items_center().gap_2().font_semibold()
                     .child(Icon::new(IconName::SquareTerminal).size_5()).child("Deno"))
@@ -196,17 +197,24 @@ impl Render for RuntimeControls {
             .child(div().text_xs().text_color(cx.theme().muted_foreground)
                 .child(crate::i18n::tr("yt-dlp 已包含 EJS 脚本；Deno 负责执行 YouTube JS challenge。首次解析时会自动检查。")))
             .child(div().flex().flex_wrap().gap_2()
-                .when(!self.deno_installed, |row| row.child(Button::new("deno-install").label(crate::i18n::tr("安装"))
+                .when(!self.deno_installed, |row| row.child(Button::new("deno-install").small().label(crate::i18n::tr("安装"))
                     .primary().disabled(self.deno_busy).loading(self.deno_busy)
                     .on_click(cx.listener(|this, _, _, cx| this.deno_action("install", cx)))))
-                .child(Button::new("deno-update").label(crate::i18n::tr("更新 / 修复")).outline().disabled(self.deno_busy)
+                .child(Button::new("deno-update").small().label(crate::i18n::tr("更新 / 修复")).outline().disabled(self.deno_busy)
                     .on_click(cx.listener(|this, _, _, cx| this.deno_action("update", cx))))
-                .child(Button::new("deno-status").icon(IconName::RefreshCw).label(crate::i18n::tr("刷新状态"))
+                .child(Button::new("deno-status").small().icon(IconName::RefreshCw).label(crate::i18n::tr("刷新状态"))
                     .ghost().disabled(self.deno_busy).on_click(cx.listener(|this, _, _, cx| this.deno_action("status", cx)))));
         let streamlink_controls =
             GroupBox::new()
                 .id("streamlink-card")
-                .fill()
+                .outline()
+                .content_style(
+                    StyleRefinement::default()
+                        .p_4()
+                        .gap_3()
+                        .bg(cx.theme().secondary)
+                        .rounded_lg(),
+                )
                 .flex_1()
                 .min_w_0()
                 .child(
@@ -270,6 +278,7 @@ impl Render for RuntimeControls {
                         .when(!self.installed, |row| {
                             row.child(
                                 Button::new("streamlink-install")
+                                    .small()
                                     .label(crate::i18n::tr("安装"))
                                     .primary()
                                     .disabled(self.busy)
@@ -281,6 +290,7 @@ impl Render for RuntimeControls {
                         })
                         .child(
                             Button::new("streamlink-update")
+                                .small()
                                 .label(crate::i18n::tr("更新 / 修复"))
                                 .outline()
                                 .disabled(self.busy)
@@ -290,6 +300,7 @@ impl Render for RuntimeControls {
                         )
                         .child(
                             Button::new("streamlink-status")
+                                .small()
                                 .icon(IconName::RefreshCw)
                                 .label(crate::i18n::tr("刷新状态"))
                                 .ghost()
@@ -305,7 +316,7 @@ impl Render for RuntimeControls {
             .gap_4()
             .child(
                 div()
-                    .text_base()
+                    .text_sm()
                     .font_semibold()
                     .child(crate::i18n::tr("YouTube 与直播运行环境")),
             )

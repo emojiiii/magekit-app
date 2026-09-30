@@ -2,9 +2,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{ActiveTheme, Icon, IconName};
 use magekit_shared::ToolType;
 
 /// 下载进度信息
@@ -102,7 +102,7 @@ impl ToolInfo {
             description: crate::i18n::tr("强大的视频下载工具，支持 YouTube、Bilibili 等众多平台"),
             tool_type: ToolType::YtDlp,
             state: ToolInstallState::Unknown,
-            icon: "📥",
+            icon: "icons/download.svg",
         }
     }
 
@@ -112,7 +112,7 @@ impl ToolInfo {
             description: crate::i18n::tr("音视频处理工具，用于格式转换和视频合并"),
             tool_type: ToolType::Ffmpeg,
             state: ToolInstallState::Unknown,
-            icon: "🎞️",
+            icon: "icons/film.svg",
         }
     }
 }
@@ -231,15 +231,14 @@ where
                             .child(
                                 // 图标
                                 div()
-                                    .w(px(48.0))
-                                    .h(px(48.0))
+                                    .w(px(32.0))
+                                    .h(px(32.0))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .bg(icon_bg)
                                     .rounded(px(12.0))
-                                    .text_2xl()
-                                    .child(tool_icon),
+                                    .child(Icon::new(IconName::ArrowDown).path(tool_icon).size_4()),
                             )
                             .child(
                                 // 名称和描述
@@ -298,30 +297,15 @@ pub struct ToolHintCard;
 
 impl RenderOnce for ToolHintCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let hint_bg = cx.theme().muted;
-        let title_color = cx.theme().foreground;
-        let muted_color = cx.theme().muted_foreground;
-
-        div().p(px(16.0)).rounded(px(12.0)).bg(hint_bg).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(title_color)
-                        .child(crate::i18n::tr("💡 关于工具")),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted_color)
-                        .child(crate::i18n::tr(
-                            "这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。",
-                        )),
-                ),
-        )
+        div()
+            .flex()
+            .items_start()
+            .gap_2()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(Icon::new(IconName::Info).size_4())
+            .child(crate::i18n::tr(
+                "这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。",
+            ))
     }
 }

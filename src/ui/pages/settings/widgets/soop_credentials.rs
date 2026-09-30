@@ -56,8 +56,8 @@ impl RenderOnce for SoopCredentialsInner {
 
         Section::new_with_icon(crate::i18n::tr("SOOP 账号认证"), IconName::Settings).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(theme.secondary)
                 .border_1()
                 .border_color(theme.border)

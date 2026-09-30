@@ -42,7 +42,7 @@ impl RenderOnce for LanguageSettingsCard {
             div()
                 .p_4()
                 .rounded_lg()
-                .bg(cx.theme().background)
+                .bg(cx.theme().secondary)
                 .border_1()
                 .border_color(cx.theme().border)
                 .flex()

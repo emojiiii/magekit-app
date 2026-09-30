@@ -62,7 +62,7 @@ impl DownloadSettingsCard {
 impl RenderOnce for DownloadSettingsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let card_bg = theme.background;
+        let card_bg = theme.secondary;
         let border_color = theme.border;
         let title_color = theme.foreground;
         let muted_color = theme.muted_foreground;
@@ -70,8 +70,8 @@ impl RenderOnce for DownloadSettingsCard {
 
         Section::new_with_icon(crate::i18n::tr("下载"), IconName::ArrowDown).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)

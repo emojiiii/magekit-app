@@ -10,7 +10,6 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
-use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::*;
@@ -382,27 +381,12 @@ impl Render for TasksPage {
                     .flex()
                     .flex_col()
                     .w_full()
-                    .max_w(px(1120.0))
-                    .mx_auto()
-                    .p_8()
-                    .gap_6()
+                    .p_6()
+                    .gap_4()
                     .child(self.render_header(cx))
-                    .child(self.render_summary(cx))
-                    .child(
-                        GroupBox::new()
-                            .id("downloads-workspace")
-                            .outline()
-                            .content_style(
-                                StyleRefinement::default()
-                                    .p_5()
-                                    .gap_5()
-                                    .bg(cx.theme().background)
-                                    .rounded_xl(),
-                            )
-                            .child(self.render_filter_bar(cx))
-                            .when(is_empty, |this| this.child(self.render_empty_state(cx)))
-                            .when(!is_empty, |this| this.child(self.render_task_list(cx))),
-                    ),
+                    .child(self.render_filter_bar(cx))
+                    .when(is_empty, |this| this.child(self.render_empty_state(cx)))
+                    .when(!is_empty, |this| this.child(self.render_task_list(cx))),
             )
     }
 }
@@ -419,14 +403,18 @@ impl TasksPage {
             .justify_between()
             .flex_wrap()
             .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.0))
+                    .flex_wrap()
+                    .items_center()
+                    .gap_3()
                     .child(
                         div()
-                            .text_3xl()
+                            .text_size(px(22.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
                             .child(crate::i18n::tr("下载任务")),
@@ -492,54 +480,6 @@ impl TasksPage {
             .count()
     }
 
-    fn render_summary(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_wrap().gap_3().children(
-            [
-                (TaskFilter::All, IconName::Inbox, cx.theme().foreground),
-                (
-                    TaskFilter::Downloading,
-                    IconName::ArrowDown,
-                    cx.theme().primary,
-                ),
-                (
-                    TaskFilter::Completed,
-                    IconName::CircleCheck,
-                    cx.theme().success,
-                ),
-                (TaskFilter::Failed, IconName::CircleAlert, cx.theme().danger),
-            ]
-            .into_iter()
-            .map(|(filter, icon, color)| {
-                GroupBox::new()
-                    .id(SharedString::from(format!("task-summary-{filter:?}")))
-                    .fill()
-                    .flex_1()
-                    .min_w(px(140.0))
-                    .content_style(StyleRefinement::default().p_5().gap_3().rounded_xl())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(filter.label()),
-                            )
-                            .child(Icon::new(icon).size_4().text_color(color)),
-                    )
-                    .child(
-                        div()
-                            .text_3xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(self.filter_count(filter).to_string()),
-                    )
-            }),
-        )
-    }
-
     fn render_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filters = [
             TaskFilter::All,
@@ -568,17 +508,17 @@ impl TasksPage {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         Empty::new()
-            .py_12()
+            .py_6()
             .header(
                 EmptyHeader::new()
                     .media(
                         EmptyMedia::new()
-                            .size_12()
+                            .size_8()
                             .rounded_xl()
                             .bg(cx.theme().muted)
                             .child(
                                 Icon::new(IconName::Inbox)
-                                    .size_6()
+                                    .size_4()
                                     .text_color(cx.theme().muted_foreground),
                             ),
                     )
@@ -611,7 +551,7 @@ impl TasksPage {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap_2()
             .children(filtered_tasks.into_iter().map(|task| {
                 let task_id = task.id;
                 let task_clone = task.clone();

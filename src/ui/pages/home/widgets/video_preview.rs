@@ -120,44 +120,22 @@ pub struct VideoInfo {
 pub struct VideoPreviewIdle;
 impl RenderOnce for VideoPreviewIdle {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        GroupBox::new()
-            .id("download-preview-empty")
-            .outline()
-            .content_style(
-                StyleRefinement::default()
-                    .bg(cx.theme().background)
-                    .p_6()
-                    .rounded_xl(),
-            )
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .px_1()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(Icon::new(IconName::Info).size_4())
+            .child(crate::i18n::tr("解析后可选择视频画质和音频格式"))
             .child(
-                Empty::new()
-                    .py_8()
-                    .header(
-                        EmptyHeader::new()
-                            .media(
-                                EmptyMedia::new()
-                                    .size_12()
-                                    .rounded_xl()
-                                    .bg(cx.theme().muted)
-                                    .child(
-                                        Icon::new(IconName::Play)
-                                            .size_6()
-                                            .text_color(cx.theme().muted_foreground),
-                                    ),
-                            )
-                            .title(EmptyTitle::new().child(crate::i18n::tr("粘贴视频链接开始下载")))
-                            .description(
-                                EmptyDescription::new()
-                                    .child(crate::i18n::tr("解析后可选择视频画质和音频格式")),
-                            ),
-                    )
-                    .child(
-                        div().flex().flex_wrap().justify_center().gap_2().children(
-                            ["YouTube", "Bilibili", "Twitter / X"]
-                                .into_iter()
-                                .map(|name| Tag::secondary().small().child(name)),
-                        ),
-                    ),
+                div().flex().flex_wrap().gap_2().children(
+                    ["YouTube", "Bilibili", "Twitter / X"]
+                        .into_iter()
+                        .map(|name| Tag::secondary().small().child(name)),
+                ),
             )
     }
 }
@@ -166,7 +144,7 @@ impl RenderOnce for VideoPreviewIdle {
 pub struct VideoPreviewLoading;
 impl RenderOnce for VideoPreviewLoading {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        Empty::new().py_12().header(
+        Empty::new().py_6().header(
             EmptyHeader::new()
                 .media(EmptyMedia::new().child(Spinner::new().large()))
                 .title(EmptyTitle::new().child(crate::i18n::tr("正在解析视频...")))
@@ -314,7 +292,7 @@ impl RenderOnce for VideoPreviewReady {
         let border = cx.theme().border;
         let foreground = cx.theme().foreground;
         let muted = cx.theme().muted_foreground;
-        let background = cx.theme().background;
+        let background = cx.theme().secondary;
         let thumbnail_background = cx.theme().muted;
         let has_selection = self.selected_video_id.is_some() || self.selected_audio_id.is_some();
         let disabled = self.submitting;
@@ -414,8 +392,8 @@ impl RenderOnce for VideoPreviewReady {
             .min_w_0()
             .content_style(
                 StyleRefinement::default()
-                    .p_6()
-                    .gap_6()
+                    .p_4()
+                    .gap_4()
                     .bg(background)
                     .rounded_xl(),
             )

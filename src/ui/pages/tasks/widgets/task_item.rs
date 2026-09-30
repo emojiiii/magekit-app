@@ -201,8 +201,14 @@ impl RenderOnce for TaskItem {
 
         GroupBox::new()
             .id(SharedString::from(format!("task-card-{task_id}")))
-            .fill()
-            .content_style(StyleRefinement::default().p_5().gap_3().rounded_lg())
+            .outline()
+            .content_style(
+                StyleRefinement::default()
+                    .p_4()
+                    .gap_3()
+                    .bg(cx.theme().secondary)
+                    .rounded_lg(),
+            )
             // 顶部：标题和状态
             .child(
                 div()
@@ -220,7 +226,7 @@ impl RenderOnce for TaskItem {
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .size_9()
+                                    .size_7()
                                     .rounded_lg()
                                     .bg(status_color.opacity(0.1))
                                     .flex()

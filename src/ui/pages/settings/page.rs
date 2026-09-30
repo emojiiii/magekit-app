@@ -14,7 +14,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeRegistry};
 use gpui_kit::component::{WindowExt, notification::Notification};
 use magekit_shared::PlatformCookie;
 use magekit_shared::types::Theme as AppTheme;
@@ -554,35 +554,29 @@ impl Render for SettingsPage {
                             .flex()
                             .flex_col()
                             .w_full()
-                            .max_w(px(1120.0))
-                            .mx_auto()
-                            .p(px(32.0))
-                            .gap(px(28.0))
-                            // 页面标题
+                            .p_6()
+                            .gap_4()
                             .child(
                                 div()
                                     .flex()
+                                    .flex_wrap()
                                     .items_center()
-                                    .gap(px(12.0))
+                                    .gap_3()
+                                    .pb_4()
+                                    .border_b_1()
+                                    .border_color(theme.border)
                                     .child(
-                                        Icon::new(IconName::Settings)
-                                            .large()
-                                            .text_color(title_color),
+                                        div()
+                                            .text_size(px(22.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(title_color)
+                                            .child(crate::i18n::tr("设置")),
                                     )
                                     .child(
                                         div()
-                                            .flex()
-                                            .flex_col()
-                                            .child(
-                                                div()
-                                                    .text_size(px(30.0))
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(title_color)
-                                                    .child(crate::i18n::tr("设置")),
-                                            )
-                                            .child(div().text_sm().text_color(desc_color).child(
-                                                crate::i18n::tr("自定义应用程序行为和偏好"),
-                                            )),
+                                            .text_sm()
+                                            .text_color(desc_color)
+                                            .child(crate::i18n::tr("自定义应用程序行为和偏好")),
                                     ),
                             )
                             .when(self.is_saving, |el| {

@@ -7,11 +7,10 @@ use crate::ui::pages::{HomePage, RecordingPage, SettingsPage, ToolsPage};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::TitleBar;
-use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::sidebar::{
-    Sidebar, SidebarGroup, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
+    Sidebar, SidebarHeader, SidebarItem, SidebarMenu, SidebarMenuItem,
 };
 use gpui_kit::component::*;
 use gpui_router::{NavLink, Outlet, use_location, use_navigate};
@@ -122,16 +121,6 @@ impl RenderOnce for AppLayout {
         // 获取当前路由用于高亮激活状态
         let location = use_location(cx);
         let current_path = location.pathname.clone();
-        let route_title = crate::i18n::tr(match current_path.as_str() {
-            "/record" => "直播录制",
-            "/capture" => "资源嗅探",
-            "/channel" => "频道下载",
-            "/tasks" => "下载任务",
-            "/tools" => "工具管理",
-            "/settings" => "设置",
-            _ => "视频下载",
-        });
-
         // 参考 gpui-component 文档的 Responsive Sidebar：窗口变窄时自动进入“紧凑”状态
         let window_width = window.bounds().size.width;
         let is_mobile = window_width < px(960.0);
@@ -141,20 +130,21 @@ impl RenderOnce for AppLayout {
         let sidebar = {
             let app_state = cx.global::<GlobalAppState>().0.clone();
 
-            let item = |path: &'static str, label: &'static str, icon: IconName| {
-                let is_active = current_path == path;
-                SidebarMenuItem::new(label)
-                    .icon(icon)
-                    .active(is_active)
-                    .when(is_active, |item| {
-                        item.border_l_2().border_color(cx.theme().primary)
-                    })
-                    .on_click(move |_, window, cx| {
-                        let mut navigate = use_navigate(cx);
-                        navigate(path.into());
-                        window.refresh();
-                    })
-            };
+            let item =
+                |path: &'static str, label: &'static str, icon: gpui_kit::assets::IconName| {
+                    let is_active = current_path == path;
+                    SidebarMenuItem::new(label)
+                        .icon(icon)
+                        .active(is_active)
+                        .when(is_active, |item| {
+                            item.border_l_2().border_color(cx.theme().primary)
+                        })
+                        .on_click(move |_, window, cx| {
+                            let mut navigate = use_navigate(cx);
+                            navigate(path.into());
+                            window.refresh();
+                        })
+                };
 
             let theme_toggle_icon = if cx.theme().mode.is_dark() {
                 IconName::Sun
@@ -166,10 +156,10 @@ impl RenderOnce for AppLayout {
                 .side(Side::Left)
                 .collapsed(collapsed)
                 .collapsible(true)
-                .w(px(220.0))
+                .w(px(196.0))
                 .header(
                     SidebarHeader::new()
-                        .py_4()
+                        .py_3()
                         .gap_3()
                         .child(
                             div()
@@ -179,9 +169,8 @@ impl RenderOnce for AppLayout {
                                 .size_9()
                                 .flex_shrink_0()
                                 .rounded(cx.theme().radius)
-                                .bg(cx.theme().primary)
-                                .text_color(cx.theme().primary_foreground)
-                                .child(Icon::new(gpui_kit::assets::IconName::Video).size_5()),
+                                .text_color(cx.theme().primary)
+                                .child(Icon::new(gpui_kit::assets::IconName::MonitorPlay).size_6()),
                         )
                         .when(!collapsed, |header| {
                             header.child(
@@ -190,47 +179,46 @@ impl RenderOnce for AppLayout {
                                     .flex()
                                     .flex_col()
                                     .gap_1()
-                                    .child(div().text_base().font_semibold().child("MageKit"))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(crate::i18n::tr("媒体工作空间")),
-                                    ),
+                                    .child(div().text_base().font_semibold().child("MageKit")),
                             )
                         }),
                 )
                 .child(
-                    SidebarGroup::new(crate::i18n::tr("工作空间")).child(
-                        SidebarMenu::new()
-                            .child(item("/", crate::i18n::tr("视频下载"), IconName::ArrowDown))
-                            .child(item(
-                                "/record",
-                                crate::i18n::tr("直播录制"),
-                                IconName::Frame,
-                            ))
-                            .child(item(
-                                "/capture",
-                                crate::i18n::tr("资源嗅探"),
-                                IconName::Globe,
-                            ))
-                            .child(item(
-                                "/channel",
-                                crate::i18n::tr("频道下载"),
-                                IconName::User,
-                            )),
-                    ),
+                    SidebarMenu::new()
+                        .child(item(
+                            "/",
+                            crate::i18n::tr("视频下载"),
+                            gpui_kit::assets::IconName::Download,
+                        ))
+                        .child(item(
+                            "/record",
+                            crate::i18n::tr("直播录制"),
+                            gpui_kit::assets::IconName::Radio,
+                        ))
+                        .child(item(
+                            "/capture",
+                            crate::i18n::tr("资源嗅探"),
+                            gpui_kit::assets::IconName::ScanLine,
+                        ))
+                        .child(item(
+                            "/channel",
+                            crate::i18n::tr("频道下载"),
+                            gpui_kit::assets::IconName::PanelsTopLeft,
+                        )),
                 )
                 .child(
-                    SidebarGroup::new(crate::i18n::tr("管理")).child(
-                        SidebarMenu::new()
-                            .child(item("/tasks", crate::i18n::tr("下载任务"), IconName::Inbox))
-                            .child(item(
-                                "/tools",
-                                crate::i18n::tr("工具管理"),
-                                IconName::SquareTerminal,
-                            )),
-                    ),
+                    SidebarMenu::new()
+                        .mt_5()
+                        .child(item(
+                            "/tasks",
+                            crate::i18n::tr("下载任务"),
+                            gpui_kit::assets::IconName::FolderDown,
+                        ))
+                        .child(item(
+                            "/tools",
+                            crate::i18n::tr("工具管理"),
+                            gpui_kit::assets::IconName::BriefcaseBusiness,
+                        )),
                 )
                 .footer({
                     let footer = SidebarMenu::new()
@@ -239,7 +227,7 @@ impl RenderOnce for AppLayout {
                         .child(item(
                             "/settings",
                             crate::i18n::tr("设置"),
-                            IconName::Settings,
+                            gpui_kit::assets::IconName::Settings2,
                         ))
                         .child(
                             SidebarMenuItem::new(if cx.theme().mode.is_dark() {
@@ -254,9 +242,9 @@ impl RenderOnce for AppLayout {
                                     // 仅在“亮/暗”两态间切换
                                     let target_is_dark = !cx.theme().mode.is_dark();
                                     let target_name: SharedString = if target_is_dark {
-                                        "Default Dark".into()
+                                        "MageKit Dark".into()
                                     } else {
-                                        "Default Light".into()
+                                        "MageKit Light".into()
                                     };
 
                                     if let Some(theme_config) = ThemeRegistry::global(cx)
@@ -355,26 +343,6 @@ impl RenderOnce for AppLayout {
                             .flex_col()
                             .overflow_hidden()
                             .bg(content_bg)
-                            .child(
-                                div()
-                                    .h_12()
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .px_6()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .child(
-                                        Breadcrumb::new()
-                                            .child(BreadcrumbItem::new("MageKit").on_click(
-                                                |_, window, cx| {
-                                                    use_navigate(cx)("/".into());
-                                                    window.refresh();
-                                                },
-                                            ))
-                                            .child(BreadcrumbItem::new(route_title)),
-                                    ),
-                            )
                             .child(
                                 div()
                                     .flex_1()

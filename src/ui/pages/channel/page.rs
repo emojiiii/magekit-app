@@ -1026,17 +1026,17 @@ impl ChannelPage {
     /// 渲染空闲状态
     fn render_idle(&self, cx: &Context<Self>) -> impl IntoElement {
         Empty::new()
-            .py_10()
+            .py_6()
             .header(
                 EmptyHeader::new()
                     .media(
                         EmptyMedia::new()
-                            .size_12()
+                            .size_8()
                             .rounded_xl()
                             .bg(cx.theme().muted)
                             .child(
                                 Icon::new(IconName::FolderOpen)
-                                    .size_6()
+                                    .size_4()
                                     .text_color(cx.theme().muted_foreground),
                             ),
                     )
@@ -1065,7 +1065,7 @@ impl ChannelPage {
             .flex_col()
             .items_center()
             .justify_center()
-            .py_12()
+            .py_6()
             .gap_4()
             .child(Spinner::new().large().color(theme.primary))
             .child(div().text_lg().child(crate::i18n::tr("正在解析频道...")))
@@ -1619,48 +1619,28 @@ impl Render for ChannelPage {
             .flex_col()
             .size_full()
             .min_h_0()
-            .max_w(px(1120.0))
-            .mx_auto()
-            .p_8()
-            .gap_6()
+            .p_6()
+            .gap_4()
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap_4()
+                    .gap_3()
+                    .pb_4()
+                    .border_b_1()
+                    .border_color(theme.border)
                     .child(
                         div()
-                            .size_12()
-                            .rounded_xl()
-                            .bg(theme.primary.opacity(0.12))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                Icon::new(IconName::FolderOpen)
-                                    .size_6()
-                                    .text_color(theme.primary),
-                            ),
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::i18n::tr("频道下载")),
                     )
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_3xl()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(crate::i18n::tr("频道/作者")),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child(crate::i18n::tr("发现创作者内容，一次选择，批量下载")),
-                            ),
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(crate::i18n::tr("发现创作者内容，一次选择，批量下载")),
                     ),
             )
             // URL 输入区域
@@ -1670,9 +1650,9 @@ impl Render for ChannelPage {
                     .outline()
                     .content_style(
                         StyleRefinement::default()
-                            .p_6()
-                            .bg(theme.background)
-                            .rounded_xl(),
+                            .p_4()
+                            .bg(theme.secondary)
+                            .rounded_lg(),
                     )
                     .child(
                         div()
@@ -1700,7 +1680,6 @@ impl Render for ChannelPage {
                                         div().flex_1().min_w(px(240.0)).child(
                                             Input::new(&self.url_input)
                                                 .id("channel-url-input")
-                                                .large()
                                                 .cleanable(true)
                                                 .disabled(self.submitting)
                                                 .aria_label(crate::i18n::tr("频道链接")),
@@ -1709,7 +1688,6 @@ impl Render for ChannelPage {
                                     .child(
                                         Button::new("parse-channel")
                                             .primary()
-                                            .large()
                                             .label(if matches!(self.state, ChannelState::Parsing) {
                                                 crate::i18n::tr("解析中...")
                                             } else {
@@ -1746,14 +1724,17 @@ impl Render for ChannelPage {
             // 内容区域
             .child(
                 div()
-                    .flex_1()
                     .min_h_0()
-                    .p_5()
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_xl()
-                    .overflow_hidden()
+                    .when(matches!(self.state, ChannelState::Ready(_)), |workspace| {
+                        workspace
+                            .flex_1()
+                            .p_4()
+                            .bg(theme.secondary)
+                            .border_1()
+                            .border_color(theme.border)
+                            .rounded_lg()
+                            .overflow_hidden()
+                    })
                     .child(match &self.state {
                         ChannelState::Idle => self.render_idle(cx).into_any_element(),
                         ChannelState::Parsing => self.render_parsing(cx).into_any_element(),

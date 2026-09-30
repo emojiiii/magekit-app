@@ -8,7 +8,7 @@ use gpui_kit::component::Disableable;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Icon, IconName};
 
 /// URL 输入卡片组件
 #[derive(IntoElement)]
@@ -77,10 +77,10 @@ impl RenderOnce for UrlInputCard {
             .outline()
             .content_style(
                 StyleRefinement::default()
-                    .p_6()
-                    .gap_5()
-                    .bg(cx.theme().background)
-                    .rounded_xl(),
+                    .p_4()
+                    .gap_3()
+                    .bg(cx.theme().secondary)
+                    .rounded_lg(),
             )
             .child(
                 div()
@@ -100,7 +100,7 @@ impl RenderOnce for UrlInputCard {
                             .gap_1()
                             .child(
                                 div()
-                                    .text_base()
+                                    .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(crate::i18n::tr("视频链接")),
                             )
@@ -122,7 +122,6 @@ impl RenderOnce for UrlInputCard {
                         div().flex_1().min_w(px(240.0)).child(
                             Input::new(&self.input_state)
                                 .id("home-url-input")
-                                .large()
                                 .cleanable(true)
                                 .disabled(self.disabled)
                                 .aria_label(crate::i18n::tr("视频链接")),
@@ -131,7 +130,6 @@ impl RenderOnce for UrlInputCard {
                     .child({
                         let mut btn = Button::new("parse-btn")
                             .primary()
-                            .large()
                             .icon(IconName::ArrowRight)
                             .label(button_label)
                             .loading(self.is_loading)

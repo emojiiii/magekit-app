@@ -38,7 +38,7 @@ impl RenderOnce for ThemeSettingsCard {
 
         // 获取主题颜色
         let theme = cx.theme();
-        let card_bg = theme.background;
+        let card_bg = theme.secondary;
         let border_color = theme.border;
         let text_color = theme.foreground;
         let muted_color = theme.muted_foreground;
@@ -50,6 +50,7 @@ impl RenderOnce for ThemeSettingsCard {
         // 构建主题选项列表，包含名称和是否深色主题
         let theme_items: Vec<(SharedString, bool)> = themes
             .iter()
+            .filter(|t| !matches!(t.name.as_ref(), "Default Light" | "Default Dark"))
             .map(|t| (t.name.clone(), t.mode.is_dark()))
             .collect();
 
@@ -61,8 +62,8 @@ impl RenderOnce for ThemeSettingsCard {
 
         Section::new_with_icon(crate::i18n::tr("外观"), IconName::Palette).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p(px(16.0))
+                .rounded(px(8.0))
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
@@ -99,7 +100,7 @@ impl RenderOnce for ThemeSettingsCard {
                                                     div().text_xs().text_color(muted_color).child(
                                                         crate::i18n::format(
                                                             "{} 个主题可用",
-                                                            &[format!("{}", themes.len())],
+                                                            &[format!("{}", theme_items.len())],
                                                         ),
                                                     ),
                                                 ),

@@ -98,7 +98,7 @@ impl ProxySettingsCard {
 impl RenderOnce for ProxySettingsCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let card_bg = theme.background;
+        let card_bg = theme.secondary;
         let border_color = theme.border;
         let title_color = theme.foreground;
         let muted_color = theme.muted_foreground;
@@ -167,8 +167,8 @@ impl RenderOnce for ProxySettingsCard {
 
         Section::new_with_icon(crate::i18n::tr("网络代理"), IconName::Globe).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)

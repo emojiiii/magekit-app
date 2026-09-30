@@ -532,12 +532,12 @@ impl Render for CapturePage {
                     EmptyHeader::new()
                         .media(
                             EmptyMedia::new()
-                                .size_12()
+                                .size_8()
                                 .rounded_xl()
                                 .bg(theme.muted)
                                 .child(
                                     Icon::new(IconName::Search)
-                                        .size_6()
+                                        .size_4()
                                         .text_color(theme.muted_foreground),
                                 ),
                         )
@@ -600,12 +600,10 @@ impl Render for CapturePage {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(1120.0))
-                    .mx_auto()
-                    .p_8()
+                    .p_6()
                     .flex()
                     .flex_col()
-                    .gap_6()
+                    .gap_4()
                     .child(
                         div()
                             .flex()
@@ -613,46 +611,26 @@ impl Render for CapturePage {
                             .items_center()
                             .justify_between()
                             .gap_4()
+                            .pb_4()
+                            .border_b_1()
+                            .border_color(theme.border)
                             .child(
                                 div()
                                     .flex()
+                                    .flex_wrap()
                                     .items_center()
-                                    .gap_4()
+                                    .gap_3()
                                     .child(
                                         div()
-                                            .size_12()
-                                            .rounded_xl()
-                                            .bg(theme.primary.opacity(0.12))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                Icon::new(IconName::Search)
-                                                    .size_6()
-                                                    .text_color(theme.primary),
-                                            ),
+                                            .text_size(px(22.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(crate::i18n::tr("资源嗅探")),
                                     )
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_3xl()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .child(crate::i18n::tr("M3U8 嗅探")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(theme.muted_foreground)
-                                                    .child(crate::i18n::tr(
-                                                        "从网页中发现可下载的媒体资源",
-                                                    )),
-                                            ),
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child(crate::i18n::tr("从网页中发现可下载的媒体资源")),
                                     ),
                             )
                             .child(if self.is_running {
@@ -664,22 +642,16 @@ impl Render for CapturePage {
                     .when_some(self.last_error.clone(), |el, error| {
                         el.child(Alert::error("capture-error", error))
                     })
-                    .when(self.is_running, |el| {
-                        el.child(Alert::info(
-                            "capture-running",
-                            crate::i18n::tr("正在监听网页请求，可随时停止；已捕获的资源会保留"),
-                        ))
-                    })
                     .child(
                         GroupBox::new()
                             .id("capture-setup")
                             .outline()
                             .content_style(
                                 StyleRefinement::default()
-                                    .p_6()
-                                    .gap_5()
-                                    .bg(theme.background)
-                                    .rounded_xl(),
+                                    .p_4()
+                                    .gap_3()
+                                    .bg(theme.secondary)
+                                    .rounded_lg(),
                             )
                             .child(
                                 div()
@@ -693,7 +665,7 @@ impl Render for CapturePage {
                                     )
                                     .child(
                                         div()
-                                            .text_base()
+                                            .text_sm()
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(crate::i18n::tr("抓取设置")),
                                     ),
@@ -718,14 +690,12 @@ impl Render for CapturePage {
                                             .child(
                                                 div().flex_1().min_w(px(240.0)).child(
                                                     Input::new(&self.url_input)
-                                                        .large()
                                                         .disabled(self.is_running),
                                                 ),
                                             )
                                             .child(
                                                 Button::new("start-capture")
                                                     .primary()
-                                                    .large()
                                                     .icon(IconName::Play)
                                                     .disabled(self.is_running)
                                                     .label(crate::i18n::tr("开始抓取"))
@@ -753,7 +723,7 @@ impl Render for CapturePage {
                                     .flex()
                                     .flex_wrap()
                                     .items_end()
-                                    .gap_5()
+                                    .gap_4()
                                     .pt_4()
                                     .border_t_1()
                                     .border_color(theme.border)
@@ -808,13 +778,17 @@ impl Render for CapturePage {
                     )
                     .child(
                         div()
-                            .h(px(400.0))
+                            .h(px(if captured_data.is_empty() {
+                                260.0
+                            } else {
+                                400.0
+                            }))
                             .flex_shrink_0()
                             .flex()
                             .flex_col()
                             .gap_4()
-                            .p_5()
-                            .bg(theme.background)
+                            .p_4()
+                            .bg(theme.secondary)
                             .border_1()
                             .border_color(theme.border)
                             .rounded_xl()
@@ -824,14 +798,12 @@ impl Render for CapturePage {
                                     .items_center()
                                     .justify_between()
                                     .gap_3()
-                                    .child(
-                                        div().text_base().font_weight(FontWeight::SEMIBOLD).child(
-                                            crate::i18n::format(
-                                                "捕获的资源 ({})",
-                                                &[self.captured.len().to_string()],
-                                            ),
+                                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                                        crate::i18n::format(
+                                            "捕获的资源 ({})",
+                                            &[self.captured.len().to_string()],
                                         ),
-                                    )
+                                    ))
                                     .child(
                                         Button::new("refresh-capture")
                                             .ghost()

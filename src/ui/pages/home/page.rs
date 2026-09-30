@@ -2,11 +2,10 @@
 
 use crate::app::{AppState, DownloadVideoOptions};
 use gpui::*;
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::WindowExt;
-use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme, Icon, IconName};
 use gpui_router::{use_location, use_navigate};
 use std::sync::Arc;
 use std::time::Duration;
@@ -809,10 +808,8 @@ impl Render for HomePage {
                 .flex()
                 .flex_col()
                 .w_full()
-                .max_w(px(1120.0))
-                .mx_auto()
-                .p_8()
-                .gap_6()
+                .p_6()
+                .gap_4()
                 // 页面标题
                 .child(self.render_header(cx))
                 // URL 输入区域
@@ -834,112 +831,31 @@ impl Render for HomePage {
 
 impl HomePage {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_col().gap_5().child(
-            div()
-                .flex()
-                .items_center()
-                .gap_4()
-                .child(
-                    div()
-                        .size_12()
-                        .rounded_xl()
-                        .bg(cx.theme().primary.opacity(0.12))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            Icon::new(IconName::ArrowDown)
-                                .size_6()
-                                .text_color(cx.theme().primary),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_3xl()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(crate::i18n::tr("视频下载")),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(crate::i18n::tr("从一个链接开始，轻松保存视频和音频")),
-                        ),
-                ),
-        )
-    }
-
-    fn render_workflow_guide(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_wrap().gap_3().children(
-            [
-                ("01", "粘贴链接", "支持主流视频平台", IconName::Globe),
-                ("02", "选择格式", "按需选择画质和音轨", IconName::Settings2),
-                ("03", "保存到本地", "在任务列表查看进度", IconName::Folder),
-            ]
-            .into_iter()
-            .map(|(number, title, description, icon)| {
-                GroupBox::new()
-                    .id(SharedString::from(format!("download-step-{number}")))
-                    .fill()
-                    .flex_1()
-                    .min_w(px(210.0))
-                    .content_style(StyleRefinement::default().p_4().rounded_xl())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                Icon::new(icon)
-                                    .size_5()
-                                    .text_color(cx.theme().muted_foreground),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(crate::i18n::tr(title)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(crate::i18n::tr(description)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(number),
-                            ),
-                    )
-            }),
-        )
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_size(px(22.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(crate::i18n::tr("视频下载")),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(crate::i18n::tr("从一个链接开始，轻松保存视频和音频")),
+            )
     }
 
     fn render_state_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.download_state {
-            DownloadState::Idle => div()
-                .flex()
-                .flex_col()
-                .gap_6()
-                .child(self.render_workflow_guide(cx))
-                .child(VideoPreviewIdle)
-                .into_any_element(),
+            DownloadState::Idle => VideoPreviewIdle.into_any_element(),
             DownloadState::Fetching => VideoPreviewLoading.into_any_element(),
             DownloadState::Ready(info) => {
                 let selected_video = self.selected_video_id.clone();

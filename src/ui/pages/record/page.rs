@@ -21,10 +21,9 @@ use gpui_kit::component::empty::{
     Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle,
 };
 use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::radio::RadioGroup;
-use gpui_kit::component::separator::Separator;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::{Tag, TagVariant};
@@ -33,7 +32,6 @@ use gpui_kit::component::{Icon, IconName, h_flex, v_flex};
 use live_recorder::{
     LiveRecorder, RecordConfig, RecordStatus, error::RecorderError, recorder::RecordingHandle,
 };
-use magekit_shared::truncate_string;
 use magekit_shared::types::{
     LiveRecordConfig, LiveRecordQuality, LiveRoomStatus, MonitoredRoom, RecordingTask,
 };
@@ -119,6 +117,11 @@ impl Default for RuntimeRoomState {
 pub struct RecordingPage {
     app_state: Arc<AppState>,
     url_input: Entity<InputState>,
+    room_search: Entity<InputState>,
+    room_filter: RoomFilter,
+    room_sort: RoomSort,
+    room_view: RoomView,
+    room_scroll: ScrollHandle,
 
     /// 持久化的监控房间列表（从 AppConfig 加载）
     monitored_rooms: Vec<MonitoredRoom>,
@@ -139,6 +142,24 @@ pub struct RecordingPage {
     check_task_running: Arc<RwLock<bool>>,
     /// 上一轮房间状态检查完成前，不启动新一轮。
     check_cycle_running: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomFilter {
+    All,
+    Recording,
+    Live,
+    Offline,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomSort {
+    Activity,
+    Name,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomView {
+    Grid,
+    List,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -392,6 +413,15 @@ impl RecordingPage {
             )
         });
 
+        let room_search = cx.new(|cx| crate::i18n::input("搜索主播或房间", window, cx));
+        cx.subscribe(&room_search, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.room_scroll.set_offset(point(px(0.0), px(0.0)));
+            }
+            cx.notify();
+        })
+        .detach();
+
         // 从配置加载数据
         let config = app_state.config.blocking_read().clone();
         let monitored_rooms = config.monitored_rooms.clone();
@@ -423,6 +453,11 @@ impl RecordingPage {
         let page = Self {
             app_state,
             url_input,
+            room_search,
+            room_filter: RoomFilter::All,
+            room_sort: RoomSort::Activity,
+            room_view: RoomView::Grid,
+            room_scroll: ScrollHandle::new(),
             monitored_rooms,
             room_states,
             record_config,
@@ -979,13 +1014,18 @@ impl RecordingPage {
 
         // 添加到列表，状态为 Unknown（加载中）
         self.monitored_rooms.push(monitored_room);
+        self.room_filter = RoomFilter::All;
+        self.room_sort = RoomSort::Activity;
+        self.room_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.room_scroll.set_offset(point(px(0.0), px(0.0)));
         self.room_states.insert(
             room_id,
             RuntimeRoomState {
-                status: LiveRoomStatus::Unknown,
+                status: LiveRoomStatus::Checking,
                 is_recording: false,
                 current_task: None,
-                last_error: Some(crate::i18n::tr("正在获取直播间信息...").to_string()),
+                last_error: None,
                 cover_url: None,
                 cover_lookup_attempted: false,
                 title: None,
@@ -2824,45 +2864,104 @@ impl RecordingPage {
         }
     }
 
-    /// A room's identity, status and actions share one Kit surface.
-    fn render_room_card(&self, room: &MonitoredRoom, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
+    fn room_menu_button(&self, room: &MonitoredRoom, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+        let entity = cx.entity().downgrade();
+        let id = room.id;
+        let room_url = room.url.clone();
+        let room_label = format!("#{}", room.room_id);
+        let monitoring = room.monitoring_enabled;
+        let automatic = room.auto_record;
+        let recording = self.room_states.get(&id).is_some_and(|s| s.is_recording);
+        let checking = self
+            .room_states
+            .get(&id)
+            .is_some_and(|s| s.status == LiveRoomStatus::Checking);
+        let global_auto = self.record_config.auto_record;
+        Button::new(SharedString::from(format!("room-menu-{id}")))
+            .ghost()
+            .small()
+            .icon(gpui_kit::assets::IconName::Settings2)
+            .tooltip(crate::i18n::tr("房间设置"))
+            .accessibility_label(crate::i18n::format(
+                "房间设置: {}",
+                &[room.anchor_name.clone()],
+            ))
+            .dropdown_menu(move |menu, _, _| {
+                let monitor_entity = entity.clone();
+                let auto_entity = entity.clone();
+                let refresh_entity = entity.clone();
+                let remove_entity = entity.clone();
+                let open_url = room_url.clone();
+                menu.item(PopupMenuItem::label(room_label.clone()))
+                    .item(
+                        PopupMenuItem::new(crate::i18n::tr("打开"))
+                            .icon(gpui_kit::assets::IconName::ExternalLink)
+                            .on_click(move |_, _, _| {
+                                if let Err(error) = open::that(&open_url) {
+                                    tracing::error!("Failed to open room: {error}");
+                                }
+                            }),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(crate::i18n::tr("监控"))
+                            .checked(monitoring)
+                            .on_click(move |_, _, cx| {
+                                let _ = monitor_entity
+                                    .update(cx, |this, cx| this.toggle_monitoring(id, cx));
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new(crate::i18n::tr("自动录制"))
+                            .checked(automatic)
+                            .on_click(move |_, _, cx| {
+                                let _ = auto_entity
+                                    .update(cx, |this, cx| this.toggle_auto_record(id, cx));
+                            }),
+                    )
+                    .when(!global_auto, |menu| {
+                        menu.item(PopupMenuItem::label(crate::i18n::tr("自动录制:全局关")))
+                    })
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(crate::i18n::tr("刷新"))
+                            .icon(gpui_kit::assets::IconName::RefreshCw)
+                            .disabled(checking)
+                            .on_click(move |_, _, cx| {
+                                let _ =
+                                    refresh_entity.update(cx, |this, cx| this.refresh_room(id, cx));
+                            }),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(crate::i18n::tr("移除"))
+                            .icon(gpui_kit::assets::IconName::Trash)
+                            .disabled(recording)
+                            .on_click(move |_, window, cx| {
+                                let _ = remove_entity.update(cx, |this, cx| {
+                                    this.confirm_remove_room(id, window, cx)
+                                });
+                            }),
+                    )
+            })
+    }
+
+    fn render_room_card(
+        &self,
+        room: &MonitoredRoom,
+        list: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let room_id = room.id;
         let state = self.room_states.get(&room_id).cloned().unwrap_or_default();
         let is_live = state.status == LiveRoomStatus::Live;
         let is_recording = state.is_recording;
-        let is_checking = state.status == LiveRoomStatus::Checking;
         let anchor_name = if is_placeholder_anchor_name(&room.anchor_name) {
             crate::i18n::text(&room.anchor_name)
         } else {
             room.anchor_name.clone()
-        };
-        let status_variant = if is_recording {
-            TagVariant::Danger
-        } else {
-            match &state.status {
-                LiveRoomStatus::Live => TagVariant::Success,
-                LiveRoomStatus::Error(_) => TagVariant::Danger,
-                LiveRoomStatus::Playback => TagVariant::Warning,
-                LiveRoomStatus::Checking => TagVariant::Info,
-                _ => TagVariant::Secondary,
-            }
-        };
-        let status_label = if is_recording {
-            state
-                .current_task
-                .as_ref()
-                .filter(|task| task.recorded_bytes > 0)
-                .map(|task| {
-                    crate::i18n::format(
-                        "REC {recording_duration_label}",
-                        &[Self::format_record_duration(task.duration)],
-                    )
-                })
-                .unwrap_or_else(|| crate::i18n::tr("连接中").to_string())
-        } else {
-            crate::i18n::text(state.status.display_name())
         };
         let platform = match room.platform.as_str() {
             "douyin" | "抖音直播" => crate::i18n::tr("抖音"),
@@ -2873,359 +2972,522 @@ impl RecordingPage {
             "soop" | "SOOP" => "SOOP",
             _ => &room.platform,
         };
+        let (status, variant) = if is_recording {
+            (
+                state
+                    .current_task
+                    .as_ref()
+                    .filter(|t| t.recorded_bytes > 0)
+                    .map(|t| {
+                        format!(
+                            "{} {}",
+                            crate::i18n::tr("录制中"),
+                            Self::format_record_duration(t.duration)
+                        )
+                    })
+                    .unwrap_or_else(|| crate::i18n::tr("连接中").into()),
+                TagVariant::Danger,
+            )
+        } else {
+            (
+                crate::i18n::text(state.status.display_name()),
+                match state.status {
+                    LiveRoomStatus::Live => TagVariant::Success,
+                    LiveRoomStatus::Checking => TagVariant::Info,
+                    LiveRoomStatus::Error(_) => TagVariant::Danger,
+                    LiveRoomStatus::Playback => TagVariant::Warning,
+                    _ => TagVariant::Secondary,
+                },
+            )
+        };
+        let placeholder_color = theme.muted_foreground;
         let placeholder = move || {
-            h_flex()
+            v_flex()
                 .size_full()
+                .items_center()
                 .justify_center()
-                .text_color(muted)
-                .child(Icon::new(gpui_kit::assets::IconName::Image).size(px(24.0)))
+                .gap_2()
+                .text_color(placeholder_color)
+                .child(Icon::new(gpui_kit::assets::IconName::Radio).size(px(28.0)))
+                .child(div().text_xs().child(crate::i18n::tr("暂无封面")))
                 .into_any_element()
         };
-
+        let cover = div()
+            .relative()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .bg(theme.muted)
+            .when(list, |el| el.w(px(128.0)).h(px(76.0)))
+            .when(!list, |el| el.w_full().aspect_ratio(16.0 / 9.0))
+            .when_some(state.cover_url.clone(), |el, source| {
+                el.child(
+                    img(cover_image_source(source))
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .object_fit(ObjectFit::ScaleDown)
+                        .with_loading(|| Spinner::new().into_any_element())
+                        .with_fallback(placeholder),
+                )
+            })
+            .when(state.cover_url.is_none(), |el| el.child(placeholder()))
+            .when(!list, |el| {
+                el.child(
+                    h_flex()
+                        .absolute()
+                        .top_2()
+                        .left_2()
+                        .right_2()
+                        .justify_between()
+                        .gap_1()
+                        .child(Tag::secondary().small().child(platform.to_string()))
+                        .child(
+                            Tag::new()
+                                .with_variant(variant)
+                                .small()
+                                .child(status.clone()),
+                        ),
+                )
+            });
+        let primary =
+            if is_recording {
+                Button::new(SharedString::from(format!("stop-{room_id}")))
+                    .danger()
+                    .small()
+                    .icon(gpui_kit::assets::IconName::Square)
+                    .label(crate::i18n::tr("停止"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.stop_recording(room_id, window, cx)
+                    }))
+            } else if is_live {
+                Button::new(SharedString::from(format!("start-{room_id}")))
+                    .primary()
+                    .small()
+                    .icon(gpui_kit::assets::IconName::Circle)
+                    .label(crate::i18n::tr("录制"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.start_recording(room_id, window, cx)
+                    }))
+            } else {
+                let url = room.url.clone();
+                Button::new(SharedString::from(format!("open-{room_id}")))
+                    .outline()
+                    .small()
+                    .icon(gpui_kit::assets::IconName::ExternalLink)
+                    .label(crate::i18n::tr("打开"))
+                    .on_click(move |_, _, _| {
+                        if let Err(error) = open::that(&url) {
+                            tracing::error!("Failed to open room: {error}");
+                        }
+                    })
+            };
+        let subtitle = state
+            .title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+            .map(|title| format!("{title} · #{}", room.room_id))
+            .unwrap_or_else(|| format!("#{}", room.room_id));
+        let footer = h_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_2()
+            .p_3()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .truncate()
+                                    .child(anchor_name),
+                            )
+                            .when(
+                                room.monitoring_enabled
+                                    && room.auto_record
+                                    && self.record_config.auto_record,
+                                |el| {
+                                    el.child(
+                                        Tag::primary()
+                                            .outline()
+                                            .small()
+                                            .child(crate::i18n::tr("自动")),
+                                    )
+                                },
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .truncate()
+                            .child(subtitle),
+                    )
+                    .when(list, |el| {
+                        el.child(
+                            h_flex()
+                                .gap_2()
+                                .child(Tag::secondary().small().child(platform.to_string()))
+                                .child(
+                                    Tag::new()
+                                        .with_variant(variant)
+                                        .small()
+                                        .child(status.clone()),
+                                ),
+                        )
+                    }),
+            )
+            .child(primary)
+            .child(self.room_menu_button(room, cx));
         GroupBox::new()
             .id(SharedString::from(format!("room-card-{room_id}")))
             .fill()
             .min_w_0()
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .w(px(144.0))
-                            .h(px(81.0))
-                            .flex_shrink_0()
-                            .justify_center()
-                            .overflow_hidden()
-                            .bg(theme.muted)
-                            .rounded(theme.radius)
-                            .when_some(state.cover_url.clone(), |el, source| {
-                                el.child(
-                                    img(cover_image_source(source))
-                                        .size_full()
-                                        // Keep portraits and low-resolution fallbacks at their
-                                        // natural aspect ratio instead of enlarging them to fill.
-                                        .object_fit(ObjectFit::ScaleDown)
-                                        .with_loading(|| Spinner::new().into_any_element())
-                                        .with_fallback(placeholder),
-                                )
-                            })
-                            .when(state.cover_url.is_none(), |el| el.child(placeholder())),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .child(Tag::secondary().small().child(platform.to_string()))
-                                    .child(
-                                        Tag::new()
-                                            .with_variant(status_variant)
-                                            .small()
-                                            .child(status_label),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_base()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.foreground)
-                                    .overflow_x_hidden()
-                                    .child(truncate_string(&anchor_name, 32)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child(format!("#{}", room.room_id)),
-                            ),
-                    ),
+            .content_style(
+                div()
+                    .p_0()
+                    .gap_0()
+                    .border_1()
+                    .border_color(theme.border)
+                    .overflow_hidden()
+                    .style()
+                    .clone(),
             )
-            .when_some(
-                state
-                    .title
-                    .as_ref()
-                    .filter(|title| !title.trim().is_empty()),
-                |el, title| {
-                    el.child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .overflow_x_hidden()
-                            .child(truncate_string(title, 72)),
-                    )
-                },
+            .child(
+                div()
+                    .flex()
+                    .min_w_0()
+                    .when(!list, |el| el.flex_col())
+                    .child(cover)
+                    .child(footer),
             )
             .when_some(state.last_error.as_ref(), |el, error| {
-                el.child(Alert::error(
-                    SharedString::from(format!("room-error-{room_id}")),
-                    truncate_string(&crate::i18n::text(error), 100),
-                ))
+                el.child(
+                    div()
+                        .px_3()
+                        .pb_2()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .truncate()
+                        .child(crate::i18n::text(error)),
+                )
             })
-            .child(Separator::horizontal())
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        Switch::new(SharedString::from(format!("monitor-{room_id}")))
-                            .small()
-                            .checked(room.monitoring_enabled)
-                            .label(crate::i18n::tr("监控"))
-                            .on_change(cx.listener(move |this, _, _, cx| {
-                                this.toggle_monitoring(room_id, cx)
-                            })),
-                    )
-                    .child(
-                        Switch::new(SharedString::from(format!("auto-record-{room_id}")))
-                            .small()
-                            .checked(room.auto_record)
-                            .label(crate::i18n::tr("自动录制"))
-                            .tooltip(if self.record_config.auto_record {
-                                crate::i18n::tr("自动录制")
-                            } else {
-                                crate::i18n::tr("自动录制:全局关")
-                            })
-                            .on_change(cx.listener(move |this, _, _, cx| {
-                                this.toggle_auto_record(room_id, cx)
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .when(is_live && !is_recording, |el| {
-                        el.child(
-                            Button::new(SharedString::from(format!("start-{room_id}")))
-                                .primary()
-                                .small()
-                                .label(crate::i18n::tr("录制"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.start_recording(room_id, window, cx)
-                                })),
-                        )
-                    })
-                    .when(is_recording, |el| {
-                        el.child(
-                            Button::new(SharedString::from(format!("stop-{room_id}")))
-                                .danger()
-                                .small()
-                                .icon(IconName::CircleX)
-                                .label(crate::i18n::tr("停止"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.stop_recording(room_id, window, cx)
-                                })),
-                        )
-                    })
-                    .child({
-                        let room_url = room.url.clone();
-                        Button::new(SharedString::from(format!("open-{room_id}")))
-                            .small()
-                            .ghost()
-                            .icon(IconName::ExternalLink)
-                            .label(crate::i18n::tr("打开"))
-                            .on_click(move |_, _, _| {
-                                if let Err(error) = open::that(&room_url) {
-                                    tracing::error!("无法打开浏览器: {error}");
-                                }
-                            })
-                    })
-                    .child(
-                        Button::new(SharedString::from(format!("refresh-{room_id}")))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Replace)
-                            .label(crate::i18n::tr("刷新"))
-                            .disabled(is_checking)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.refresh_room(room_id, cx)),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new(SharedString::from(format!("remove-{room_id}")))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Delete)
-                            .label(crate::i18n::tr("移除"))
-                            .disabled(is_recording)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.confirm_remove_room(room_id, window, cx)
-                            })),
-                    ),
-            )
     }
 }
 
 impl Render for RecordingPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let bg_color = theme.background;
-        let title_color = theme.foreground;
-        let desc_color = theme.muted_foreground;
-        let engine_label = self.current_engine_label();
-
-        // 检查是否有错误需要显示
+        use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+        use gpui_kit::component::tab::{Tab, TabBar};
         if let Some(error) = self.last_add_error.take() {
             window.push_notification(
-                Notification::error(&crate::i18n::format(
-                    "添加失败: {}",
-                    &[format!("{}", error)],
-                )),
+                Notification::error(crate::i18n::format("添加失败: {}", &[error])),
                 cx,
             );
         }
-
         while let Some((level, message)) = self.pending_toasts.pop() {
-            let note = match level {
-                ToastLevel::Success => Notification::success(&message),
-                ToastLevel::Info => Notification::info(&message),
-                ToastLevel::Warning => Notification::warning(&message),
-                ToastLevel::Error => Notification::error(&message),
-            };
-            window.push_notification(note, cx);
+            window.push_notification(
+                match level {
+                    ToastLevel::Success => Notification::success(&message),
+                    ToastLevel::Info => Notification::info(&message),
+                    ToastLevel::Warning => Notification::warning(&message),
+                    ToastLevel::Error => Notification::error(&message),
+                },
+                cx,
+            );
         }
-
-        let rooms = self.monitored_rooms.clone();
-        let live_count = self
-            .room_states
-            .values()
-            .filter(|s| s.status == LiveRoomStatus::Live)
-            .count();
-        let recording_count = self.room_states.values().filter(|s| s.is_recording).count();
-
-        let wide = window.viewport_size().width >= px(1100.0);
-        div()
+        let counts = [
+            RoomFilter::All,
+            RoomFilter::Recording,
+            RoomFilter::Live,
+            RoomFilter::Offline,
+        ]
+        .map(|filter| {
+            self.monitored_rooms
+                .iter()
+                .filter(|room| room_matches_filter(self.room_states.get(&room.id), filter))
+                .count()
+        });
+        let query = self.room_search.read(cx).value().to_lowercase();
+        let mut rooms: Vec<_> = self
+            .monitored_rooms
+            .iter()
+            .filter(|room| {
+                let state = self.room_states.get(&room.id);
+                room_matches_filter(state, self.room_filter)
+                    && room_matches_query(
+                        room,
+                        state.and_then(|state| state.title.as_deref()),
+                        &query,
+                    )
+            })
+            .cloned()
+            .collect();
+        rooms.sort_by(|a, b| {
+            match self.room_sort {
+                RoomSort::Name => a
+                    .anchor_name
+                    .to_lowercase()
+                    .cmp(&b.anchor_name.to_lowercase()),
+                RoomSort::Activity => {
+                    let priority = |room: &MonitoredRoom| {
+                        self.room_states.get(&room.id).map_or(0, |s| {
+                            if s.is_recording {
+                                2
+                            } else if s.status == LiveRoomStatus::Live {
+                                1
+                            } else {
+                                0
+                            }
+                        })
+                    };
+                    priority(b).cmp(&priority(a)).then_with(|| {
+                        b.last_live_at
+                            .or(b.last_checked)
+                            .unwrap_or(b.added_at)
+                            .cmp(&a.last_live_at.or(a.last_checked).unwrap_or(a.added_at))
+                    })
+                }
+            }
+            .then_with(|| a.id.cmp(&b.id))
+        });
+        let width = window.bounds().size.width.as_f32();
+        let columns = if self.room_view == RoomView::List {
+            1
+        } else if width >= 1440.0 {
+            4
+        } else if width >= 1100.0 {
+            3
+        } else if width >= 760.0 {
+            2
+        } else {
+            1
+        };
+        let sort_entity = cx.entity().downgrade();
+        let list = self.room_view == RoomView::List;
+        let filtered_count = rooms.len();
+        v_flex()
             .id("recording-page")
             .size_full()
-            .overflow_y_scroll()
-            .bg(bg_color)
+            .overflow_hidden()
+            .bg(cx.theme().background)
             .child(
-                v_flex()
-                    .max_w(px(1200.0))
-                    .mx_auto()
-                    .p_8()
-                    .gap_6()
+                h_flex()
+                    .flex_shrink_0()
+                    .flex_wrap()
+                    .gap_3()
+                    .px_6()
+                    .py_4()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
                     .child(
                         h_flex()
-                            .flex_wrap()
-                            .items_start()
-                            .justify_between()
-                            .gap_4()
+                            .gap_3()
+                            .flex_1()
+                            .min_w(px(180.0))
                             .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_3xl()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(title_color)
-                                            .child(crate::i18n::tr("直播录制")),
-                                    )
-                                    .child(div().text_sm().text_color(desc_color).child(
-                                        crate::i18n::format(
-                                            "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
-                                            &[
-                                                rooms.len().to_string(),
-                                                live_count.to_string(),
-                                                recording_count.to_string(),
-                                            ],
-                                        ),
-                                    )),
+                                div()
+                                    .text_size(px(22.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::tr("直播录制")),
                             )
                             .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("config")
-                                            .ghost()
-                                            .icon(IconName::Settings2)
-                                            .label(crate::i18n::tr("设置"))
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.show_settings_dialog(window, cx)
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("add-room")
-                                            .primary()
-                                            .icon(IconName::Plus)
-                                            .label(crate::i18n::tr("添加直播间"))
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.show_add_room_dialog(window, cx)
-                                            })),
-                                    ),
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(crate::i18n::format(
+                                        "{} 个房间",
+                                        &[counts[0].to_string()],
+                                    )),
                             ),
                     )
                     .child(
-                        GroupBox::new().outline().child(
-                            h_flex()
-                                .flex_wrap()
-                                .justify_between()
-                                .gap_3()
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Tag::secondary().small().child(crate::i18n::format(
-                                            "录制引擎：{engine_label}",
-                                            &[engine_label.to_string()],
-                                        )))
-                                        .when(!self.record_config.auto_record, |row| {
-                                            row.child(
-                                                Tag::secondary()
-                                                    .small()
-                                                    .child(crate::i18n::tr("自动录制:全局关")),
-                                            )
-                                        }),
-                                )
-                                .child(div().text_xs().text_color(desc_color).child(
-                                    crate::i18n::format(
-                                        "检查间隔: {} 秒",
-                                        &[self.record_config.check_interval.to_string()],
-                                    ),
-                                )),
+                        div().w(px(250.0)).child(
+                            Input::new(&self.room_search)
+                                .prefix(Icon::new(gpui_kit::assets::IconName::Search).size_4())
+                                .cleanable(true),
                         ),
                     )
-                    .when(self.is_loading, |el| {
+                    .child(
+                        Button::new("recording-settings")
+                            .outline()
+                            .icon(gpui_kit::assets::IconName::Settings2)
+                            .accessibility_label(crate::i18n::tr("录制设置"))
+                            .tooltip(crate::i18n::tr("录制设置"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_settings_dialog(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("add-room")
+                            .primary()
+                            .icon(IconName::Plus)
+                            .label(crate::i18n::tr("添加直播间"))
+                            .disabled(self.is_loading)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_add_room_dialog(window, cx)
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .flex_wrap()
+                    .justify_between()
+                    .gap_2()
+                    .px_6()
+                    .py_3()
+                    .child(
+                        TabBar::new("room-filter-tabs")
+                            .pill()
+                            .small()
+                            .selected_index(self.room_filter as usize)
+                            .children(
+                                ["全部", "录制中", "直播中", "未开播"]
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(i, title)| {
+                                        Tab::new().label(format!(
+                                            "{}  {}",
+                                            crate::i18n::tr(title),
+                                            counts[i]
+                                        ))
+                                    }),
+                            )
+                            .on_click(cx.listener(|this, i: &usize, _, cx| {
+                                this.room_filter = [
+                                    RoomFilter::All,
+                                    RoomFilter::Recording,
+                                    RoomFilter::Live,
+                                    RoomFilter::Offline,
+                                ][*i];
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("room-sort")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::ChevronDown)
+                                    .label(crate::i18n::tr(
+                                        if self.room_sort == RoomSort::Activity {
+                                            "最近活动"
+                                        } else {
+                                            "主播名称"
+                                        },
+                                    ))
+                                    .dropdown_menu(move |menu, _, _| {
+                                        let by_activity = sort_entity.clone();
+                                        let by_name = sort_entity.clone();
+                                        menu.item(
+                                            PopupMenuItem::new(crate::i18n::tr("最近活动"))
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = by_activity.update(cx, |this, cx| {
+                                                        this.room_sort = RoomSort::Activity;
+                                                        cx.notify();
+                                                    });
+                                                }),
+                                        )
+                                        .item(
+                                            PopupMenuItem::new(crate::i18n::tr("主播名称"))
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = by_name.update(cx, |this, cx| {
+                                                        this.room_sort = RoomSort::Name;
+                                                        cx.notify();
+                                                    });
+                                                }),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                Button::new("room-grid-view")
+                                    .small()
+                                    .icon(gpui_kit::assets::IconName::LayoutGrid)
+                                    .when(!list, |b| b.primary())
+                                    .when(list, |b| b.ghost())
+                                    .accessibility_label(crate::i18n::tr("网格视图"))
+                                    .tooltip(crate::i18n::tr("网格视图"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.room_view = RoomView::Grid;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("room-list-view")
+                                    .small()
+                                    .icon(gpui_kit::assets::IconName::List)
+                                    .when(list, |b| b.primary())
+                                    .when(!list, |b| b.ghost())
+                                    .accessibility_label(crate::i18n::tr("列表视图"))
+                                    .tooltip(crate::i18n::tr("列表视图"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.room_view = RoomView::List;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("room-results-scroll")
+                    .track_scroll(&self.room_scroll)
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_6()
+                    .pb_6()
+                    .when(!rooms.is_empty(), |el| {
                         el.child(
-                            h_flex()
-                                .gap_2()
-                                .text_color(desc_color)
-                                .child(Spinner::new().small())
-                                .child(crate::i18n::tr("正在加载...")),
+                            div()
+                                .grid()
+                                .grid_cols(columns)
+                                .gap_4()
+                                .items_start()
+                                .children(rooms.iter().map(|room| {
+                                    self.render_room_card(room, list, cx).into_any_element()
+                                })),
                         )
                     })
-                    .child(if rooms.is_empty() {
-                        GroupBox::new()
-                            .fill()
-                            .child(
-                                Empty::new()
-                                    .py_12()
-                                    .header(
-                                        EmptyHeader::new()
-                                            .media(
-                                                EmptyMedia::new().child(
-                                                    Icon::new(gpui_kit::assets::IconName::Image)
-                                                        .size(px(32.0)),
-                                                ),
-                                            )
-                                            .title(
-                                                EmptyTitle::new()
-                                                    .text_lg()
-                                                    .child(crate::i18n::tr("暂无监控的直播间")),
-                                            )
-                                            .description(EmptyDescription::new().child(
-                                                crate::i18n::tr(
-                                                    "点击上方「添加直播间」按钮开始监控",
-                                                ),
+                    .when(rooms.is_empty(), |el| {
+                        el.child(
+                            Empty::new()
+                                .py_12()
+                                .header(
+                                    EmptyHeader::new()
+                                        .media(
+                                            EmptyMedia::new().child(Icon::new(
+                                                gpui_kit::assets::IconName::Radio,
                                             )),
-                                    )
-                                    .content(
+                                        )
+                                        .title(EmptyTitle::new().child(crate::i18n::tr(
+                                            if counts[0] == 0 {
+                                                "暂无直播间"
+                                            } else {
+                                                "没有匹配的直播间"
+                                            },
+                                        )))
+                                        .description(EmptyDescription::new().child(
+                                            crate::i18n::tr(if counts[0] == 0 {
+                                                "添加直播间，开始监控与录制"
+                                            } else {
+                                                "尝试其他关键词或状态筛选"
+                                            }),
+                                        )),
+                                )
+                                .when(counts[0] == 0, |empty| {
+                                    empty.child(
                                         EmptyContent::new().child(
                                             Button::new("add-first-room")
                                                 .primary()
@@ -3235,25 +3497,70 @@ impl Render for RecordingPage {
                                                     this.show_add_room_dialog(window, cx)
                                                 })),
                                         ),
-                                    ),
-                            )
-                            .into_any_element()
-                    } else {
-                        div()
-                            .grid()
-                            .grid_cols(1)
-                            .when(wide, |el| el.grid_cols(2))
-                            .gap_4()
-                            .items_start()
-                            .children(
-                                rooms
-                                    .iter()
-                                    .map(|room| self.render_room_card(room, cx).into_any_element()),
-                            )
-                            .into_any_element()
+                                    )
+                                }),
+                        )
                     }),
             )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .justify_between()
+                    .px_6()
+                    .py_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .child(crate::i18n::format(
+                        "显示 {} / {} 个房间 · {} 个录制中",
+                        &[
+                            filtered_count.to_string(),
+                            counts[0].to_string(),
+                            counts[1].to_string(),
+                        ],
+                    ))
+                    .child(crate::i18n::format(
+                        "检查间隔: {} 秒",
+                        &[self.record_config.check_interval.to_string()],
+                    )),
+            )
     }
+}
+
+fn room_matches_filter(state: Option<&RuntimeRoomState>, filter: RoomFilter) -> bool {
+    match filter {
+        RoomFilter::All => true,
+        RoomFilter::Recording => state.is_some_and(|state| state.is_recording),
+        RoomFilter::Live => {
+            state.is_some_and(|state| state.status == LiveRoomStatus::Live && !state.is_recording)
+        }
+        RoomFilter::Offline => state
+            .is_some_and(|state| state.status == LiveRoomStatus::Offline && !state.is_recording),
+    }
+}
+
+fn room_matches_query(room: &MonitoredRoom, title: Option<&str>, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    let aliases = match room.platform.as_str() {
+        "douyin" => "抖音",
+        "bilibili" => "B站 哔哩哔哩",
+        "huya" => "虎牙",
+        "douyu" => "斗鱼",
+        "kuaishou" => "快手",
+        _ => "",
+    };
+    query.is_empty()
+        || [
+            &room.anchor_name,
+            &room.platform,
+            &room.room_id,
+            &room.url,
+            title.unwrap_or(""),
+            aliases,
+        ]
+        .into_iter()
+        .any(|value| value.to_lowercase().contains(query.as_str()))
 }
 
 fn recording_platform(value: &str) -> Option<&'static str> {
@@ -3274,7 +3581,44 @@ fn recording_platform(value: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod review_tests {
-    use super::recording_platform;
+    use super::{
+        LiveRoomStatus, MonitoredRoom, RoomFilter, RuntimeRoomState, recording_platform,
+        room_matches_filter, room_matches_query,
+    };
+
+    #[test]
+    fn room_search_matches_names_titles_ids_and_platform_aliases() {
+        let room = MonitoredRoom::new(
+            "https://live.bilibili.com/128".into(),
+            "bilibili".into(),
+            "128".into(),
+            "Aero 山野".into(),
+        );
+        for query in ["aero", " AERO ", "山野", "B站", "128", "forest"] {
+            assert!(
+                room_matches_query(&room, Some("Forest radio"), query),
+                "{query}"
+            );
+        }
+        assert!(!room_matches_query(&room, None, "another room"));
+    }
+
+    #[test]
+    fn room_filters_keep_unknown_distinct_and_recording_authoritative() {
+        assert!(room_matches_filter(None, RoomFilter::All));
+        assert!(!room_matches_filter(None, RoomFilter::Offline));
+        let mut state = RuntimeRoomState::default();
+        state.status = LiveRoomStatus::Offline;
+        assert!(room_matches_filter(Some(&state), RoomFilter::Offline));
+        state.is_recording = true;
+        assert!(room_matches_filter(Some(&state), RoomFilter::Recording));
+        assert!(!room_matches_filter(Some(&state), RoomFilter::Offline));
+        state.status = LiveRoomStatus::Live;
+        assert!(!room_matches_filter(Some(&state), RoomFilter::Live));
+        state.is_recording = false;
+        assert!(room_matches_filter(Some(&state), RoomFilter::Live));
+    }
+
     #[test]
     fn recording_urls_use_parsed_hosts() {
         assert_eq!(

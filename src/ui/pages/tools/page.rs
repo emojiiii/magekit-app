@@ -495,10 +495,8 @@ impl Render for ToolsPage {
                             .flex()
                             .flex_col()
                             .w_full()
-                            .max_w(px(1200.0))
-                            .mx_auto()
-                            .p(px(32.0))
-                            .gap(px(28.0))
+                            .p_6()
+                            .gap_4()
                             // 页面标题
                             .child(self.render_header(cx, any_not_installed, any_installing))
                             // 错误消息
@@ -546,15 +544,19 @@ impl ToolsPage {
             .flex_wrap()
             .items_center()
             .justify_between()
-            .gap_4()
+            .gap_3()
+            .pb_4()
+            .border_b_1()
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.0))
+                    .flex_wrap()
+                    .items_center()
+                    .gap_3()
                     .child(
                         div()
-                            .text_size(px(30.0))
+                            .text_size(px(22.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
                             .child(crate::i18n::tr("工具管理")),
@@ -576,6 +578,7 @@ impl ToolsPage {
                             .relative()
                             .child(
                                 Button::new("check-updates")
+                                    .small()
                                     .ghost()
                                     .label(if self.is_checking_updates {
                                         crate::i18n::tr("检查更新中...")
@@ -603,6 +606,7 @@ impl ToolsPage {
                     )
                     .child(
                         Button::new("refresh-tools")
+                            .small()
                             .ghost()
                             .icon(IconName::RefreshCw)
                             .label(crate::i18n::tr("刷新"))
@@ -614,6 +618,7 @@ impl ToolsPage {
                     )
                     .child(
                         Button::new("install-all")
+                            .small()
                             .primary()
                             .label(crate::i18n::tr("一键安装全部"))
                             .disabled(!any_not_installed || any_installing || self.is_checking)
@@ -731,6 +736,13 @@ impl ToolsPage {
                     .outline()
                     .flex_1()
                     .min_w(px(300.0))
+                    .content_style(
+                        StyleRefinement::default()
+                            .p_4()
+                            .gap_3()
+                            .bg(cx.theme().secondary)
+                            .rounded_lg(),
+                    )
                     .child(
                         div()
                             .flex()
@@ -744,7 +756,7 @@ impl ToolsPage {
                                     .gap_3()
                                     .child(
                                         div()
-                                            .size_11()
+                                            .size_8()
                                             .rounded(cx.theme().radius)
                                             .bg(cx.theme().secondary)
                                             .flex()
@@ -759,10 +771,10 @@ impl ToolsPage {
                                                         gpui_kit::assets::IconName::Film
                                                     }
                                                 })
-                                                .size_6(),
+                                                .size_4(),
                                             ),
                                     )
-                                    .child(div().text_lg().font_semibold().child(tool.name)),
+                                    .child(div().text_base().font_semibold().child(tool.name)),
                             )
                             .child(
                                 Tag::new()
@@ -774,7 +786,7 @@ impl ToolsPage {
                     )
                     .child(
                         div()
-                            .min_h(px(44.0))
+                            .min_h(px(20.0))
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(crate::i18n::text(tool.description)),
@@ -811,6 +823,7 @@ impl ToolsPage {
                             .gap_2()
                             .child(
                                 Button::new(("install-tool", idx))
+                                    .small()
                                     .label(btn_label)
                                     .when(action == "install", |button| button.primary())
                                     .when(action != "install", |button| button.outline())
@@ -826,6 +839,7 @@ impl ToolsPage {
                             .when(can_delete, |row| {
                                 row.child(
                                     Button::new(("delete-tool", idx))
+                                        .small()
                                         .ghost()
                                         .label(crate::i18n::tr("删除"))
                                         .icon(gpui_kit::assets::IconName::Trash)

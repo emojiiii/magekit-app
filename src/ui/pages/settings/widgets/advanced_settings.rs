@@ -66,13 +66,13 @@ impl RenderOnce for AdvancedSettingsCard {
         let debug_mode = self.settings.debug_mode;
 
         let theme = cx.theme();
-        let card_bg = theme.background;
+        let card_bg = theme.secondary;
         let border_color = theme.border;
 
         Section::new_with_icon(crate::i18n::tr("高级"), IconName::Settings).child(
             div()
-                .p(px(20.0))
-                .rounded(px(12.0))
+                .p_4()
+                .rounded_lg()
                 .bg(card_bg)
                 .border_1()
                 .border_color(border_color)
