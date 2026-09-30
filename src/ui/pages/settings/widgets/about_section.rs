@@ -13,7 +13,7 @@ pub struct AboutSection;
 impl RenderOnce for AboutSection {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let card_bg = theme.secondary;
+        let card_bg = theme.background;
         let border_color = theme.border;
         let title_color = theme.foreground;
         let muted_color = theme.muted_foreground;

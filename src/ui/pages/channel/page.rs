@@ -7,11 +7,14 @@ use gpui_kit::component::WindowExt;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle};
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
 };
@@ -134,7 +137,7 @@ pub struct ChannelPage {
 }
 
 /// 视频项的固定高度
-const VIDEO_ITEM_HEIGHT: f32 = 70.0;
+const VIDEO_ITEM_HEIGHT: f32 = 84.0;
 
 fn is_probably_youtube_channel_url(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
@@ -1022,33 +1025,34 @@ impl ChannelPage {
 
     /// 渲染空闲状态
     fn render_idle(&self, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .py_12()
-            .gap_4()
-            .child(
-                Icon::new(IconName::Folder)
-                    .size_16()
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                div()
-                    .text_lg()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(crate::i18n::tr("输入频道链接开始解析")),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .max_w(px(400.0))
-                    .text_center()
-                    .child(crate::i18n::tr(
+        Empty::new()
+            .py_10()
+            .header(
+                EmptyHeader::new()
+                    .media(
+                        EmptyMedia::new()
+                            .size_12()
+                            .rounded_xl()
+                            .bg(cx.theme().muted)
+                            .child(
+                                Icon::new(IconName::FolderOpen)
+                                    .size_6()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
+                    .title(EmptyTitle::new().child(crate::i18n::tr("输入频道链接开始解析")))
+                    .description(EmptyDescription::new().child(crate::i18n::tr(
                         "支持 YouTube 频道 (@username)、播放列表、Bilibili UP主空间等",
-                    )),
+                    ))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_2()
+                    .child(Tag::secondary().small().child(crate::i18n::tr("频道")))
+                    .child(Tag::secondary().small().child(crate::i18n::tr("播放列表"))),
             )
     }
 
@@ -1147,50 +1151,42 @@ impl ChannelPage {
             this.download_selected(window, cx);
         });
 
-        // Kit 按钮提供键盘激活和主题状态，窄窗口可换行。
-        let mut tab_buttons = Vec::new();
+        // Kit tabs provide keyboard navigation and an overflow menu on narrow windows.
+        let mut tab_items = Vec::new();
+        let mut tab_targets = Vec::new();
         if !info.tabs.is_empty() {
             if !self.hide_all_tab {
-                tab_buttons.push(
-                    Button::new("tab-all")
-                        .small()
-                        .map(|button| {
-                            if current_tab_index.is_none() {
-                                button.primary()
-                            } else {
-                                button.outline()
-                            }
-                        })
-                        .label(crate::i18n::tr("全部"))
-                        .on_click(cx.listener(|this, _, _, cx| this.switch_tab(None, cx))),
-                );
+                tab_items.push(Tab::new().label(crate::i18n::tr("全部")));
+                tab_targets.push(None);
             }
             for (index, tab) in info.tabs.iter().enumerate() {
                 let label = match &tab.tab_type {
                     ChannelTabType::Other(name) => name.clone(),
                     kind => crate::i18n::text(kind.display_name()).to_string(),
                 };
-                tab_buttons.push(
-                    Button::new(SharedString::from(format!("tab-{index}")))
-                        .small()
-                        .map(|button| {
-                            if current_tab_index == Some(index) {
-                                button.primary()
-                            } else {
-                                button.outline()
-                            }
-                        })
-                        .label(label)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.switch_tab(Some(index), cx)),
-                        ),
-                );
+                tab_items.push(Tab::new().label(label));
+                tab_targets.push(Some(index));
             }
         }
-        let tab_buttons = if tab_buttons.is_empty() {
+        let tab_buttons = if tab_items.is_empty() {
             None
         } else {
-            Some(div().flex().flex_wrap().gap_2().children(tab_buttons))
+            let selected = tab_targets
+                .iter()
+                .position(|target| *target == current_tab_index)
+                .unwrap_or(0);
+            Some(
+                TabBar::new("channel-categories")
+                    .underline()
+                    .menu(true)
+                    .selected_index(selected)
+                    .children(tab_items)
+                    .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                        if let Some(target) = tab_targets.get(*index) {
+                            this.switch_tab(*target, cx);
+                        }
+                    })),
+            )
         };
 
         // 使用 VirtualList 渲染视频列表
@@ -1248,11 +1244,12 @@ impl ChannelPage {
                                     )))
                                     .w_full()
                                     .h(px(VIDEO_ITEM_HEIGHT))
-                                    .px_3()
-                                    .py_2()
+                                    .px_4()
+                                    .py_3()
                                     .border_b_1()
                                     .border_color(border_color.opacity(0.5))
-                                    .hover(|style| style.bg(secondary.opacity(0.5)))
+                                    .when(is_selected, |row| row.bg(theme.primary.opacity(0.06)))
+                                    .hover(|style| style.bg(secondary))
                                     .child(
                                         div()
                                             .flex()
@@ -1622,42 +1619,72 @@ impl Render for ChannelPage {
             .flex_col()
             .size_full()
             .min_h_0()
-            .p_6()
+            .max_w(px(1120.0))
+            .mx_auto()
+            .p_8()
             .gap_6()
-            .bg(theme.background)
-            // 页面标题
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap_4()
                     .child(
-                        Icon::new(IconName::Folder)
-                            .size_6()
-                            .text_color(theme.foreground),
+                        div()
+                            .size_12()
+                            .rounded_xl()
+                            .bg(theme.primary.opacity(0.12))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::FolderOpen)
+                                    .size_6()
+                                    .text_color(theme.primary),
+                            ),
                     )
                     .child(
                         div()
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme.foreground)
-                            .child(crate::i18n::tr("频道/作者")),
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_3xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::tr("频道/作者")),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .child(crate::i18n::tr("发现创作者内容，一次选择，批量下载")),
+                            ),
                     ),
             )
             // URL 输入区域
             .child(
-                div()
-                    .w_full()
-                    .p_4()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.secondary)
+                GroupBox::new()
+                    .id("channel-link-card")
+                    .outline()
+                    .content_style(
+                        StyleRefinement::default()
+                            .p_6()
+                            .bg(theme.background)
+                            .rounded_xl(),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_3()
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(crate::i18n::tr("频道链接")),
+                            )
                             // 说明文字
                             .child(div().text_sm().text_color(theme.muted_foreground).child(
                                 crate::i18n::tr("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
@@ -1666,11 +1693,14 @@ impl Render for ChannelPage {
                             .child(
                                 div()
                                     .flex()
-                                    .gap_2()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_3()
                                     .child(
-                                        div().flex_1().min_w_0().child(
+                                        div().flex_1().min_w(px(240.0)).child(
                                             Input::new(&self.url_input)
                                                 .id("channel-url-input")
+                                                .large()
                                                 .cleanable(true)
                                                 .disabled(self.submitting)
                                                 .aria_label(crate::i18n::tr("频道链接")),
@@ -1679,6 +1709,7 @@ impl Render for ChannelPage {
                                     .child(
                                         Button::new("parse-channel")
                                             .primary()
+                                            .large()
                                             .label(if matches!(self.state, ChannelState::Parsing) {
                                                 crate::i18n::tr("解析中...")
                                             } else {
@@ -1702,7 +1733,7 @@ impl Render for ChannelPage {
                                     .when(matches!(self.state, ChannelState::Parsing), |row| {
                                         row.child(
                                             Button::new("cancel-channel-parse")
-                                                .outline()
+                                                .ghost()
                                                 .label(crate::i18n::tr("取消"))
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.invalidate_parse(cx)
@@ -1717,6 +1748,11 @@ impl Render for ChannelPage {
                 div()
                     .flex_1()
                     .min_h_0()
+                    .p_5()
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_xl()
                     .overflow_hidden()
                     .child(match &self.state {
                         ChannelState::Idle => self.render_idle(cx).into_any_element(),

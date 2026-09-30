@@ -3,7 +3,9 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::progress::Progress;
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::*;
 use magekit_shared::{TaskState, TaskStatus, truncate_string};
 use std::sync::Arc;
@@ -95,7 +97,6 @@ impl RenderOnce for TaskItem {
         let task_id = task.id;
 
         // 使用主题颜色
-        let bg_color = cx.theme().background;
         let border_color = cx.theme().border;
         let title_color = cx.theme().foreground;
         let muted_color = cx.theme().muted_foreground;
@@ -106,33 +107,37 @@ impl RenderOnce for TaskItem {
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
             TaskState::Queued => (
-                "⏳",
+                IconName::LoaderCircle,
                 cx.theme().warning,
                 crate::i18n::tr("等待中").to_string(),
             ),
             TaskState::Downloading => (
-                "⬇️",
+                IconName::ArrowDown,
                 cx.theme().primary,
                 crate::i18n::tr("下载中").to_string(),
             ),
             TaskState::Merging => (
-                "🔄",
+                IconName::RefreshCw,
                 cx.theme().primary,
                 crate::i18n::tr("合并中").to_string(),
             ),
             TaskState::Paused => (
-                "⏸️",
+                IconName::Pause,
                 cx.theme().warning,
                 crate::i18n::tr("已暂停").to_string(),
             ),
             TaskState::Completed => (
-                "✅",
+                IconName::CircleCheck,
                 cx.theme().success,
                 crate::i18n::tr("已完成").to_string(),
             ),
-            TaskState::Failed(_) => ("❌", cx.theme().danger, crate::i18n::tr("失败").to_string()),
+            TaskState::Failed(_) => (
+                IconName::CircleAlert,
+                cx.theme().danger,
+                crate::i18n::tr("失败").to_string(),
+            ),
             TaskState::Cancelled => (
-                "🚫",
+                IconName::Ban,
                 cx.theme().muted_foreground,
                 crate::i18n::tr("已取消").to_string(),
             ),
@@ -194,15 +199,10 @@ impl RenderOnce for TaskItem {
             TaskState::Downloading | TaskState::Merging | TaskState::Paused | TaskState::Queued
         );
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .p(px(16.0))
-            .bg(bg_color)
-            .border_1()
-            .border_color(border_color)
-            .rounded(px(12.0))
+        GroupBox::new()
+            .id(SharedString::from(format!("task-card-{task_id}")))
+            .fill()
+            .content_style(StyleRefinement::default().p_5().gap_3().rounded_lg())
             // 顶部：标题和状态
             .child(
                 div()
@@ -217,7 +217,19 @@ impl RenderOnce for TaskItem {
                             .min_w_0() // 防止标题撑开容器
                             .items_center()
                             .gap(px(8.0))
-                            .child(div().flex_shrink_0().text_lg().child(status_icon))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .size_9()
+                                    .rounded_lg()
+                                    .bg(status_color.opacity(0.1))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(status_icon).size_4().text_color(status_color),
+                                    ),
+                            )
                             .child(
                                 div().flex_1().min_w_0().overflow_hidden().child(
                                     div()
@@ -230,11 +242,16 @@ impl RenderOnce for TaskItem {
                             ),
                     )
                     .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(status_color)
-                            .child(status_text),
+                        match &task.state {
+                            TaskState::Completed => Tag::success(),
+                            TaskState::Failed(_) => Tag::danger(),
+                            TaskState::Paused | TaskState::Queued => Tag::warning(),
+                            TaskState::Cancelled => Tag::secondary(),
+                            _ => Tag::primary(),
+                        }
+                        .small()
+                        .outline()
+                        .child(status_text),
                     ),
             )
             // 失败原因显示
@@ -280,7 +297,10 @@ impl RenderOnce for TaskItem {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .pt(px(8.0))
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(border_color)
+                    .justify_end()
                     .flex_wrap()
                     .when(pending, |row| {
                         row.child(
@@ -343,7 +363,8 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .small()
                                 .disabled(pending)
-                                .danger()
+                                .ghost()
+                                .text_color(error_color)
                                 .label(crate::i18n::tr("取消"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
@@ -373,7 +394,8 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .small()
                                 .disabled(pending)
-                                .danger()
+                                .ghost()
+                                .text_color(error_color)
                                 .label(crate::i18n::tr("删除"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))

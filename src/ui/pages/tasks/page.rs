@@ -9,8 +9,10 @@ use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle};
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::*;
 use gpui_router::use_navigate;
 use magekit_shared::{TaskId, TaskState, TaskStatus};
@@ -371,27 +373,36 @@ impl Render for TasksPage {
         let task_count = filtered_tasks.len();
         let is_empty = task_count == 0;
 
-        // 使用主题颜色
-        let bg_color = cx.theme().background;
-
         div()
             .id("tasks-page")
             .size_full()
             .overflow_y_scroll()
-            .bg(bg_color)
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .p(px(24.0))
-                    .gap(px(24.0))
-                    // 页面标题
+                    .w_full()
+                    .max_w(px(1120.0))
+                    .mx_auto()
+                    .p_8()
+                    .gap_6()
                     .child(self.render_header(cx))
-                    // 筛选栏
-                    .child(self.render_filter_bar(cx))
-                    // 任务列表
-                    .when(is_empty, |this| this.child(self.render_empty_state(cx)))
-                    .when(!is_empty, |this| this.child(self.render_task_list(cx))),
+                    .child(self.render_summary(cx))
+                    .child(
+                        GroupBox::new()
+                            .id("downloads-workspace")
+                            .outline()
+                            .content_style(
+                                StyleRefinement::default()
+                                    .p_5()
+                                    .gap_5()
+                                    .bg(cx.theme().background)
+                                    .rounded_xl(),
+                            )
+                            .child(self.render_filter_bar(cx))
+                            .when(is_empty, |this| this.child(self.render_empty_state(cx)))
+                            .when(!is_empty, |this| this.child(self.render_task_list(cx))),
+                    ),
             )
     }
 }
@@ -415,19 +426,16 @@ impl TasksPage {
                     .gap(px(4.0))
                     .child(
                         div()
-                            .text_2xl()
-                            .font_weight(FontWeight::BOLD)
+                            .text_3xl()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
-                            .child(crate::i18n::tr("📥 任务列表")),
+                            .child(crate::i18n::tr("下载任务")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(desc_color)
-                            .child(crate::i18n::format(
-                                "共 {} 个任务",
-                                &[format!("{}", self.tasks.len())],
-                            )),
+                            .child(crate::i18n::tr("管理所有下载任务")),
                     ),
             )
             .child(
@@ -441,8 +449,8 @@ impl TasksPage {
                             .iter()
                             .any(|t| matches!(t.state, TaskState::Completed));
                         Button::new("clear")
-                            .xsmall()
-                            .outline()
+                            .small()
+                            .ghost()
                             .disabled(
                                 !has_completed || self.clearing || !self.pending_tasks.is_empty(),
                             )
@@ -454,8 +462,9 @@ impl TasksPage {
                     })
                     .child(
                         Button::new("refresh")
-                            .xsmall()
+                            .small()
                             .outline()
+                            .icon(IconName::RefreshCw)
                             .label(crate::i18n::tr("刷新"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh_tasks(cx);
@@ -464,8 +473,74 @@ impl TasksPage {
             )
     }
 
+    fn filter_count(&self, filter: TaskFilter) -> usize {
+        self.tasks
+            .iter()
+            .filter(|task| match filter {
+                TaskFilter::All => true,
+                TaskFilter::Downloading => matches!(
+                    task.state,
+                    TaskState::Downloading
+                        | TaskState::Merging
+                        | TaskState::Paused
+                        | TaskState::Queued
+                ),
+                TaskFilter::Completed => matches!(task.state, TaskState::Completed),
+                TaskFilter::Failed => matches!(task.state, TaskState::Failed(_)),
+                TaskFilter::Cancelled => matches!(task.state, TaskState::Cancelled),
+            })
+            .count()
+    }
+
+    fn render_summary(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().flex().flex_wrap().gap_3().children(
+            [
+                (TaskFilter::All, IconName::Inbox, cx.theme().foreground),
+                (
+                    TaskFilter::Downloading,
+                    IconName::ArrowDown,
+                    cx.theme().primary,
+                ),
+                (
+                    TaskFilter::Completed,
+                    IconName::CircleCheck,
+                    cx.theme().success,
+                ),
+                (TaskFilter::Failed, IconName::CircleAlert, cx.theme().danger),
+            ]
+            .into_iter()
+            .map(|(filter, icon, color)| {
+                GroupBox::new()
+                    .id(SharedString::from(format!("task-summary-{filter:?}")))
+                    .fill()
+                    .flex_1()
+                    .min_w(px(140.0))
+                    .content_style(StyleRefinement::default().p_5().gap_3().rounded_xl())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(filter.label()),
+                            )
+                            .child(Icon::new(icon).size_4().text_color(color)),
+                    )
+                    .child(
+                        div()
+                            .text_3xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.filter_count(filter).to_string()),
+                    )
+            }),
+        )
+    }
+
     fn render_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_filter = self.filter;
         let filters = [
             TaskFilter::All,
             TaskFilter::Downloading,
@@ -473,29 +548,21 @@ impl TasksPage {
             TaskFilter::Failed,
             TaskFilter::Cancelled,
         ];
-
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.0))
+        let selected = filters
+            .iter()
+            .position(|filter| *filter == self.filter)
+            .unwrap_or(0);
+        TabBar::new("download-filters")
+            .underline()
+            .menu(true)
+            .selected_index(selected)
             .children(filters.into_iter().map(|filter| {
-                let is_active = filter == current_filter;
-                let label = filter.label();
-
-                Button::new(SharedString::from(format!("filter-{:?}", filter)))
-                    .xsmall()
-                    .map(|btn| {
-                        if is_active {
-                            btn.primary()
-                        } else {
-                            btn.outline()
-                        }
-                    })
-                    .label(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_filter(filter, cx);
-                    }))
+                Tab::new().label(format!("{}  {}", filter.label(), self.filter_count(filter)))
+            }))
+            .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                if let Some(filter) = filters.get(*index) {
+                    this.set_filter(*filter, cx);
+                }
             }))
     }
 
@@ -504,6 +571,17 @@ impl TasksPage {
             .py_12()
             .header(
                 EmptyHeader::new()
+                    .media(
+                        EmptyMedia::new()
+                            .size_12()
+                            .rounded_xl()
+                            .bg(cx.theme().muted)
+                            .child(
+                                Icon::new(IconName::Inbox)
+                                    .size_6()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
                     .title(EmptyTitle::new().child(match self.filter {
                         TaskFilter::All => crate::i18n::tr("暂无下载任务"),
                         TaskFilter::Downloading => crate::i18n::tr("没有正在下载的任务"),
@@ -519,6 +597,7 @@ impl TasksPage {
             .child(
                 Button::new("new-download")
                     .primary()
+                    .icon(IconName::Plus)
                     .label(crate::i18n::tr("新建下载"))
                     .on_click(cx.listener(|_, _, _, cx| {
                         use_navigate(cx)("/".into());

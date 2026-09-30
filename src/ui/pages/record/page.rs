@@ -17,13 +17,19 @@ use gpui_kit::component::WindowExt;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::dialog::DialogFooter;
+use gpui_kit::component::empty::{
+    Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle,
+};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::radio::RadioGroup;
+use gpui_kit::component::separator::Separator;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::{Tag, TagVariant};
-use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable};
+use gpui_kit::component::{Icon, IconName, h_flex, v_flex};
 use live_recorder::{
     LiveRecorder, RecordConfig, RecordStatus, error::RecorderError, recorder::RecordingHandle,
 };
@@ -2051,8 +2057,11 @@ impl RecordingPage {
             None => return,
         };
 
-        // 设置为检查中状态
+        // Ignore repeat activation until this room's current request finishes.
         if let Some(state) = self.room_states.get_mut(&room_id) {
+            if state.status == LiveRoomStatus::Checking {
+                return;
+            }
             state.status = LiveRoomStatus::Checking;
         }
         cx.notify();
@@ -2815,53 +2824,47 @@ impl RecordingPage {
         }
     }
 
-    /// 渲染房间卡片（带封面图的美化版本）
+    /// A room's identity, status and actions share one Kit surface.
     fn render_room_card(&self, room: &MonitoredRoom, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let card_bg = theme.secondary;
-        let border_color = theme.border;
-        let title_color = theme.foreground;
-        let desc_color = theme.muted_foreground;
-
+        let muted = theme.muted_foreground;
         let room_id = room.id;
         let state = self.room_states.get(&room_id).cloned().unwrap_or_default();
         let is_live = state.status == LiveRoomStatus::Live;
         let is_recording = state.is_recording;
-        let is_monitoring = room.monitoring_enabled;
-        let is_global_auto_record = self.record_config.auto_record;
-        let is_room_auto_record = room.auto_record;
-        let cover_url = state.cover_url.clone();
-        let recording_has_data = state
-            .current_task
-            .as_ref()
-            .is_some_and(|task| task.recorded_bytes > 0);
-        let recording_duration_label = state
-            .current_task
-            .as_ref()
-            .map(|t| Self::format_record_duration(t.duration))
-            .unwrap_or_else(|| "00:00".to_string());
-        // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
-        let title = state.title.as_ref().map(|t| truncate_string(t, 50));
+        let is_checking = state.status == LiveRoomStatus::Checking;
         let anchor_name = if is_placeholder_anchor_name(&room.anchor_name) {
-            truncate_string(&crate::i18n::text(&room.anchor_name), 30)
+            crate::i18n::text(&room.anchor_name)
         } else {
-            truncate_string(&room.anchor_name, 30)
+            room.anchor_name.clone()
         };
-        let last_error = state
-            .last_error
-            .as_ref()
-            .map(|e| truncate_string(&crate::i18n::text(e), 60));
-
-        let status_variant = match &state.status {
-            LiveRoomStatus::Live => TagVariant::Success,
-            LiveRoomStatus::Recording | LiveRoomStatus::Error(_) => TagVariant::Danger,
-            LiveRoomStatus::Playback => TagVariant::Warning,
-            LiveRoomStatus::Checking => TagVariant::Info,
-            _ => TagVariant::Secondary,
+        let status_variant = if is_recording {
+            TagVariant::Danger
+        } else {
+            match &state.status {
+                LiveRoomStatus::Live => TagVariant::Success,
+                LiveRoomStatus::Error(_) => TagVariant::Danger,
+                LiveRoomStatus::Playback => TagVariant::Warning,
+                LiveRoomStatus::Checking => TagVariant::Info,
+                _ => TagVariant::Secondary,
+            }
         };
-
-        // 平台显示名称
-        let platform_display = match room.platform.as_str() {
+        let status_label = if is_recording {
+            state
+                .current_task
+                .as_ref()
+                .filter(|task| task.recorded_bytes > 0)
+                .map(|task| {
+                    crate::i18n::format(
+                        "REC {recording_duration_label}",
+                        &[Self::format_record_duration(task.duration)],
+                    )
+                })
+                .unwrap_or_else(|| crate::i18n::tr("连接中").to_string())
+        } else {
+            crate::i18n::text(state.status.display_name())
+        };
+        let platform = match room.platform.as_str() {
             "douyin" | "抖音直播" => crate::i18n::tr("抖音"),
             "bilibili" | "B站直播" => crate::i18n::tr("B站"),
             "huya" | "虎牙直播" => crate::i18n::tr("虎牙"),
@@ -2870,287 +2873,190 @@ impl RecordingPage {
             "soop" | "SOOP" => "SOOP",
             _ => &room.platform,
         };
+        let placeholder = move || {
+            h_flex()
+                .size_full()
+                .justify_center()
+                .text_color(muted)
+                .child(Icon::new(gpui_kit::assets::IconName::Image).size(px(24.0)))
+                .into_any_element()
+        };
 
-        div()
-            .flex()
-            .p_3()
-            .bg(card_bg)
-            .border_1()
-            .border_color(border_color)
-            .rounded_xl()
-            .gap_3()
-            .hover(|el| el.bg(theme.muted))
-            // 封面图区域
+        GroupBox::new()
+            .id(SharedString::from(format!("room-card-{room_id}")))
+            .fill()
+            .min_w_0()
             .child(
-                div()
-                    .relative()
-                    .w(px(120.0))
-                    .h(px(68.0))
-                    .bg(theme.muted)
-                    .rounded_lg()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .overflow_hidden()
-                    .flex_shrink_0()
-                    // 显示封面图或占位符
-                    .when_some(cover_url.clone(), |el, url| {
-                        el.child(
-                            img(cover_image_source(url))
-                                .size_full()
-                                .object_fit(ObjectFit::ScaleDown)
-                                .with_fallback(|| {
-                                    div()
-                                        .size_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(div().text_2xl().child("📺"))
-                                        .into_any_element()
-                                }),
-                        )
-                    })
-                    .when(cover_url.is_none(), |el| {
-                        el.child(
-                            div()
-                                .size_full()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(div().text_2xl().child("📺")),
-                        )
-                    })
-                    // 直播状态角标
-                    .when(is_live, |el| {
-                        el.child(
-                            div()
-                                .absolute()
-                                .top(px(4.0))
-                                .left(px(4.0))
-                                .px(px(6.0))
-                                .py(px(2.0))
-                                .bg(gpui::rgb(0xef4444))
-                                .rounded(px(4.0))
-                                .text_xs()
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(gpui::white())
-                                .child(crate::i18n::tr("LIVE")),
-                        )
-                    })
-                    // 录制中指示器
-                    .when(is_recording, |el| {
-                        let recording_duration_label = recording_duration_label.clone();
-                        let status_label = if recording_has_data {
-                            crate::i18n::format(
-                                "REC {recording_duration_label}",
-                                &[recording_duration_label.clone()],
-                            )
-                        } else {
-                            crate::i18n::tr("连接中").to_string()
-                        };
-                        let indicator_color = if recording_has_data {
-                            gpui::rgb(0xef4444)
-                        } else {
-                            gpui::rgb(0xeab308)
-                        };
-                        el.child(
-                            div()
-                                .absolute()
-                                .bottom(px(4.0))
-                                .left(px(4.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(4.0))
-                                .px(px(6.0))
-                                .py(px(2.0))
-                                .bg(gpui::rgba(0x00000099))
-                                .rounded(px(4.0))
-                                .child(
-                                    div()
-                                        .w(px(6.0))
-                                        .h(px(6.0))
-                                        .bg(indicator_color)
-                                        .rounded_full(),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(gpui::white())
-                                        .child(status_label),
-                                ),
-                        )
-                    }),
-            )
-            // 信息区域
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .min_w_0()
-                    // 主播名 + 平台标签
+                h_flex()
+                    .items_start()
+                    .gap_4()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
+                        h_flex()
+                            .w(px(144.0))
+                            .h(px(81.0))
+                            .flex_shrink_0()
+                            .justify_center()
+                            .overflow_hidden()
+                            .bg(theme.muted)
+                            .rounded(theme.radius)
+                            .when_some(state.cover_url.clone(), |el, source| {
+                                el.child(
+                                    img(cover_image_source(source))
+                                        .size_full()
+                                        // Keep portraits and low-resolution fallbacks at their
+                                        // natural aspect ratio instead of enlarging them to fill.
+                                        .object_fit(ObjectFit::ScaleDown)
+                                        .with_loading(|| Spinner::new().into_any_element())
+                                        .with_fallback(placeholder),
+                                )
+                            })
+                            .when(state.cover_url.is_none(), |el| el.child(placeholder())),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
                             .gap_2()
                             .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(title_color)
-                                    .overflow_x_hidden()
-                                    .child(anchor_name.clone()),
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(Tag::secondary().small().child(platform.to_string()))
+                                    .child(
+                                        Tag::new()
+                                            .with_variant(status_variant)
+                                            .small()
+                                            .child(status_label),
+                                    ),
                             )
-                            .child(Tag::secondary().small().child(platform_display.to_string()))
-                            .when(!is_monitoring, |el| {
-                                el.child(Tag::secondary().small().child(crate::i18n::tr("已暂停")))
-                            }),
-                    )
-                    // 直播标题
-                    .when_some(title.clone(), |el, t| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(desc_color)
-                                .overflow_x_hidden()
-                                .child(t),
-                        )
-                    })
-                    // 状态和房间号
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
                             .child(
-                                Tag::new()
-                                    .with_variant(status_variant)
-                                    .outline()
-                                    .small()
-                                    .child(crate::i18n::text(state.status.display_name())),
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.foreground)
+                                    .overflow_x_hidden()
+                                    .child(truncate_string(&anchor_name, 32)),
                             )
-                            // 房间号
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(desc_color)
+                                    .text_color(muted)
                                     .child(format!("#{}", room.room_id)),
                             ),
-                    )
-                    // 错误信息
-                    .when_some(last_error.clone(), |el, error| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(gpui::rgb(0xef4444))
-                                .overflow_x_hidden()
-                                .child(format!("⚠️ {}", error)),
-                        )
-                    }),
+                    ),
             )
-            // 操作按钮
+            .when_some(
+                state
+                    .title
+                    .as_ref()
+                    .filter(|title| !title.trim().is_empty()),
+                |el, title| {
+                    el.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .overflow_x_hidden()
+                            .child(truncate_string(title, 72)),
+                    )
+                },
+            )
+            .when_some(state.last_error.as_ref(), |el, error| {
+                el.child(Alert::error(
+                    SharedString::from(format!("room-error-{room_id}")),
+                    truncate_string(&crate::i18n::text(error), 100),
+                ))
+            })
+            .child(Separator::horizontal())
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .flex_shrink_0()
-                    // 录制/停止按钮
+                h_flex()
+                    .flex_wrap()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        Switch::new(SharedString::from(format!("monitor-{room_id}")))
+                            .small()
+                            .checked(room.monitoring_enabled)
+                            .label(crate::i18n::tr("监控"))
+                            .on_change(cx.listener(move |this, _, _, cx| {
+                                this.toggle_monitoring(room_id, cx)
+                            })),
+                    )
+                    .child(
+                        Switch::new(SharedString::from(format!("auto-record-{room_id}")))
+                            .small()
+                            .checked(room.auto_record)
+                            .label(crate::i18n::tr("自动录制"))
+                            .tooltip(if self.record_config.auto_record {
+                                crate::i18n::tr("自动录制")
+                            } else {
+                                crate::i18n::tr("自动录制:全局关")
+                            })
+                            .on_change(cx.listener(move |this, _, _, cx| {
+                                this.toggle_auto_record(room_id, cx)
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
                     .when(is_live && !is_recording, |el| {
                         el.child(
-                            Button::new(SharedString::from(format!("start-{}", room_id)))
+                            Button::new(SharedString::from(format!("start-{room_id}")))
+                                .primary()
+                                .small()
                                 .label(crate::i18n::tr("录制"))
-                                .xsmall()
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.start_recording(room_id, window, cx);
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.start_recording(room_id, window, cx)
                                 })),
                         )
                     })
                     .when(is_recording, |el| {
                         el.child(
-                            Button::new(SharedString::from(format!("stop-{}", room_id)))
-                                .icon(gpui_kit::component::IconName::CircleX)
-                                .label(crate::i18n::tr("停止"))
-                                .xsmall()
+                            Button::new(SharedString::from(format!("stop-{room_id}")))
                                 .danger()
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.stop_recording(room_id, window, cx);
+                                .small()
+                                .icon(IconName::CircleX)
+                                .label(crate::i18n::tr("停止"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.stop_recording(room_id, window, cx)
                                 })),
                         )
                     })
-                    // 打开直播间
                     .child({
                         let room_url = room.url.clone();
-                        Button::new(SharedString::from(format!("open-{}", room_id)))
-                            .icon(gpui_kit::component::IconName::ExternalLink)
-                            .label(crate::i18n::tr("打开"))
-                            .xsmall()
+                        Button::new(SharedString::from(format!("open-{room_id}")))
+                            .small()
                             .ghost()
-                            .on_click(move |_event, _window, _cx| {
-                                if let Err(e) = open::that(&room_url) {
-                                    tracing::error!("❌ 无法打开浏览器: {}", e);
+                            .icon(IconName::ExternalLink)
+                            .label(crate::i18n::tr("打开"))
+                            .on_click(move |_, _, _| {
+                                if let Err(error) = open::that(&room_url) {
+                                    tracing::error!("无法打开浏览器: {error}");
                                 }
                             })
                     })
-                    // 监控开关
                     .child(
-                        Button::new(SharedString::from(format!("monitor-{}", room_id)))
-                            .icon(if is_monitoring {
-                                gpui_kit::component::IconName::Minus
-                            } else {
-                                gpui_kit::component::IconName::ArrowRight
-                            })
-                            .label(if is_monitoring {
-                                crate::i18n::tr("暂停")
-                            } else {
-                                crate::i18n::tr("监控")
-                            })
-                            .xsmall()
+                        Button::new(SharedString::from(format!("refresh-{room_id}")))
+                            .small()
                             .ghost()
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.toggle_monitoring(room_id, cx);
-                            })),
-                    )
-                    // 自动录制开关（与“监控”分离：仅在检测到开播时自动触发录制）
-                    .child(
-                        Button::new(SharedString::from(format!("auto-record-{}", room_id)))
-                            .label(if is_global_auto_record {
-                                if is_room_auto_record {
-                                    crate::i18n::tr("自动录制:开")
-                                } else {
-                                    crate::i18n::tr("自动录制:关")
-                                }
-                            } else {
-                                crate::i18n::tr("自动录制:全局关")
-                            })
-                            .xsmall()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.toggle_auto_record(room_id, cx);
-                            })),
-                    )
-                    // 刷新按钮
-                    .child(
-                        Button::new(SharedString::from(format!("refresh-{}", room_id)))
-                            .icon(gpui_kit::component::IconName::Replace)
+                            .icon(IconName::Replace)
                             .label(crate::i18n::tr("刷新"))
-                            .ghost()
-                            .xsmall()
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.refresh_room(room_id, cx);
-                            })),
+                            .disabled(is_checking)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.refresh_room(room_id, cx)),
+                            ),
                     )
-                    // 删除按钮
+                    .child(div().flex_1())
                     .child(
-                        Button::new(SharedString::from(format!("remove-{}", room_id)))
-                            .icon(gpui_kit::component::IconName::Delete)
-                            .label(crate::i18n::tr("删除"))
+                        Button::new(SharedString::from(format!("remove-{room_id}")))
+                            .small()
                             .ghost()
-                            .xsmall()
-                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.remove_room(room_id, window, cx);
+                            .icon(IconName::Delete)
+                            .label(crate::i18n::tr("移除"))
+                            .disabled(is_recording)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.confirm_remove_room(room_id, window, cx)
                             })),
                     ),
             )
@@ -3194,122 +3100,151 @@ impl Render for RecordingPage {
             .count();
         let recording_count = self.room_states.values().filter(|s| s.is_recording).count();
 
+        let wide = window.viewport_size().width >= px(1100.0);
         div()
             .id("recording-page")
             .size_full()
             .overflow_y_scroll()
             .bg(bg_color)
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .p_6()
+                v_flex()
+                    .max_w(px(1200.0))
+                    .mx_auto()
+                    .p_8()
                     .gap_6()
-                    // 页面标题
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
+                        h_flex()
+                            .flex_wrap()
+                            .items_start()
                             .justify_between()
+                            .gap_4()
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
+                                v_flex()
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .text_2xl()
-                                            .font_weight(FontWeight::BOLD)
+                                            .text_3xl()
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(title_color)
-                                            .child(crate::i18n::tr("🎥 直播录制")),
+                                            .child(crate::i18n::tr("直播录制")),
                                     )
                                     .child(div().text_sm().text_color(desc_color).child(
                                         crate::i18n::format(
                                             "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
                                             &[
-                                                format!("{}", rooms.len()),
-                                                format!("{}", live_count),
-                                                format!("{}", recording_count),
+                                                rooms.len().to_string(),
+                                                live_count.to_string(),
+                                                recording_count.to_string(),
                                             ],
-                                        ),
-                                    ))
-                                    .child(div().text_xs().text_color(desc_color).child(
-                                        crate::i18n::format(
-                                            "录制引擎：{engine_label}",
-                                            &[format!("{}", engine_label)],
                                         ),
                                     )),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .gap_3()
+                                h_flex()
+                                    .gap_2()
                                     .child(
-                                        Button::new("add-room")
-                                            .icon(gpui_kit::component::IconName::Plus)
-                                            .label(crate::i18n::tr("添加直播间"))
-                                            .on_click(cx.listener(|this, _event, window, cx| {
-                                                this.show_add_room_dialog(window, cx);
+                                        Button::new("config")
+                                            .ghost()
+                                            .icon(IconName::Settings2)
+                                            .label(crate::i18n::tr("设置"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.show_settings_dialog(window, cx)
                                             })),
                                     )
                                     .child(
-                                        Button::new("config")
-                                            .icon(gpui_kit::component::IconName::Settings2)
-                                            .label(crate::i18n::tr("设置"))
-                                            .ghost()
-                                            .on_click(cx.listener(|this, _event, window, cx| {
-                                                this.show_settings_dialog(window, cx);
+                                        Button::new("add-room")
+                                            .primary()
+                                            .icon(IconName::Plus)
+                                            .label(crate::i18n::tr("添加直播间"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.show_add_room_dialog(window, cx)
                                             })),
                                     ),
                             ),
                     )
-                    // 加载指示器
+                    .child(
+                        GroupBox::new().outline().child(
+                            h_flex()
+                                .flex_wrap()
+                                .justify_between()
+                                .gap_3()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Tag::secondary().small().child(crate::i18n::format(
+                                            "录制引擎：{engine_label}",
+                                            &[engine_label.to_string()],
+                                        )))
+                                        .when(!self.record_config.auto_record, |row| {
+                                            row.child(
+                                                Tag::secondary()
+                                                    .small()
+                                                    .child(crate::i18n::tr("自动录制:全局关")),
+                                            )
+                                        }),
+                                )
+                                .child(div().text_xs().text_color(desc_color).child(
+                                    crate::i18n::format(
+                                        "检查间隔: {} 秒",
+                                        &[self.record_config.check_interval.to_string()],
+                                    ),
+                                )),
+                        ),
+                    )
                     .when(self.is_loading, |el| {
                         el.child(
-                            div().flex().items_center().justify_center().p_4().child(
-                                div()
-                                    .text_sm()
-                                    .text_color(desc_color)
-                                    .child(crate::i18n::tr("正在加载...")),
-                            ),
+                            h_flex()
+                                .gap_2()
+                                .text_color(desc_color)
+                                .child(Spinner::new().small())
+                                .child(crate::i18n::tr("正在加载...")),
                         )
                     })
-                    // 直播间列表
                     .child(if rooms.is_empty() {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .p(px(80.0))
-                            .gap_4()
-                            .child(div().text_2xl().text_color(desc_color).child("📺"))
+                        GroupBox::new()
+                            .fill()
                             .child(
-                                div()
-                                    .text_lg()
-                                    .text_color(desc_color)
-                                    .child(crate::i18n::tr("暂无监控的直播间")),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(desc_color)
-                                    .child(crate::i18n::tr("点击上方「添加直播间」按钮开始监控")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(desc_color)
-                                    .child(crate::i18n::tr(
-                                        "抖音使用原生录制；其他平台由 Streamlink 插件解析",
-                                    )),
+                                Empty::new()
+                                    .py_12()
+                                    .header(
+                                        EmptyHeader::new()
+                                            .media(
+                                                EmptyMedia::new().child(
+                                                    Icon::new(gpui_kit::assets::IconName::Image)
+                                                        .size(px(32.0)),
+                                                ),
+                                            )
+                                            .title(
+                                                EmptyTitle::new()
+                                                    .text_lg()
+                                                    .child(crate::i18n::tr("暂无监控的直播间")),
+                                            )
+                                            .description(EmptyDescription::new().child(
+                                                crate::i18n::tr(
+                                                    "点击上方「添加直播间」按钮开始监控",
+                                                ),
+                                            )),
+                                    )
+                                    .content(
+                                        EmptyContent::new().child(
+                                            Button::new("add-first-room")
+                                                .primary()
+                                                .icon(IconName::Plus)
+                                                .label(crate::i18n::tr("添加直播间"))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.show_add_room_dialog(window, cx)
+                                                })),
+                                        ),
+                                    ),
                             )
                             .into_any_element()
                     } else {
                         div()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
+                            .grid()
+                            .grid_cols(1)
+                            .when(wide, |el| el.grid_cols(2))
+                            .gap_4()
+                            .items_start()
                             .children(
                                 rooms
                                     .iter()

@@ -64,7 +64,7 @@ fn main() -> Result<()> {
     };
 
     // 注册图标资源
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
 
     app.run(move |cx| {
         // 必须在GPUI组件使用前调用
@@ -78,7 +78,12 @@ fn main() -> Result<()> {
         // 加载主题文件
         let themes_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes");
         if let Err(err) = gpui_kit::component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
-            // 主题加载完成后，尝试应用上次保存的主题
+            // Custom theme files arrive after startup. Read the current preference
+            // here rather than capturing a stale configuration snapshot.
+            if let Some(state) = cx.try_global::<GlobalAppState>() {
+                let saved = state.0.config().ui.theme.clone();
+                apply_saved_kit_theme(&saved, cx);
+            }
             tracing::debug!(
                 "🎨 主题加载完成，共 {} 个主题可用",
                 gpui_kit::component::ThemeRegistry::global(cx)
@@ -106,6 +111,7 @@ fn main() -> Result<()> {
 
         // 设置 Global AppState，供路由页面访问
         cx.set_global(GlobalAppState(app_state.clone()));
+        apply_saved_kit_theme(&app_state.config().ui.theme, cx);
 
         // 打开主窗口（无边框 + 自定义 TitleBar）
         if let Err(e) = cx.open_window(
@@ -155,4 +161,33 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Restore through Kit so component and Base semantic tokens remain in sync.
+fn apply_saved_kit_theme(saved: &magekit_shared::types::Theme, cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+    use magekit_shared::types::{Theme as SavedTheme, ThemeMode as SavedMode};
+    match saved {
+        SavedTheme::System => Theme::sync_system_appearance(None, cx),
+        SavedTheme::Light => Theme::change(ThemeMode::Light, None, cx),
+        SavedTheme::Dark => Theme::change(ThemeMode::Dark, None, cx),
+        SavedTheme::Custom(config) => {
+            let selected = ThemeRegistry::global(cx)
+                .themes()
+                .get(config.name.as_str())
+                .cloned();
+            if let Some(selected) = selected {
+                Theme::update(cx, |theme| theme.apply_config(&selected));
+            } else {
+                Theme::change(
+                    match config.mode {
+                        SavedMode::Dark => ThemeMode::Dark,
+                        SavedMode::Light => ThemeMode::Light,
+                    },
+                    None,
+                    cx,
+                );
+            }
+        }
+    }
 }

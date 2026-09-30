@@ -9,8 +9,10 @@ use gpui_kit::component::Disableable;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{Icon, IconName, Sizable};
 use std::sync::Arc;
 
@@ -117,16 +119,46 @@ pub struct VideoInfo {
 #[derive(IntoElement)]
 pub struct VideoPreviewIdle;
 impl RenderOnce for VideoPreviewIdle {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        Empty::new().py_12().header(
-            EmptyHeader::new()
-                .media(EmptyMedia::new().child(Icon::new(IconName::ArrowDown).size_8()))
-                .title(EmptyTitle::new().child(crate::i18n::tr("粘贴视频链接开始下载")))
-                .description(
-                    EmptyDescription::new()
-                        .child(crate::i18n::tr("解析后可选择视频画质和音频格式")),
-                ),
-        )
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        GroupBox::new()
+            .id("download-preview-empty")
+            .outline()
+            .content_style(
+                StyleRefinement::default()
+                    .bg(cx.theme().background)
+                    .p_6()
+                    .rounded_xl(),
+            )
+            .child(
+                Empty::new()
+                    .py_8()
+                    .header(
+                        EmptyHeader::new()
+                            .media(
+                                EmptyMedia::new()
+                                    .size_12()
+                                    .rounded_xl()
+                                    .bg(cx.theme().muted)
+                                    .child(
+                                        Icon::new(IconName::Play)
+                                            .size_6()
+                                            .text_color(cx.theme().muted_foreground),
+                                    ),
+                            )
+                            .title(EmptyTitle::new().child(crate::i18n::tr("粘贴视频链接开始下载")))
+                            .description(
+                                EmptyDescription::new()
+                                    .child(crate::i18n::tr("解析后可选择视频画质和音频格式")),
+                            ),
+                    )
+                    .child(
+                        div().flex().flex_wrap().justify_center().gap_2().children(
+                            ["YouTube", "Bilibili", "Twitter / X"]
+                                .into_iter()
+                                .map(|name| Tag::secondary().small().child(name)),
+                        ),
+                    ),
+            )
     }
 }
 
@@ -376,16 +408,17 @@ impl RenderOnce for VideoPreviewReady {
                 crate::i18n::tr("请选择下载格式")
             };
 
-        div()
-            .flex()
-            .flex_col()
+        GroupBox::new()
+            .id("download-preview-ready")
+            .outline()
             .min_w_0()
-            .gap_5()
-            .p_5()
-            .bg(background)
-            .border_1()
-            .border_color(border)
-            .rounded_lg()
+            .content_style(
+                StyleRefinement::default()
+                    .p_6()
+                    .gap_6()
+                    .bg(background)
+                    .rounded_xl(),
+            )
             .child(
                 div()
                     .flex()
@@ -439,8 +472,8 @@ impl RenderOnce for VideoPreviewReady {
                                 column.child(
                                     Button::new("download-thumb-btn")
                                         .small()
-                                        .outline()
-                                        .icon(IconName::Folder)
+                                        .ghost()
+                                        .icon(IconName::ArrowDown)
                                         .label(crate::i18n::tr("下载封面"))
                                         .loading(self.thumbnail_loading)
                                         .disabled(self.thumbnail_loading || disabled)

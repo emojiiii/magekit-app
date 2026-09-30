@@ -5,6 +5,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::{Icon, IconName};
 
 /// 区块组件 - 带标题和描述的内容区域
@@ -52,11 +53,8 @@ impl RenderOnce for Section {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let title_color = cx.theme().foreground;
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(
+        GroupBox::new()
+            .title(
                 // 标题区域
                 div()
                     .flex()

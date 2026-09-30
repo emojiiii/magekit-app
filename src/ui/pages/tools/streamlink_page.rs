@@ -1,9 +1,13 @@
 //! Add managed Streamlink controls without coupling Python runtime state to yt-dlp/FFmpeg.
 use crate::app::AppState;
 use crate::i18n::Message;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Disableable, StyledExt};
+use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants};
+use gpui_kit::component::tag::{Tag, TagVariant};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, StyledExt};
 use live_recorder::streamlink_runtime;
 use magekit_tool_manager::deno_runtime;
 use std::sync::Arc;
@@ -20,6 +24,8 @@ pub struct RuntimeControls {
     deno_status: Message,
     deno_busy: bool,
     deno_installed: bool,
+    deno_error: bool,
+    runtime_error: bool,
 }
 
 impl ToolsPage {
@@ -41,6 +47,8 @@ impl RuntimeControls {
             deno_status: Message::plain("正在检查 Deno JavaScript runtime…").into(),
             deno_busy: false,
             deno_installed: false,
+            deno_error: false,
+            runtime_error: false,
         };
         controls.runtime_action("status", cx);
         controls.deno_action("status", cx);
@@ -52,6 +60,7 @@ impl RuntimeControls {
             return;
         }
         self.deno_busy = true;
+        self.deno_error = false;
         self.deno_status = match action {
             "install" => Message::plain("正在下载并校验 Deno 官方 runtime…").into(),
             "update" => Message::plain("正在更新 / 修复 Deno runtime…").into(),
@@ -95,11 +104,11 @@ impl RuntimeControls {
                                 .into();
                     }
                     Ok(Err(error)) => {
-                        this.deno_installed = false;
-                        this.deno_status = Message::new("Deno 状态读取失败：{error}", &[format!("{}", error)]);
+                        this.deno_error = true;
+                        this.deno_status = Message::new("Deno 操作失败：{error}", &[format!("{}", error)]);
                     }
                     Err(_) => {
-                        this.deno_installed = false;
+                        this.deno_error = true;
                         this.deno_status = Message::plain("Deno runtime 管理任务异常结束，请重试。").into();
                     }
                 }
@@ -114,6 +123,7 @@ impl RuntimeControls {
             return;
         }
         self.busy = true;
+        self.runtime_error = false;
         self.status = match action {
             "install" => Message::plain("正在安装独立 Python/Streamlink 环境；首次安装需要网络…"),
             "update" => Message::plain("正在新环境中更新并验证 Streamlink；已有录制不受影响…"),
@@ -153,9 +163,11 @@ impl RuntimeControls {
                         .into();
                     }
                     Ok(Err(error)) => {
+                        this.runtime_error = true;
                         this.status = Message::new("操作失败：{error}", &[format!("{}", error)])
                     }
                     Err(_) => {
+                        this.runtime_error = true;
                         this.status = Message::plain("运行环境管理任务异常结束，请重试。").into()
                     }
                 }
@@ -167,118 +179,144 @@ impl RuntimeControls {
 }
 
 impl Render for RuntimeControls {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let deno_controls = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .p(px(16.0))
-            .rounded_lg()
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(div().font_semibold().child(crate::i18n::tr("YouTube JavaScript runtime · Deno")))
-            .child(div().text_sm().child(self.deno_status.render()))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(crate::i18n::tr("yt-dlp 已包含 EJS 脚本；Deno 负责执行 YouTube JS challenge。首次解析时会自动检查。")),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("deno-install")
-                            .label(crate::i18n::tr("安装"))
-                            .primary()
-                            .disabled(self.deno_busy || self.deno_installed)
-                            .on_click(cx.listener(|this, _, _, cx| this.deno_action("install", cx))),
-                    )
-                    .child(
-                        Button::new("deno-update")
-                            .label(crate::i18n::tr("更新 / 修复"))
-                            .disabled(self.deno_busy)
-                            .on_click(cx.listener(|this, _, _, cx| this.deno_action("update", cx))),
-                    )
-                    .child(
-                        Button::new("deno-status")
-                            .label(crate::i18n::tr("刷新状态"))
-                            .disabled(self.deno_busy)
-                            .on_click(cx.listener(|this, _, _, cx| this.deno_action("status", cx))),
-                    ),
-            );
-        let streamlink_controls = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .p(px(16.0))
-            .rounded_lg()
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .font_semibold()
-                    .child(crate::i18n::tr("Streamlink 直播引擎")),
-            )
-            .child(div().text_sm().child(self.status.render()))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(crate::i18n::tr(
-                        "使用应用独立 Python 环境；更新只影响新录制任务。",
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("streamlink-install")
-                            .label(crate::i18n::tr("安装"))
-                            .primary()
-                            .disabled(self.busy || self.installed)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.runtime_action("install", cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("streamlink-update")
-                            .label(crate::i18n::tr("更新 / 修复"))
-                            .disabled(self.busy)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.runtime_action("update", cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("streamlink-status")
-                            .label(crate::i18n::tr("刷新状态"))
-                            .disabled(self.busy)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.runtime_action("status", cx)),
-                            ),
-                    ),
-            );
-
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let deno_controls = GroupBox::new().id("deno-card").fill().flex_1().min_w_0()
+            .child(div().flex().items_center().justify_between().gap_3()
+                .child(div().flex().items_center().gap_2().font_semibold()
+                    .child(Icon::new(IconName::SquareTerminal).size_5()).child("Deno"))
+                .child(Tag::new().outline().small().with_variant(if self.deno_installed { TagVariant::Success } else { TagVariant::Secondary })
+                    .child(crate::i18n::tr(if self.deno_installed { "已安装" } else { "未安装" }))))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground)
+                .child(crate::i18n::tr("YouTube JavaScript runtime · Deno")))
+            .child(if self.deno_error {
+                Alert::error("deno-error", self.deno_status.render()).into_any_element()
+            } else {
+                div().text_sm().child(self.deno_status.render()).into_any_element()
+            })
+            .child(div().text_xs().text_color(cx.theme().muted_foreground)
+                .child(crate::i18n::tr("yt-dlp 已包含 EJS 脚本；Deno 负责执行 YouTube JS challenge。首次解析时会自动检查。")))
+            .child(div().flex().flex_wrap().gap_2()
+                .when(!self.deno_installed, |row| row.child(Button::new("deno-install").label(crate::i18n::tr("安装"))
+                    .primary().disabled(self.deno_busy).loading(self.deno_busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.deno_action("install", cx)))))
+                .child(Button::new("deno-update").label(crate::i18n::tr("更新 / 修复")).outline().disabled(self.deno_busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.deno_action("update", cx))))
+                .child(Button::new("deno-status").icon(IconName::RefreshCw).label(crate::i18n::tr("刷新状态"))
+                    .ghost().disabled(self.deno_busy).on_click(cx.listener(|this, _, _, cx| this.deno_action("status", cx)))));
+        let streamlink_controls =
+            GroupBox::new()
+                .id("streamlink-card")
+                .fill()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .font_semibold()
+                                .child(Icon::new(gpui_kit::assets::IconName::Video).size_5())
+                                .child("Streamlink"),
+                        )
+                        .child(
+                            Tag::new()
+                                .outline()
+                                .small()
+                                .with_variant(if self.installed {
+                                    TagVariant::Success
+                                } else {
+                                    TagVariant::Secondary
+                                })
+                                .child(crate::i18n::tr(if self.installed {
+                                    "已安装"
+                                } else {
+                                    "未安装"
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::tr("Streamlink 直播引擎")),
+                )
+                .child(if self.runtime_error {
+                    Alert::error("streamlink-error", self.status.render()).into_any_element()
+                } else {
+                    div()
+                        .text_sm()
+                        .child(self.status.render())
+                        .into_any_element()
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::i18n::tr(
+                            "使用应用独立 Python 环境；更新只影响新录制任务。",
+                        )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .when(!self.installed, |row| {
+                            row.child(
+                                Button::new("streamlink-install")
+                                    .label(crate::i18n::tr("安装"))
+                                    .primary()
+                                    .disabled(self.busy)
+                                    .loading(self.busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.runtime_action("install", cx)
+                                    })),
+                            )
+                        })
+                        .child(
+                            Button::new("streamlink-update")
+                                .label(crate::i18n::tr("更新 / 修复"))
+                                .outline()
+                                .disabled(self.busy)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.runtime_action("update", cx)),
+                                ),
+                        )
+                        .child(
+                            Button::new("streamlink-status")
+                                .icon(IconName::RefreshCw)
+                                .label(crate::i18n::tr("刷新状态"))
+                                .ghost()
+                                .disabled(self.busy)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.runtime_action("status", cx)),
+                                ),
+                        ),
+                );
         div()
+            .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap_4()
             .child(
                 div()
-                    .text_lg()
+                    .text_base()
                     .font_semibold()
                     .child(crate::i18n::tr("YouTube 与直播运行环境")),
             )
             .child(
                 div()
                     .flex()
-                    .items_start()
-                    .gap(px(12.0))
+                    .items_stretch()
+                    .gap_4()
+                    .when(window.bounds().size.width < px(1100.0), |row| {
+                        row.flex_col()
+                    })
                     .child(deno_controls)
                     .child(streamlink_controls),
             )

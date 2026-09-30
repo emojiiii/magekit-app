@@ -13,6 +13,7 @@ use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::select::{SelectEvent, SelectState};
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
 use gpui_kit::component::{WindowExt, notification::Notification};
 use magekit_shared::PlatformCookie;
@@ -24,6 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// 设置页面
 pub struct SettingsPage {
     app_state: Arc<AppState>,
+    active_section: usize,
     // 下载设置
     download_path: String,
     max_concurrent: usize,
@@ -142,6 +144,7 @@ impl SettingsPage {
 
         Self {
             app_state,
+            active_section: 0,
             download_path,
             max_concurrent: config.download.max_concurrent_downloads,
             embed_metadata: config.download.embed_metadata,
@@ -550,8 +553,11 @@ impl Render for SettingsPage {
                         div()
                             .flex()
                             .flex_col()
-                            .p(px(24.0))
-                            .gap(px(20.0))
+                            .w_full()
+                            .max_w(px(1120.0))
+                            .mx_auto()
+                            .p(px(32.0))
+                            .gap(px(28.0))
                             // 页面标题
                             .child(
                                 div()
@@ -569,8 +575,8 @@ impl Render for SettingsPage {
                                             .flex_col()
                                             .child(
                                                 div()
-                                                    .text_xl()
-                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_size(px(30.0))
+                                                    .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(title_color)
                                                     .child(crate::i18n::tr("设置")),
                                             )
@@ -605,131 +611,169 @@ impl Render for SettingsPage {
                                         ),
                                 )
                             })
-                            // 外观设置（主题切换）
                             .child(
-                                ThemeSettingsCard::new(self.theme_name.clone()).on_theme_change(
-                                    cx.listener(|this, theme_name: &SharedString, window, cx| {
-                                        this.set_theme(theme_name, window, cx);
-                                    }),
-                                ),
-                            )
-                            .child({
-                                let entity = cx.entity();
-                                LanguageSettingsCard::new(
-                                    self.language,
-                                    move |language, window, cx| {
-                                        entity.update(cx, |this, cx| {
-                                            this.set_language(language, window, cx)
-                                        });
-                                    },
-                                )
-                            })
-                            // 下载设置
-                            .child(
-                                DownloadSettingsCard::new(&self.download_path, self.max_concurrent)
-                                    .on_browse(cx.listener(|this, _ev, window, cx| {
-                                        this.browse_download_path(window, cx);
-                                    }))
-                                    .on_increment(cx.listener(|this, _ev, _window, cx| {
-                                        this.increment_concurrent(cx);
-                                    }))
-                                    .on_decrement(cx.listener(|this, _ev, _window, cx| {
-                                        this.decrement_concurrent(cx);
+                                TabBar::new("settings-sections")
+                                    .underline()
+                                    .selected_index(self.active_section)
+                                    .child(Tab::new().label(crate::i18n::tr("常规")))
+                                    .child(Tab::new().label(crate::i18n::tr("网络与账号")))
+                                    .child(Tab::new().label(crate::i18n::tr("高级")))
+                                    .on_click(cx.listener(|this, index: &usize, _, cx| {
+                                        this.active_section = *index;
+                                        cx.notify();
                                     })),
                             )
-                            // 代理设置
-                            .child({
-                                let proxy_mode = self.proxy_mode;
-                                let proxy_input = self.proxy_input.clone();
-                                let proxy_test_status = self.proxy_test_status;
-                                ProxySettingsCard::new(proxy_mode)
-                                    .proxy_input(proxy_input)
-                                    .test_status(proxy_test_status)
-                                    .on_mode_change({
-                                        let entity = cx.entity().clone();
-                                        move |mode, _window, cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                this.set_proxy_mode(mode, cx);
-                                            });
-                                        }
+                            .when(self.active_section == 0, |el| {
+                                el
+                                    // 外观设置（主题切换）
+                                    .child(
+                                        ThemeSettingsCard::new(self.theme_name.clone())
+                                            .on_theme_change(cx.listener(
+                                                |this, theme_name: &SharedString, window, cx| {
+                                                    this.set_theme(theme_name, window, cx);
+                                                },
+                                            )),
+                                    )
+                                    .child({
+                                        let entity = cx.entity();
+                                        LanguageSettingsCard::new(
+                                            self.language,
+                                            move |language, window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.set_language(language, window, cx)
+                                                });
+                                            },
+                                        )
                                     })
-                                    .on_test({
+                                    // 下载设置
+                                    .child(
+                                        DownloadSettingsCard::new(
+                                            &self.download_path,
+                                            self.max_concurrent,
+                                        )
+                                        .on_browse(cx.listener(|this, _ev, window, cx| {
+                                            this.browse_download_path(window, cx);
+                                        }))
+                                        .on_increment(cx.listener(|this, _ev, _window, cx| {
+                                            this.increment_concurrent(cx);
+                                        }))
+                                        .on_decrement(
+                                            cx.listener(|this, _ev, _window, cx| {
+                                                this.decrement_concurrent(cx);
+                                            }),
+                                        ),
+                                    )
+                            })
+                            .when(self.active_section == 1, |el| {
+                                el
+                                    // 代理设置
+                                    .child({
+                                        let proxy_mode = self.proxy_mode;
+                                        let proxy_input = self.proxy_input.clone();
+                                        let proxy_test_status = self.proxy_test_status;
+                                        ProxySettingsCard::new(proxy_mode)
+                                            .proxy_input(proxy_input)
+                                            .test_status(proxy_test_status)
+                                            .on_mode_change({
+                                                let entity = cx.entity().clone();
+                                                move |mode, _window, cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.set_proxy_mode(mode, cx);
+                                                    });
+                                                }
+                                            })
+                                            .on_test({
+                                                let entity = cx.entity().clone();
+                                                move |_ev, _window, cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.sync_proxy_url_from_input(cx);
+                                                        this.test_proxy(cx);
+                                                    });
+                                                }
+                                            })
+                                    })
+                                    // Cookie 设置
+                                    .child({
+                                        let cookies = self.cookies.clone();
+                                        let platform_select = self.cookie_platform_select.clone();
+                                        let custom_platform_input =
+                                            self.cookie_custom_platform_input.clone();
+                                        let cookie_input = self.cookie_content_input.clone();
                                         let entity = cx.entity().clone();
-                                        move |_ev, _window, cx| {
+                                        let entity2 = cx.entity().clone();
+                                        let entity3 = cx.entity().clone();
+                                        CookieSettingsCard::new(
+                                            cookies,
+                                            platform_select,
+                                            custom_platform_input,
+                                            cookie_input,
+                                        )
+                                        .on_add(move |cookie, window, cx| {
                                             let _ = entity.update(cx, |this, cx| {
-                                                this.sync_proxy_url_from_input(cx);
-                                                this.test_proxy(cx);
+                                                this.add_cookie(cookie, window, cx);
                                             });
-                                        }
+                                        })
+                                        .on_delete(move |index, _window, cx| {
+                                            let _ = entity2.update(cx, |this, cx| {
+                                                this.delete_cookie(index, cx);
+                                            });
+                                        })
+                                        .on_toggle(
+                                            move |index, enabled, _window, cx| {
+                                                let _ = entity3.update(cx, |this, cx| {
+                                                    this.toggle_cookie(index, enabled, cx);
+                                                });
+                                            },
+                                        )
+                                    })
+                                    // SOOP 登录信息
+                                    .child({
+                                        let entity = cx.entity().clone();
+                                        SoopCredentialsCard::new(
+                                            self.soop_username_input.clone(),
+                                            self.soop_password_input.clone(),
+                                        )
+                                        .on_save(
+                                            move |_window, cx| {
+                                                let _ = entity.update(cx, |this, cx| {
+                                                    this.soop_username = this
+                                                        .soop_username_input
+                                                        .read(cx)
+                                                        .value()
+                                                        .to_string();
+                                                    this.soop_password = this
+                                                        .soop_password_input
+                                                        .read(cx)
+                                                        .value()
+                                                        .to_string();
+                                                    this.save_settings(cx);
+                                                });
+                                            },
+                                        )
                                     })
                             })
-                            // Cookie 设置
-                            .child({
-                                let cookies = self.cookies.clone();
-                                let platform_select = self.cookie_platform_select.clone();
-                                let custom_platform_input =
-                                    self.cookie_custom_platform_input.clone();
-                                let cookie_input = self.cookie_content_input.clone();
-                                let entity = cx.entity().clone();
-                                let entity2 = cx.entity().clone();
-                                let entity3 = cx.entity().clone();
-                                CookieSettingsCard::new(
-                                    cookies,
-                                    platform_select,
-                                    custom_platform_input,
-                                    cookie_input,
-                                )
-                                .on_add(move |cookie, window, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.add_cookie(cookie, window, cx);
-                                    });
-                                })
-                                .on_delete(move |index, _window, cx| {
-                                    let _ = entity2.update(cx, |this, cx| {
-                                        this.delete_cookie(index, cx);
-                                    });
-                                })
-                                .on_toggle(
-                                    move |index, enabled, _window, cx| {
-                                        let _ = entity3.update(cx, |this, cx| {
-                                            this.toggle_cookie(index, enabled, cx);
-                                        });
-                                    },
-                                )
-                            })
-                            // SOOP 登录信息
-                            .child({
-                                let entity = cx.entity().clone();
-                                SoopCredentialsCard::new(
-                                    self.soop_username_input.clone(),
-                                    self.soop_password_input.clone(),
-                                )
-                                .on_save(move |_window, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.soop_username =
-                                            this.soop_username_input.read(cx).value().to_string();
-                                        this.soop_password =
-                                            this.soop_password_input.read(cx).value().to_string();
-                                        this.save_settings(cx);
-                                    });
-                                })
-                            })
-                            // 高级设置
-                            .child(
-                                AdvancedSettingsCard::new(self.auto_check_updates, self.debug_mode)
-                                    .on_auto_check_change(cx.listener(
-                                        |this, enabled: &bool, _window, cx| {
-                                            this.toggle_auto_check_updates(*enabled, cx);
-                                        },
-                                    ))
-                                    .on_debug_mode_change(cx.listener(
-                                        |this, enabled: &bool, _window, cx| {
-                                            this.toggle_debug_mode(*enabled, cx);
-                                        },
-                                    )),
-                            )
-                            // 关于
-                            .child(AboutSection),
+                            .when(self.active_section == 2, |el| {
+                                el
+                                    // 高级设置
+                                    .child(
+                                        AdvancedSettingsCard::new(
+                                            self.auto_check_updates,
+                                            self.debug_mode,
+                                        )
+                                        .on_auto_check_change(cx.listener(
+                                            |this, enabled: &bool, _window, cx| {
+                                                this.toggle_auto_check_updates(*enabled, cx);
+                                            },
+                                        ))
+                                        .on_debug_mode_change(cx.listener(
+                                            |this, enabled: &bool, _window, cx| {
+                                                this.toggle_debug_mode(*enabled, cx);
+                                            },
+                                        )),
+                                    )
+                                    // 关于
+                                    .child(AboutSection)
+                            }),
                     ),
             )
     }

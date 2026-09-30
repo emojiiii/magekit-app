@@ -38,7 +38,7 @@ impl RenderOnce for ThemeSettingsCard {
 
         // 获取主题颜色
         let theme = cx.theme();
-        let card_bg = theme.secondary;
+        let card_bg = theme.background;
         let border_color = theme.border;
         let text_color = theme.foreground;
         let muted_color = theme.muted_foreground;
