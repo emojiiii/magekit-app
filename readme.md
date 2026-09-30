@@ -145,7 +145,7 @@ docs/                   Architecture and usage notes
 - [Developer guide](agents.md)
 - [Release workflow](.github/workflows/release.yml)
 
-The release workflow plans a version after a push to `main`. Documentation-only changes and commits marked `[skip release]` are skipped. Platform builds and artifact checks must succeed before a tag and release are published.
+The release workflow plans a version after a push to `main`. Documentation-only changes and commits marked `[skip release]` do not independently trigger a release, but cannot suppress earlier unpublished code changes. A documentation-only advance of `main` does not discard a completed build; the release tag always points to the exact source commit used for its packages. Platform builds and artifact checks must succeed before a tag and release are published.
 
 ## Troubleshooting and responsible use
 

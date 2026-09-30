@@ -64,9 +64,10 @@ impl ApplicationJob {
 mod tests {
     use super::*;
     use std::{
-        fs,
+        fs::{self, File},
         os::windows::{io::AsRawHandle, process::CommandExt},
-        process::{Command, Stdio},
+        path::Path,
+        process::{Child, Command, Stdio},
         thread,
         time::{Duration, Instant},
     };
@@ -98,34 +99,133 @@ mod tests {
         );
     }
 
+    const FIXTURE_TEST: &str = "process_job::tests::process_tree_fixture";
+    const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+    const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    // Always kill/reap direct children, including assertion and assignment failures.
+    struct ChildGuard(Child);
+
+    impl ChildGuard {
+        fn wait_for_exit(&mut self, timeout: Duration) -> io::Result<bool> {
+            let deadline = Instant::now() + timeout;
+            loop {
+                if self.0.try_wait()?.is_some() {
+                    return Ok(true);
+                }
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.wait_for_exit(EXIT_TIMEOUT);
+        }
+    }
+
+    fn fixture_command(role: &str, directory: &Path) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", FIXTURE_TEST, "--nocapture"])
+            .env("MAGEKIT_TEST_PROCESS_ROLE", role)
+            .env("MAGEKIT_TEST_PROCESS_DIR", directory)
+            .stdin(Stdio::null())
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+        command
+    }
+
+    // Reuse the test executable rather than relying on PowerShell startup,
+    // quoting, execution policy, or a guessed delay before Job assignment.
+    #[test]
+    fn process_tree_fixture() {
+        let Some(role) = std::env::var_os("MAGEKIT_TEST_PROCESS_ROLE") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(
+            std::env::var_os("MAGEKIT_TEST_PROCESS_DIR").expect("fixture directory"),
+        );
+        if role == "grandchild" {
+            fs::write(
+                directory.join("grandchild.pid"),
+                std::process::id().to_string(),
+            )
+            .expect("write grandchild readiness");
+            // A finite fallback lifetime avoids leaking an orphan if the test
+            // runner itself dies. It is much longer than the exit assertion.
+            thread::sleep(Duration::from_secs(60));
+        } else if role == "parent" {
+            let deadline = Instant::now() + STARTUP_TIMEOUT;
+            while !directory.join("assigned").exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "Job assignment handshake timed out"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            // The controller writes assigned only after AssignProcessToJobObject
+            // succeeds, so this descendant necessarily inherits the tested Job.
+            let mut grandchild = ChildGuard(
+                fixture_command("grandchild", &directory)
+                    .spawn()
+                    .expect("spawn grandchild fixture"),
+            );
+            assert!(
+                grandchild.wait_for_exit(Duration::from_secs(65)).unwrap(),
+                "grandchild fixture exceeded its fallback lifetime"
+            );
+        } else {
+            panic!("unknown process fixture role: {role:?}");
+        }
+    }
+
     #[test]
     fn closing_job_ends_nested_child_process() {
-        let marker =
-            std::env::temp_dir().join(format!("magekit-job-test-{}.pid", std::process::id()));
-        let _ = fs::remove_file(&marker);
+        let directory = tempfile::tempdir().unwrap();
+        let log_path = directory.path().join("fixture.log");
+        let log = File::create(&log_path).unwrap();
+        let mut parent = ChildGuard(
+            fixture_command("parent", directory.path())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .expect("spawn parent fixture"),
+        );
+        // Drop the Job before the ChildGuard during unwinding, so descendants
+        // are cleaned up even when readiness or a later assertion fails.
         let job = ApplicationJob::create().unwrap();
-        let script = "Start-Sleep -Milliseconds 500; $child = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -PassThru -WindowStyle Hidden; [IO.File]::WriteAllText($env:MAGEKIT_TEST_CHILD_PID, [string]$child.Id); Start-Sleep -Seconds 30";
-        let mut parent = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .env("MAGEKIT_TEST_CHILD_PID", &marker)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .spawn()
-            .unwrap();
-        job.assign(parent.as_raw_handle()).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        job.assign(parent.0.as_raw_handle())
+            .expect("assign parent fixture to Job");
+        fs::write(directory.path().join("assigned"), b"ready").unwrap();
+        let diagnostics = || fs::read_to_string(&log_path).unwrap_or_default();
+        let deadline = Instant::now() + STARTUP_TIMEOUT;
         let grandchild_pid = loop {
-            if let Ok(value) = fs::read_to_string(&marker)
+            if let Ok(value) = fs::read_to_string(directory.path().join("grandchild.pid"))
                 && let Ok(pid) = value.trim().parse::<u32>()
             {
                 break pid;
             }
-            assert!(Instant::now() < deadline, "子进程未启动");
-            thread::sleep(Duration::from_millis(50));
+            let status = parent.0.try_wait().expect("query parent fixture status");
+            assert!(
+                status.is_none(),
+                "parent fixture exited early: {status:?}\n{}",
+                diagnostics()
+            );
+            assert!(
+                Instant::now() < deadline,
+                "grandchild readiness timed out (parent PID {})\n{}",
+                parent.0.id(),
+                diagnostics()
+            );
+            thread::sleep(Duration::from_millis(10));
         };
-        // SAFETY: 由本测试启动的进程 PID，只请求查询和等待权限。
+        // SAFETY: This PID is reported by our descendant after it starts;
+        // request only query and synchronization rights, and retain the handle
+        // so PID reuse cannot turn the termination assertion into a false pass.
         let raw = unsafe {
             OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION | 0x0010_0000,
@@ -133,16 +233,35 @@ mod tests {
                 grandchild_pid,
             )
         };
-        assert!(!raw.is_null(), "无法打开孙进程句柄");
-        // SAFETY: OpenProcess 返回的新句柄由 OwnedHandle 负责关闭。
+        assert!(
+            !raw.is_null(),
+            "open grandchild PID {grandchild_pid}: {}\n{}",
+            io::Error::last_os_error(),
+            diagnostics()
+        );
+        // SAFETY: OpenProcess returned an owned handle.
         let grandchild = unsafe { OwnedHandle::from_raw_handle(raw) };
+        // Prove that the process was still alive immediately before closing
+        // the Job; an early helper failure must not pass as successful cleanup.
+        // SAFETY: grandchild owns a valid process handle.
+        assert_eq!(
+            unsafe { WaitForSingleObject(grandchild.as_raw_handle(), 0) },
+            windows_sys::Win32::Foundation::WAIT_TIMEOUT,
+            "grandchild exited before Job close\n{}",
+            diagnostics()
+        );
         drop(job);
-        // SAFETY: grandchild 是有效进程句柄，超时后返回等待结果。
+        // SAFETY: grandchild remains a valid process handle after termination.
         assert_eq!(
             unsafe { WaitForSingleObject(grandchild.as_raw_handle(), 5_000) },
-            WAIT_OBJECT_0
+            WAIT_OBJECT_0,
+            "Job close did not terminate grandchild PID {grandchild_pid}\n{}",
+            diagnostics()
         );
-        assert!(parent.wait().is_ok());
-        let _ = fs::remove_file(marker);
+        assert!(
+            parent.wait_for_exit(EXIT_TIMEOUT).unwrap(),
+            "Job close did not terminate parent fixture\n{}",
+            diagnostics()
+        );
     }
 }

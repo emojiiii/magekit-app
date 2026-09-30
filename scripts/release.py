@@ -121,6 +121,51 @@ def commits_since(previous_tag: str, head: str) -> list[tuple[str, str]]:
     ]
 
 
+def has_pending_release_commit(previous_tag: str, head: str) -> bool:
+    """A skip marker applies to its own main-branch commit, never the backlog.
+
+    Inspect first-parent changes so a merge's skip marker also covers that merge,
+    while a later docs-only/skip commit cannot hide an earlier eligible change.
+    The caller separately checks the net diff against the last published release.
+    """
+    revision = f"{previous_tag}..{head}" if previous_tag else head
+    for commit in git("rev-list", "--first-parent", revision).splitlines():
+        message = git("show", "-s", "--format=%B", commit)
+        if SKIP_RE.search(message):
+            continue
+        parents = git("rev-list", "--parents", "-n", "1", commit).split()[1:]
+        files = changed_files(parents[0] if parents else "", commit)
+        if any(not is_documentation(name) for name in files):
+            return True
+    return False
+
+
+def can_publish(head: str, main_commit: str) -> bool:
+    """Keep artifacts pinned to head; only tolerate documentation-only advances."""
+    if head == main_commit:
+        return True
+    ensure_ancestor(head, main_commit)
+    return all(map(is_documentation, changed_files(head, main_commit)))
+
+
+def check_publish(main_commit: str) -> None:
+    head = git("rev-parse", "HEAD")
+    if os.getenv("GITHUB_SHA") and os.environ["GITHUB_SHA"] != head:
+        raise ReleaseError("检出的 HEAD 与构建提交不一致")
+    publish = can_publish(head, main_commit)
+    if publish:
+        print(f"Publishing artifacts built from {head}; main is {main_commit}")
+    else:
+        print(f"main has newer build inputs at {main_commit}; defer to its release run")
+    line = f"publish={'true' if publish else 'false'}\n"
+    output = os.getenv("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8", newline="\n") as stream:
+            stream.write(line)
+    else:
+        print(line, end="")
+
+
 def release_kind(commits: list[tuple[str, str]]) -> str:
     has_feature = False
     for _sha, message in commits:
@@ -243,9 +288,12 @@ def plan_release() -> None:
         append_outputs(release=True, version=latest, previous_tag=baseline)
         return
 
-    message = git("show", "-s", "--format=%B", head)
     files = changed_files(baseline, head)
-    if SKIP_RE.search(message) or not files or all(map(is_documentation, files)):
+    if (
+        not files
+        or all(map(is_documentation, files))
+        or not has_pending_release_commit(baseline, head)
+    ):
         append_outputs(release=False, previous_tag=baseline)
         return
 
@@ -341,12 +389,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MageKit 自动发布版本与更新日志")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("plan", help="计算版本并写入 GITHUB_OUTPUT")
+    publish = commands.add_parser("can-publish", help="检查 main 前进后是否仍可发布原构建")
+    publish.add_argument("--main-commit", required=True)
     notes = commands.add_parser("notes", help="生成 Release 说明与 changelog 附件")
     notes.add_argument("--version", required=True, help="稳定版本号，例如 v0.2.0")
     notes.add_argument("--previous-tag", default="", help="上一稳定版 tag，可留空")
     args = parser.parse_args()
     if args.command == "plan":
         plan_release()
+    elif args.command == "can-publish":
+        check_publish(args.main_commit)
     else:
         write_notes(args.version, args.previous_tag)
 

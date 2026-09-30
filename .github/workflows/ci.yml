@@ -79,11 +79,21 @@ jobs:
         run: cargo check --workspace --all-targets --locked
       - name: Test persisted configuration compatibility
         run: cargo test -p magekit-shared --locked
+      - name: Test release planning and publication safety
+        run: python3 -m unittest discover -s scripts/tests -p test_release.py
       - name: Check translation catalog coverage
         if: runner.os == 'Linux'
         run: python3 scripts/check_i18n.py
       - name: Test UI workflow, locale, and external-label regressions
         run: cargo test --bin magekit --locked
+      - name: Repeat Windows process-tree cleanup regression
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          1..10 | ForEach-Object {
+            cargo test --bin magekit --locked process_job::tests::closing_job_ends_nested_child_process -- --exact
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Test credential boundaries, download cancellation, update integrity, and task persistence
         run: cargo test -p download -p magekit-extractor -p magekit-tool-manager -p magekit-capture --locked
       - name: Test recording URL domain boundaries
