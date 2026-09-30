@@ -1392,22 +1392,20 @@ impl ChannelPage {
                                 ),
                         )
                         // 右侧：显示统计
-                        .child(
-                            div().text_sm().text_color(muted_foreground).child(
-                                crate::i18n::format(
-                                    "显示 {} - {} 条，共 {} 条",
-                                    &[
-                                        format!("{}", current_page * ITEMS_PER_PAGE + 1),
-                                        format!(
+                        .child(div().text_sm().text_color(muted_foreground).child(
+                            crate::i18n::format(
+                                "显示 {} - {} 条，共 {} 条",
+                                &[
+                                    format!("{}", current_page * ITEMS_PER_PAGE + 1),
+                                    format!(
                                             "{}",
                                             (current_page * ITEMS_PER_PAGE + page_entry_count)
                                                 .min(current_tab_total)
                                         ),
-                                        format!("{}", current_tab_total),
-                                    ],
-                                ),
+                                    format!("{}", current_tab_total),
+                                ],
                             ),
-                        ),
+                        )),
                 )
             })
     }
