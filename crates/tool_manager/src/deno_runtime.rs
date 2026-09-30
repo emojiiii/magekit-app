@@ -178,13 +178,28 @@ async fn download_bounded(
 }
 
 async fn read_version(path: &Path) -> ToolManagerResult<String> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(10),
-        create_tokio_command(path)
-            .arg("--version")
-            .kill_on_drop(true)
-            .output(),
-    )
+    let output = tokio::time::timeout(Duration::from_secs(10), async {
+        // A just-written executable can briefly be busy on Linux. Retry
+        // only ETXTBSY, while keeping the complete probe within 10 seconds.
+        for attempt in 0..=5 {
+            let result = create_tokio_command(path)
+                .arg("--version")
+                .kill_on_drop(true)
+                .output()
+                .await;
+            if cfg!(target_os = "linux")
+                && attempt < 5
+                && result
+                    .as_ref()
+                    .is_err_and(|error| error.raw_os_error() == Some(26))
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            return result;
+        }
+        unreachable!("the final attempt always returns")
+    })
     .await
     .map_err(|_| ToolManagerError::Timeout {
         operation: "read Deno version".into(),
@@ -636,6 +651,47 @@ mod tests {
             "Deno executable exceeds the size limit",
         )
         .await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn version_probe_retries_a_transient_writable_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("deno");
+        let mut writer = std::fs::File::create(&path).unwrap();
+        writer
+            .write_all(b"#!/bin/sh\nprintf 'deno 2.9.7\\n'\n")
+            .unwrap();
+        writer.sync_all().unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Keeping this handle open deterministically triggers Linux ETXTBSY.
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(75)).await;
+            drop(writer);
+        });
+        assert_eq!(read_version(&path).await.unwrap(), "2.9.7");
+        release.await.unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn version_probe_busy_retry_is_bounded() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("deno");
+        let mut writer = std::fs::File::create(&path).unwrap();
+        writer
+            .write_all(b"#!/bin/sh\nprintf 'deno 2.9.7\\n'\n")
+            .unwrap();
+        writer.sync_all().unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(2), read_version(&path))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("Text file busy"), "{error}");
+        drop(writer);
     }
 
     #[cfg(unix)]
