@@ -4,7 +4,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 use std::sync::Arc;
 
 /// 质量选项
@@ -20,11 +20,11 @@ pub enum QualityOption {
 impl QualityOption {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Best => "最佳",
+            Self::Best => crate::i18n::tr("最佳"),
             Self::P1080 => "1080p",
             Self::P720 => "720p",
             Self::P480 => "480p",
-            Self::AudioOnly => "仅音频",
+            Self::AudioOnly => crate::i18n::tr("仅音频"),
         }
     }
 
@@ -91,7 +91,7 @@ impl RenderOnce for QualitySelector {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(title_color)
-                    .child("🎬 视频质量"),
+                    .child(crate::i18n::tr("🎬 视频质量")),
             )
             .child(div().flex().flex_wrap().gap(px(8.0)).children(
                 QualityOption::all().into_iter().map({

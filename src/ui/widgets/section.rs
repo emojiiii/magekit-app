@@ -4,8 +4,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::{Icon, IconName};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::{Icon, IconName};
 
 /// 区块组件 - 带标题和描述的内容区域
 #[derive(IntoElement)]

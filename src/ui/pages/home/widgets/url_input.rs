@@ -3,10 +3,10 @@
 //! 提供视频链接输入和解析功能
 
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Disableable;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Disableable;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
 
 /// URL 输入卡片组件
 #[derive(IntoElement)]
@@ -49,9 +49,9 @@ impl UrlInputCard {
 impl RenderOnce for UrlInputCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let button_label = if self.is_loading {
-            "获取中..."
+            crate::i18n::tr("获取中...")
         } else {
-            "解析"
+            crate::i18n::tr("解析")
         };
 
         // 使用主题颜色
@@ -87,7 +87,7 @@ impl RenderOnce for UrlInputCard {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(label_color)
-                    .child("🔗 视频链接"),
+                    .child(crate::i18n::tr("🔗 视频链接")),
             )
             .child(
                 div()

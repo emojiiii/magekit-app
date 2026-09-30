@@ -2,10 +2,10 @@
 
 use crate::app::{AppState, DownloadVideoOptions};
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::WindowExt;
-use gpui_component::input::InputState;
-use gpui_component::notification::Notification;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::notification::Notification;
 use gpui_router::use_navigate;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn format_duration(duration: Option<Duration>) -> String {
                 format!("{}:{:02}", minutes, seconds)
             }
         }
-        None => "未知".to_string(),
+        None => crate::i18n::tr("未知").to_string(),
     }
 }
 
@@ -42,7 +42,7 @@ fn format_speed(bytes_per_sec: u64) -> String {
     const GB: u64 = MB * 1024;
 
     if bytes_per_sec == 0 {
-        return "准备中...".to_string();
+        return crate::i18n::tr("准备中...").to_string();
     } else if bytes_per_sec >= GB {
         format!("{:.2} GB/s", bytes_per_sec as f64 / GB as f64)
     } else if bytes_per_sec >= MB {
@@ -170,9 +170,21 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
             }
         } else if !has_video && has_audio {
             // 音频格式显示为 "最佳音质" 或扩展名
-            "最佳音质".to_string()
+            crate::i18n::tr("最佳音质").to_string()
         } else {
-            fmt.quality.clone().unwrap_or_else(|| "视频".to_string())
+            fmt.quality
+                .clone()
+                .unwrap_or_else(|| crate::i18n::tr("视频").to_string())
+        };
+
+        let label_key = if fmt.resolution.is_some() {
+            None
+        } else if !has_video && has_audio {
+            Some("最佳音质")
+        } else if fmt.quality.is_none() {
+            Some("视频")
+        } else {
+            None
         };
 
         // 根据格式类型分类处理
@@ -192,6 +204,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                 result.push(VideoFormatInfo {
                     format_id: fmt.format_id.clone(),
                     label,
+                    label_key,
                     ext: fmt.ext.clone(),
                     filesize: fmt.filesize,
                     has_video: true,
@@ -214,6 +227,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                 result.push(VideoFormatInfo {
                     format_id: fmt.format_id.clone(),
                     label,
+                    label_key,
                     ext: fmt.ext.clone(),
                     filesize: fmt.filesize,
                     has_video: true,
@@ -235,6 +249,7 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
                     result.push(VideoFormatInfo {
                         format_id: fmt.format_id.clone(),
                         label,
+                        label_key,
                         ext: fmt.ext.clone(),
                         filesize: fmt.filesize,
                         has_video: false,
@@ -258,7 +273,8 @@ fn convert_formats(formats: &[magekit_shared::VideoFormat]) -> Vec<VideoFormatIn
         tracing::warn!("⚠️ 未能识别任何格式，添加默认选项");
         result.push(VideoFormatInfo {
             format_id: "bestvideo+bestaudio/best".to_string(),
-            label: "最佳质量".to_string(),
+            label: crate::i18n::tr("最佳质量").to_string(),
+            label_key: Some("最佳质量"),
             ext: "mp4".to_string(),
             filesize: None,
             has_video: true,
@@ -316,9 +332,7 @@ impl HomePage {
 
         // 创建 URL 输入框状态
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("粘贴 YouTube、Bilibili 等视频链接...")
-                .clean_on_escape()
+            crate::i18n::input("粘贴 YouTube、Bilibili 等视频链接...", window, cx).clean_on_escape()
         });
 
         Self {
@@ -341,7 +355,8 @@ impl HomePage {
     fn on_parse(&mut self, cx: &mut Context<Self>) {
         let url = self.get_url(cx);
         if url.trim().is_empty() {
-            self.download_state = DownloadState::Error("请输入视频链接".to_string());
+            self.download_state =
+                DownloadState::Error(crate::i18n::tr("请输入视频链接").to_string());
             cx.notify();
             return;
         }
@@ -363,14 +378,14 @@ impl HomePage {
                 if handle.is_finished() {
                     break;
                 }
-                Timer::after(std::time::Duration::from_millis(100)).await;
+                smol::Timer::after(std::time::Duration::from_millis(100)).await;
             }
 
             // 在后台线程获取结果，避免阻塞主线程
             let result: anyhow::Result<magekit_shared::VideoInfo> = smol::unblock(move || {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("解析线程崩溃")))
+                handle.join().unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(crate::i18n::format("解析线程崩溃", &[])))
+                })
             })
             .await;
 
@@ -387,7 +402,10 @@ impl HomePage {
                         // 详细日志
                         tracing::info!("🎬 视频信息解析成功:");
                         tracing::info!("  标题: {}", info.title);
-                        tracing::info!("  作者: {}", info.uploader.as_deref().unwrap_or("未知"));
+                        tracing::info!(
+                            "  作者: {}",
+                            info.uploader.as_deref().unwrap_or(crate::i18n::tr("未知"))
+                        );
                         tracing::info!("  时长: {}", format_duration(info.duration));
                         tracing::info!("  格式数量: {}", info.formats.len());
                         if let Some(thumb) = &info.thumbnail {
@@ -443,7 +461,8 @@ impl HomePage {
         let url = match &self.current_url {
             Some(url) => url.clone(),
             None => {
-                self.download_state = DownloadState::Error("请先解析视频链接".to_string());
+                self.download_state =
+                    DownloadState::Error(crate::i18n::tr("请先解析视频链接").to_string());
                 cx.notify();
                 return;
             }
@@ -596,7 +615,8 @@ impl HomePage {
         let url = match &self.current_url {
             Some(url) => url.clone(),
             None => {
-                self.download_state = DownloadState::Error("请先解析视频链接".to_string());
+                self.download_state =
+                    DownloadState::Error(crate::i18n::tr("请先解析视频链接").to_string());
                 cx.notify();
                 return;
             }
@@ -664,7 +684,10 @@ impl HomePage {
 
         let Some(thumb_url) = thumbnail_url else {
             tracing::warn!("⚠️ 没有封面图可下载");
-            window.push_notification(Notification::warning("没有可用的封面图"), cx);
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("没有可用的封面图")),
+                cx,
+            );
             return;
         };
 
@@ -680,7 +703,7 @@ impl HomePage {
         tracing::info!("  输出目录: {:?}", output_dir);
 
         // 显示开始下载通知
-        window.push_notification(Notification::info("正在下载封面..."), cx);
+        window.push_notification(Notification::info(crate::i18n::tr("正在下载封面...")), cx);
 
         // 使用 spawn_in 以获取 AsyncWindowContext，这样可以访问 window
         cx.spawn_in(window, async move |_this, cx| {
@@ -706,13 +729,18 @@ impl HomePage {
                     .arg(&output_path)
                     .arg(&thumb_url)
                     .status()
-                    .map_err(|e| anyhow::anyhow!("执行 curl 失败: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "执行 curl 失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })?;
 
                 if !status.success() {
-                    return Err(anyhow::anyhow!(
+                    return Err(anyhow::anyhow!(crate::i18n::format(
                         "curl 下载失败，退出码: {:?}",
-                        status.code()
-                    ));
+                        &[format!("{:?}", status.code())]
+                    )));
                 }
 
                 tracing::info!("✅ 封面下载完成: {:?}", output_path);
@@ -730,14 +758,22 @@ impl HomePage {
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| "封面".to_string());
                     window.push_notification(
-                        Notification::success(format!("封面已保存: {}", filename)),
+                        Notification::success(crate::i18n::format(
+                            "封面已保存: {}",
+                            &[format!("{}", filename)],
+                        )),
                         cx,
                     );
                 }
                 Err(e) => {
                     tracing::error!("❌ 封面下载失败: {}", e);
-                    window
-                        .push_notification(Notification::error(format!("封面下载失败: {}", e)), cx);
+                    window.push_notification(
+                        Notification::error(crate::i18n::format(
+                            "封面下载失败: {}",
+                            &[format!("{}", e)],
+                        )),
+                        cx,
+                    );
                 }
             });
         })
@@ -810,13 +846,13 @@ impl HomePage {
                         .text_2xl()
                         .font_weight(FontWeight::BOLD)
                         .text_color(title_color)
-                        .child("视频下载"),
+                        .child(crate::i18n::tr("视频下载")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(desc_color)
-                        .child("粘贴视频链接，一键下载"),
+                        .child(crate::i18n::tr("粘贴视频链接，一键下载")),
                 ),
         )
     }

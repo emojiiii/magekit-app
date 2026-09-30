@@ -386,7 +386,7 @@ pub mod presets {
     /// 海洋蓝主题
     pub fn ocean_blue() -> CustomTheme {
         CustomTheme::new("Ocean Blue")
-            .with_description("清新的海洋蓝主题")
+            .with_description(crate::i18n::tr("清新的海洋蓝主题"))
             .with_colors(ThemeColors {
                 primary: "#0284c7".to_string(),
                 primary_foreground: "#f0f9ff".to_string(),
@@ -415,7 +415,7 @@ pub mod presets {
     /// 森林绿主题
     pub fn forest_green() -> CustomTheme {
         CustomTheme::new("Forest Green")
-            .with_description("自然的森林绿主题")
+            .with_description(crate::i18n::tr("自然的森林绿主题"))
             .with_colors(ThemeColors {
                 primary: "#15803d".to_string(),
                 primary_foreground: "#f0fdf4".to_string(),
@@ -444,7 +444,7 @@ pub mod presets {
     /// 紫罗兰主题
     pub fn violet() -> CustomTheme {
         CustomTheme::new("Violet")
-            .with_description("优雅的紫罗兰主题")
+            .with_description(crate::i18n::tr("优雅的紫罗兰主题"))
             .with_colors(ThemeColors {
                 primary: "#7c3aed".to_string(),
                 primary_foreground: "#faf5ff".to_string(),
@@ -473,7 +473,7 @@ pub mod presets {
     /// 夜间模式主题
     pub fn midnight() -> CustomTheme {
         CustomTheme::new("Midnight")
-            .with_description("深邃的午夜主题")
+            .with_description(crate::i18n::tr("深邃的午夜主题"))
             .with_colors(ThemeColors {
                 primary: "#60a5fa".to_string(),
                 primary_foreground: "#0f172a".to_string(),

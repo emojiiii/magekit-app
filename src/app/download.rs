@@ -33,7 +33,12 @@ impl AppState {
                 tool_manager
                     .get_video_info(&url, cookies_opt)
                     .await
-                    .map_err(|e| anyhow::anyhow!("获取视频信息失败: {}", e))
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "获取视频信息失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })
             })
         })
     }
@@ -101,7 +106,12 @@ impl AppState {
                 let task_id = tool_manager
                     .start_download_with_info(&url, download_options, cookies_opt, video_info)
                     .await
-                    .map_err(|e| anyhow::anyhow!("开始下载失败: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "开始下载失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })?;
 
                 tracing::info!("✅ 下载任务已创建: {}", task_id);
                 Ok(task_id)

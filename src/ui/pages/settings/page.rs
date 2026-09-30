@@ -2,14 +2,16 @@
 
 use super::widgets::{
     AboutSection, AdvancedSettingsCard, CookiePlatformOption, CookieSettingsCard,
-    DownloadSettingsCard, ProxyMode, ProxySettingsCard, ProxyTestStatus, SoopCredentialsCard,
-    ThemeSettingsCard, cookie_platform_identity, cookie_platform_options,
+    DownloadSettingsCard, LanguageSettingsCard, ProxyMode, ProxySettingsCard, ProxyTestStatus,
+    SoopCredentialsCard, ThemeSettingsCard, cookie_platform_identity, cookie_platform_options,
 };
-use crate::app::AppState;
+use crate::app::{AppEvent, AppState};
+use crate::i18n::Language;
 use gpui::*;
-use gpui_component::input::InputState;
-use gpui_component::select::{SelectEvent, SelectState};
-use gpui_component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::select::{SelectEvent, SelectState};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry};
+use gpui_kit::component::{WindowExt, notification::Notification};
 use magekit_shared::PlatformCookie;
 use magekit_shared::types::Theme as AppTheme;
 use std::path::PathBuf;
@@ -26,6 +28,7 @@ pub struct SettingsPage {
 
     // 外观设置 - 存储主题名称
     theme_name: SharedString,
+    language: Language,
 
     // 代理设置
     proxy_mode: ProxyMode,
@@ -96,13 +99,13 @@ impl SettingsPage {
         )
         .detach();
         let cookie_custom_platform_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("例如: example.com"));
+            cx.new(|cx| crate::i18n::input("例如: example.com", window, cx));
         let cookie_content_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("粘贴完整的 Cookie 字符串"));
+            cx.new(|cx| crate::i18n::input("粘贴完整的 Cookie 字符串", window, cx));
 
         let soop_username = config.live_record.soop_username.clone();
         let soop_username_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("SOOP 用户名");
+            let mut state = crate::i18n::input("SOOP 用户名", window, cx);
             if !soop_username.is_empty() {
                 state.insert(&soop_username, window, cx);
             }
@@ -110,14 +113,22 @@ impl SettingsPage {
         });
         let soop_password = config.live_record.soop_password.clone();
         let soop_password_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx)
-                .placeholder("SOOP 密码")
-                .masked(true);
+            let mut state = crate::i18n::input("SOOP 密码", window, cx).masked(true);
             if !soop_password.is_empty() {
                 state.insert(&soop_password, window, cx);
             }
             state
         });
+
+        // Select 会缓存选中项标题；刷新快照不清空查询、选择或 Cookie 内容。
+        cx.observe_global_in::<crate::i18n::LocaleChanged>(window, |this, window, cx| {
+            this.cookie_platform_select.update(cx, |select, cx| {
+                let selected = select.selected_index(cx);
+                select.set_selected_index(selected, window, cx);
+            });
+            cx.notify();
+        })
+        .detach();
 
         Self {
             app_state,
@@ -126,6 +137,7 @@ impl SettingsPage {
             embed_metadata: config.download.embed_metadata,
             embed_thumbnail: config.download.embed_thumbnail,
             theme_name,
+            language: Language::from_config(&config.ui.language),
             proxy_mode,
             proxy_url,
             proxy_input,
@@ -172,11 +184,38 @@ impl SettingsPage {
 
         // 从 ThemeRegistry 获取主题配置并应用
         if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(theme_name).cloned() {
-            Theme::global_mut(cx).apply_config(&theme_config);
+            Theme::update(cx, |theme| theme.apply_config(&theme_config));
             cx.refresh_windows();
         }
 
         self.save_settings(cx);
+    }
+
+    fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
+        // 与其他设置写入共用锁，避免过时的整份配置覆盖刚选择的语言。
+        let result = {
+            let mut config = self.app_state.config.blocking_write();
+            let previous = config.ui.language.clone();
+            config.ui.language = language.config_value().to_owned();
+            let result = magekit_shared::save_app_config(&config);
+            if result.is_err() {
+                config.ui.language = previous;
+            }
+            result
+        };
+        if let Err(error) = result {
+            window.push_notification(
+                Notification::error(crate::i18n::format(
+                    "无法保存语言设置: {}",
+                    &[error.to_string()],
+                )),
+                cx,
+            );
+            return;
+        }
+        self.language = language;
+        crate::i18n::apply_language(language, cx);
+        cx.notify();
     }
 
     fn toggle_auto_check_updates(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -352,7 +391,7 @@ impl SettingsPage {
             // 在后台线程中打开文件对话框
             let selected_path: Option<PathBuf> = smol::unblock(move || {
                 let dialog = rfd::FileDialog::new()
-                    .set_title("选择下载目录")
+                    .set_title(crate::i18n::tr("选择下载目录"))
                     .set_directory(&current_path);
                 dialog.pick_folder()
             })
@@ -392,7 +431,7 @@ impl SettingsPage {
         cx.spawn(async move |_this, _cx| {
             // 获取当前配置并更新
             smol::unblock(move || {
-                let mut config = app_state.config();
+                let mut config = app_state.config.blocking_write();
                 config.download.default_output_path = download_path;
                 config.download.max_concurrent_downloads = max_concurrent;
                 config.download.embed_metadata = embed_metadata;
@@ -434,9 +473,17 @@ impl SettingsPage {
                 // 保存 Cookie 设置
                 config.advanced.cookies = cookies;
 
-                // 使用 runtime 保存配置
+                // 锁内修改最新配置；不覆盖并发更新的语言或其他页面的配置。
+                if let Err(error) = magekit_shared::save_app_config(&config) {
+                    tracing::error!("Failed to save settings: {}", error);
+                }
+                let saved = config.clone();
+                drop(config);
                 app_state.runtime.block_on(async {
-                    let _ = app_state.update_config(config).await;
+                    let _ = app_state
+                        .event_tx
+                        .send(AppEvent::ConfigChanged(saved))
+                        .await;
                 });
             })
             .await;
@@ -493,14 +540,11 @@ impl Render for SettingsPage {
                                                     .text_xl()
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(title_color)
-                                                    .child("设置"),
+                                                    .child(crate::i18n::tr("设置")),
                                             )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(desc_color)
-                                                    .child("自定义应用程序行为和偏好"),
-                                            ),
+                                            .child(div().text_sm().text_color(desc_color).child(
+                                                crate::i18n::tr("自定义应用程序行为和偏好"),
+                                            )),
                                     ),
                             )
                             // 外观设置（主题切换）
@@ -511,6 +555,17 @@ impl Render for SettingsPage {
                                     }),
                                 ),
                             )
+                            .child({
+                                let entity = cx.entity();
+                                LanguageSettingsCard::new(
+                                    self.language,
+                                    move |language, window, cx| {
+                                        entity.update(cx, |this, cx| {
+                                            this.set_language(language, window, cx)
+                                        });
+                                    },
+                                )
+                            })
                             // 下载设置
                             .child(
                                 DownloadSettingsCard::new(&self.download_path, self.max_concurrent)

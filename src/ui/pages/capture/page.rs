@@ -6,11 +6,13 @@ use crate::app::{
 use crate::ui::pages::capture::widgets::{CaptureRowTheme, capture_row};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::{ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
+use gpui_kit::component::{
+    ActiveTheme, Disableable, Sizable, VirtualListScrollHandle, v_virtual_list,
+};
 use gpui_router::NavLink;
 use magekit_shared::DownloadOptions;
 use std::collections::{HashMap, HashSet};
@@ -43,14 +45,12 @@ const CAPTURE_ITEM_HEIGHT: f32 = 110.0;
 impl CapturePage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("输入要嗅探的网页 URL，支持频道/播放页")
+            crate::i18n::input("输入要嗅探的网页 URL，支持频道/播放页", window, cx)
                 .clean_on_escape()
         });
 
         let browser_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("可选：自定义浏览器可执行路径 (Chrome/Edge)")
+            crate::i18n::input("可选：自定义浏览器可执行路径 (Chrome/Edge)", window, cx)
                 .clean_on_escape()
         });
 
@@ -86,14 +86,14 @@ impl CapturePage {
 
     fn start_capture(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.is_running {
-            self.append_log("已在运行中，先停止再重新开始".into());
+            self.append_log(crate::i18n::tr("已在运行中，先停止再重新开始").into());
             cx.notify();
             return;
         }
 
         let url = self.url_input.read(cx).value().trim().to_string();
         if url.is_empty() {
-            self.append_log("请输入要嗅探的 URL".into());
+            self.append_log(crate::i18n::tr("请输入要嗅探的 URL").into());
             cx.notify();
             return;
         }
@@ -165,7 +165,7 @@ impl CapturePage {
             let _ = tx.send(());
         }
         self.is_running = false;
-        self.append_log("⏹️ 已请求停止".into());
+        self.append_log(crate::i18n::tr("⏹️ 已请求停止").into());
     }
 
     fn handle_event(&mut self, event: CaptureEvent) {
@@ -350,11 +350,13 @@ impl CapturePage {
                 match result {
                     Ok(_) => {
                         this.download_status
-                            .insert(url.clone(), "已加入任务".to_string());
+                            .insert(url.clone(), crate::i18n::tr("已加入任务").to_string());
                     }
                     Err(err) => {
-                        this.download_status
-                            .insert(url.clone(), format!("失败: {}", err));
+                        this.download_status.insert(
+                            url.clone(),
+                            crate::i18n::format("失败: {}", &[format!("{}", err)]),
+                        );
                     }
                 }
                 cx.notify();
@@ -417,7 +419,7 @@ impl Render for CapturePage {
                                 Button::new(("capture-download", ix))
                                     .primary()
                                     .small()
-                                    .label("加入下载")
+                                    .label(crate::i18n::tr("加入下载"))
                                     .disabled(matches!(status_clone.as_deref(), Some("提交中...")))
                                     .on_click(move |_, _, cx| {
                                         let _ = entity_for_btn.update(cx, |this, cx| {
@@ -440,7 +442,7 @@ impl Render for CapturePage {
                 .justify_center()
                 .flex_1()
                 .text_color(row_theme.muted)
-                .child("尚未捕获到 m3u8 链接")
+                .child(crate::i18n::tr("尚未捕获到 m3u8 链接"))
                 .into_any_element()
         } else {
             div()
@@ -496,14 +498,11 @@ impl Render for CapturePage {
                                     .text_2xl()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme.foreground)
-                                    .child("M3U8 嗅探"),
+                                    .child(crate::i18n::tr("M3U8 嗅探")),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("启动浏览器抓包，实时展示捕获到的 m3u8 链接"),
-                            ),
+                            .child(div().text_sm().text_color(theme.muted_foreground).child(
+                                crate::i18n::tr("启动浏览器抓包，实时展示捕获到的 m3u8 链接"),
+                            )),
                     )
                     .child(
                         div()
@@ -513,7 +512,7 @@ impl Render for CapturePage {
                                 Button::new("start-capture")
                                     .primary()
                                     .disabled(self.is_running)
-                                    .label("开始抓取")
+                                    .label(crate::i18n::tr("开始抓取"))
                                     .on_click(cx.listener(|this, _event, window, cx| {
                                         this.start_capture(window, cx);
                                     })),
@@ -522,7 +521,7 @@ impl Render for CapturePage {
                                 Button::new("stop-capture")
                                     .ghost()
                                     .disabled(!self.is_running)
-                                    .label("停止")
+                                    .label(crate::i18n::tr("停止"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.stop_capture();
                                         cx.notify();
@@ -546,7 +545,7 @@ impl Render for CapturePage {
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.foreground)
-                            .child("抓取设置"),
+                            .child(crate::i18n::tr("抓取设置")),
                     )
                     .child(
                         div()
@@ -558,7 +557,7 @@ impl Render for CapturePage {
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.foreground)
-                                    .child("目标 URL"),
+                                    .child(crate::i18n::tr("目标 URL")),
                             )
                             .child(Input::new(&self.url_input)),
                     )
@@ -572,7 +571,7 @@ impl Render for CapturePage {
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.foreground)
-                                    .child("自定义浏览器路径 (可选)"),
+                                    .child(crate::i18n::tr("自定义浏览器路径 (可选)")),
                             )
                             .child(Input::new(&self.browser_input)),
                     )
@@ -584,7 +583,7 @@ impl Render for CapturePage {
                             .child(
                                 Checkbox::new("headless-toggle")
                                     .checked(self.headless)
-                                    .label("使用 Headless 模式")
+                                    .label(crate::i18n::tr("使用 Headless 模式"))
                                     .on_click(cx.listener(|this, checked, _window, cx| {
                                         this.headless = *checked;
                                         cx.notify();
@@ -594,7 +593,7 @@ impl Render for CapturePage {
                                 div()
                                     .text_sm()
                                     .text_color(theme.muted_foreground)
-                                    .child("无头模式可减少资源占用"),
+                                    .child(crate::i18n::tr("无头模式可减少资源占用")),
                             ),
                     ),
             )
@@ -621,13 +620,16 @@ impl Render for CapturePage {
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.foreground)
-                                    .child(format!("捕获的资源 ({})", self.captured.len())),
+                                    .child(crate::i18n::format(
+                                        "捕获的资源 ({})",
+                                        &[format!("{}", self.captured.len())],
+                                    )),
                             )
                             .child(
                                 Button::new("refresh-capture")
                                     .ghost()
                                     .small()
-                                    .label("清空")
+                                    .label(crate::i18n::tr("清空"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.captured.clear();
                                         this.scroll_handle = VirtualListScrollHandle::new();
@@ -651,7 +653,7 @@ impl Render for CapturePage {
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(theme.muted_foreground)
-                                    .child("筛选类型："),
+                                    .child(crate::i18n::tr("筛选类型：")),
                             )
                             .child(
                                 Button::new("filter-media")
@@ -662,7 +664,7 @@ impl Render for CapturePage {
                                         btn.ghost()
                                     })
                                     .xsmall()
-                                    .label("媒体")
+                                    .label(crate::i18n::tr("媒体"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.filter_type = CaptureFilterType::Media;
                                         cx.notify();
@@ -677,7 +679,7 @@ impl Render for CapturePage {
                                         btn.ghost()
                                     })
                                     .xsmall()
-                                    .label("视频")
+                                    .label(crate::i18n::tr("视频"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.filter_type = CaptureFilterType::Video;
                                         cx.notify();
@@ -692,7 +694,7 @@ impl Render for CapturePage {
                                         btn.ghost()
                                     })
                                     .xsmall()
-                                    .label("音频")
+                                    .label(crate::i18n::tr("音频"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.filter_type = CaptureFilterType::Audio;
                                         cx.notify();
@@ -707,7 +709,7 @@ impl Render for CapturePage {
                                         btn.ghost()
                                     })
                                     .xsmall()
-                                    .label("图片")
+                                    .label(crate::i18n::tr("图片"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.filter_type = CaptureFilterType::Image;
                                         cx.notify();
@@ -722,7 +724,7 @@ impl Render for CapturePage {
                                         btn.ghost()
                                     })
                                     .xsmall()
-                                    .label("全部")
+                                    .label(crate::i18n::tr("全部"))
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.filter_type = CaptureFilterType::All;
                                         cx.notify();

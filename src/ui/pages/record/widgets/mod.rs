@@ -120,7 +120,7 @@ impl LiveRoomStatus {
             recording_status: None,
             last_checked: Utc::now(),
             auto_record: false,
-            record_quality: "原画".to_string(),
+            record_quality: crate::i18n::tr("原画").to_string(),
         }
     }
 }

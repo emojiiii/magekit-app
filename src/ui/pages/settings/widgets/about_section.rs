@@ -3,8 +3,8 @@
 use crate::ui::widgets::Section;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::{Icon, IconName, Sizable};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::{Icon, IconName, Sizable};
 
 /// 关于信息卡片
 #[derive(IntoElement)]
@@ -18,7 +18,7 @@ impl RenderOnce for AboutSection {
         let title_color = theme.foreground;
         let muted_color = theme.muted_foreground;
 
-        Section::new_with_icon("关于", IconName::Info).child(
+        Section::new_with_icon(crate::i18n::tr("关于"), IconName::Info).child(
             div()
                 .p(px(16.0))
                 .rounded(px(12.0))
@@ -32,25 +32,25 @@ impl RenderOnce for AboutSection {
                         .gap(px(10.0))
                         .child(AboutItem::new_with_icon(
                             IconName::Star,
-                            "应用名称",
-                            "MageKit 视频下载器",
+                            crate::i18n::tr("应用名称"),
+                            crate::i18n::tr("MageKit 视频下载器"),
                             muted_color,
                             title_color,
                         ))
                         .child(AboutItem::new_with_icon(
                             IconName::CircleCheck,
-                            "版本",
+                            crate::i18n::tr("版本"),
                             magekit_shared::constants::APP_VERSION,
                             muted_color,
                             title_color,
                         ))
                         .child(AboutItem::new_with_icon(
                             IconName::Settings2,
-                            "构建类型",
+                            crate::i18n::tr("构建类型"),
                             if cfg!(debug_assertions) {
-                                "Debug"
+                                crate::i18n::tr("Debug")
                             } else {
-                                "Release"
+                                crate::i18n::tr("Release")
                             },
                             muted_color,
                             title_color,

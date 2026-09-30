@@ -2,13 +2,13 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{Disableable, Icon, IconName};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{Disableable, Icon, IconName};
 
 /// 频道输入卡片
 pub struct ChannelInputCard {
     /// 输入框实体
-    input: Entity<gpui_component::input::InputState>,
+    input: Entity<gpui_kit::component::input::InputState>,
     /// 是否正在解析
     is_loading: bool,
     /// 解析按钮点击回调
@@ -16,7 +16,7 @@ pub struct ChannelInputCard {
 }
 
 impl ChannelInputCard {
-    pub fn new(input: Entity<gpui_component::input::InputState>) -> Self {
+    pub fn new(input: Entity<gpui_kit::component::input::InputState>) -> Self {
         Self {
             input,
             is_loading: false,
@@ -67,7 +67,7 @@ impl IntoElement for ChannelInputCard {
                                 div()
                                     .text_base()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("频道/播放列表"),
+                                    .child(crate::i18n::tr("频道/播放列表")),
                             ),
                     )
                     // 说明文字
@@ -75,7 +75,9 @@ impl IntoElement for ChannelInputCard {
                         div()
                             .text_sm()
                             .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.7))
-                            .child("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
+                            .child(crate::i18n::tr(
+                                "支持 YouTube 频道、播放列表、Bilibili UP主空间等",
+                            )),
                     )
                     // 输入框和按钮
                     .child(
@@ -86,7 +88,11 @@ impl IntoElement for ChannelInputCard {
                             .child(
                                 Button::new("parse-channel")
                                     .primary()
-                                    .label(if is_loading { "解析中..." } else { "解析" })
+                                    .label(if is_loading {
+                                        crate::i18n::tr("解析中...")
+                                    } else {
+                                        crate::i18n::tr("解析")
+                                    })
                                     .icon(if is_loading {
                                         IconName::LoaderCircle
                                     } else {

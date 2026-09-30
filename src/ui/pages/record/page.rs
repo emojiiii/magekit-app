@@ -12,15 +12,16 @@ use chrono::Utc;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Sizable;
-use gpui_component::WindowExt;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
-use gpui_component::notification::Notification;
-use gpui_component::radio::RadioGroup;
-use gpui_component::switch::Switch;
-use gpui_component::v_flex;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Sizable;
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::dialog::DialogFooter;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::radio::RadioGroup;
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::v_flex;
 use live_recorder::{
     LiveRecorder, RecordConfig, RecordStatus, error::RecorderError, recorder::RecordingHandle,
 };
@@ -203,7 +204,10 @@ impl RecordingPage {
         let ffmpeg = match self.resolve_ffmpeg_path() {
             Some(p) => p,
             None => {
-                self.push_toast(ToastLevel::Warning, "未找到 ffmpeg，跳过自动转码");
+                self.push_toast(
+                    ToastLevel::Warning,
+                    crate::i18n::tr("未找到 ffmpeg，跳过自动转码"),
+                );
                 cx.notify();
                 return;
             }
@@ -273,14 +277,20 @@ impl RecordingPage {
                             if let Some(err) = delete_error {
                                 page.push_toast(
                                     ToastLevel::Warning,
-                                    format!("已转码但清理源文件失败：{}", err),
+                                    crate::i18n::format(
+                                        "已转码但清理源文件失败：{}",
+                                        &[format!("{}", err)],
+                                    ),
                                 );
                             }
                         } else {
                             let stderr = String::from_utf8_lossy(&output.stderr);
                             page.push_toast(
                                 ToastLevel::Error,
-                                format!("转码失败：{}", stderr.trim()),
+                                crate::i18n::format(
+                                    "转码失败：{}",
+                                    &[format!("{}", stderr.trim())],
+                                ),
                             );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 if let Some(ref mut task) = state.current_task {
@@ -293,7 +303,10 @@ impl RecordingPage {
                         }
                     }
                     Ok(Err(e)) => {
-                        page.push_toast(ToastLevel::Error, format!("启动 ffmpeg 失败：{}", e));
+                        page.push_toast(
+                            ToastLevel::Error,
+                            crate::i18n::format("启动 ffmpeg 失败：{}", &[format!("{}", e)]),
+                        );
                         if let Some(state) = page.room_states.get_mut(&room_id) {
                             if let Some(ref mut task) = state.current_task {
                                 task.status = magekit_shared::types::RecordingTaskStatus::Failed(
@@ -303,7 +316,10 @@ impl RecordingPage {
                         }
                     }
                     Err(e) => {
-                        page.push_toast(ToastLevel::Error, format!("转码任务失败：{}", e));
+                        page.push_toast(
+                            ToastLevel::Error,
+                            crate::i18n::format("转码任务失败：{}", &[format!("{}", e)]),
+                        );
                         if let Some(state) = page.room_states.get_mut(&room_id) {
                             if let Some(ref mut task) = state.current_task {
                                 task.status = magekit_shared::types::RecordingTaskStatus::Failed(
@@ -362,8 +378,11 @@ impl RecordingPage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 创建 URL 输入框
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("输入直播间地址（抖音使用原生录制，其他支持的平台使用 Streamlink）")
+            crate::i18n::input(
+                "输入直播间地址（抖音使用原生录制，其他支持的平台使用 Streamlink）",
+                window,
+                cx,
+            )
         });
 
         // 从配置加载数据
@@ -517,7 +536,7 @@ impl RecordingPage {
 
     /// 返回录制页当前使用的引擎。
     fn current_engine_label(&self) -> &'static str {
-        "抖音原生 / 其他平台 Streamlink"
+        crate::i18n::tr("抖音原生 / 其他平台 Streamlink")
     }
 
     /// 启动监控任务（定期检查房间状态）
@@ -794,7 +813,7 @@ impl RecordingPage {
                         });
                     }
                     Err(e) => {
-                        let error = format!("任务执行失败: {}", e);
+                        let error = crate::i18n::format("任务执行失败: {}", &[format!("{}", e)]);
                         tracing::warn!("⚠️ 房间 {} 状态检查任务失败: {}", room_id, error);
                         let _ = this.update(cx, |this, cx| {
                             if let Some(state) = this.room_states.get_mut(&room_id) {
@@ -884,23 +903,23 @@ impl RecordingPage {
             let this = this.clone();
 
             dialog
-                .title("添加直播间")
+                .title(crate::i18n::tr("添加直播间"))
                 .h(px(320.0))
                 .child(
                     v_flex()
                         .gap_4()
-                        .child(div().text_sm().child("请输入直播间链接"))
+                        .child(div().text_sm().child(crate::i18n::tr("请输入直播间链接")))
                         .child(Input::new(&url_input).cleanable(true))
                         .child(div().text_xs().text_color(gpui::rgb(0x888888)).child(
-                            "抖音使用原生录制；B站、虎牙、斗鱼、SOOP 等平台使用 Streamlink；快手暂不支持",
+                            crate::i18n::tr("抖音使用原生录制；B站、虎牙、斗鱼、SOOP 等平台使用 Streamlink；快手暂不支持"),
                         )),
                 )
-                .footer(move |_, _, _, _| {
+                .footer({
                     let url_input = url_input.clone();
                     let this = this.clone();
 
-                    vec![
-                        Button::new("confirm-add").primary().label("添加").on_click(
+                    DialogFooter::new().children([
+                        Button::new("confirm-add").primary().label(crate::i18n::tr("添加")).on_click(
                             move |_event, window, cx| {
                                 let url = url_input.read(cx).text().to_string().trim().to_string();
 
@@ -915,11 +934,11 @@ impl RecordingPage {
                             },
                         ),
                         Button::new("cancel-add")
-                            .label("取消")
+                            .label(crate::i18n::tr("取消"))
                             .on_click(|_event, window, cx| {
                                 window.close_dialog(cx);
                             }),
-                    ]
+                    ])
                 })
         });
     }
@@ -928,7 +947,10 @@ impl RecordingPage {
     fn add_room(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
         // 检查是否已存在
         if self.monitored_rooms.iter().any(|r| r.url == url) {
-            window.push_notification(Notification::warning("该直播间已在监控列表中"), cx);
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("该直播间已在监控列表中")),
+                cx,
+            );
             return;
         }
 
@@ -971,7 +993,7 @@ impl RecordingPage {
                 status: LiveRoomStatus::Unknown,
                 is_recording: false,
                 current_task: None,
-                last_error: Some("正在获取直播间信息...".to_string()),
+                last_error: Some(crate::i18n::tr("正在获取直播间信息...").to_string()),
                 cover_url: None,
                 cover_lookup_attempted: false,
                 title: None,
@@ -1084,7 +1106,7 @@ impl RecordingPage {
                     });
                 }
                 Err(e) => {
-                    let error_msg = format!("任务执行失败: {}", e);
+                    let error_msg = crate::i18n::format("任务执行失败: {}", &[format!("{}", e)]);
                     tracing::error!(
                         "❌ 获取直播间信息失败: url={}, err={}",
                         url_for_log,
@@ -1115,31 +1137,26 @@ impl RecordingPage {
     /// 格式化错误消息（友好显示）
     fn format_error(error: &RecorderError) -> String {
         match error {
-            RecorderError::UnsupportedPlatform(url) => {
-                format!(
-                    "当前录制器不支持该地址: {}\n抖音使用原生录制；其他支持的平台由 Streamlink 插件解析",
-                    url
-                )
-            }
+            RecorderError::UnsupportedPlatform(url) => crate::i18n::format(
+                "当前录制器不支持该地址: {}\n抖音使用原生录制；其他支持的平台由 Streamlink 插件解析",
+                &[format!("{}", url)],
+            ),
             RecorderError::RoomNotFound(room_id) => {
-                format!("直播间不存在: {}", room_id)
+                crate::i18n::format("直播间不存在: {}", &[format!("{}", room_id)])
             }
-            RecorderError::HttpError(e) => {
-                format!("网络错误: {}", e)
-            }
-            RecorderError::JsonError(e) => {
-                format!("解析错误: {}", e)
-            }
+            RecorderError::HttpError(e) => crate::i18n::format("网络错误: {}", &[format!("{}", e)]),
+            RecorderError::JsonError(e) => crate::i18n::format("解析错误: {}", &[format!("{}", e)]),
             RecorderError::InvalidResponseFormat(msg) => {
-                format!("响应格式错误: {}", msg)
+                crate::i18n::format("响应格式错误: {}", &[format!("{}", msg)])
             }
-            RecorderError::AuthenticationRequired(msg) => {
-                format!("需要登录: {}\n请在设置中配置平台账号或 Cookie", msg)
-            }
+            RecorderError::AuthenticationRequired(msg) => crate::i18n::format(
+                "需要登录: {}\n请在设置中配置平台账号或 Cookie",
+                &[format!("{}", msg)],
+            ),
             RecorderError::AuthenticationFailed(msg) => {
-                format!("认证失败: {}", msg)
+                crate::i18n::format("认证失败: {}", &[format!("{}", msg)])
             }
-            RecorderError::NetworkTimeout => "网络超时".to_string(),
+            RecorderError::NetworkTimeout => crate::i18n::tr("网络超时").to_string(),
             _ => format!("{}", error),
         }
     }
@@ -1180,13 +1197,19 @@ impl RecordingPage {
 
         // 检查是否正在直播
         if state.status != LiveRoomStatus::Live {
-            window.push_notification(Notification::warning("直播间未开播，无法录制"), cx);
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("直播间未开播，无法录制")),
+                cx,
+            );
             return;
         }
 
         // 检查是否已在录制
         if state.is_recording {
-            window.push_notification(Notification::warning("该直播间已在录制中"), cx);
+            window.push_notification(
+                Notification::warning(crate::i18n::tr("该直播间已在录制中")),
+                cx,
+            );
             return;
         }
 
@@ -1206,7 +1229,10 @@ impl RecordingPage {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 tracing::error!("❌ 无法创建输出目录: {}", e);
                 window.push_notification(
-                    Notification::error(&format!("无法创建输出目录: {}", e)),
+                    Notification::error(&crate::i18n::format(
+                        "无法创建输出目录: {}",
+                        &[format!("{}", e)],
+                    )),
                     cx,
                 );
                 return;
@@ -1230,7 +1256,10 @@ impl RecordingPage {
         cx.notify();
 
         window.push_notification(
-            Notification::info(&format!("正在连接直播流: {}", anchor_name)),
+            Notification::info(&crate::i18n::format(
+                "正在连接直播流: {}",
+                &[format!("{}", anchor_name)],
+            )),
             cx,
         );
 
@@ -1304,7 +1333,7 @@ impl RecordingPage {
                     });
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("录制失败: {}", e);
+                    let error_msg = crate::i18n::format("录制失败: {}", &[format!("{}", e)]);
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
@@ -1331,7 +1360,7 @@ impl RecordingPage {
                     tracing::error!("❌ 录制失败: {}", error_msg);
                 }
                 Err(e) => {
-                    let error_msg = format!("任务执行失败: {}", e);
+                    let error_msg = crate::i18n::format("任务执行失败: {}", &[format!("{}", e)]);
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
@@ -1421,17 +1450,18 @@ impl RecordingPage {
                                     );
                                     page.push_toast(
                                         ToastLevel::Error,
-                                        format!(
+                                        crate::i18n::format(
                                             "录制已停止但未写入任何数据：{}",
-                                            anchor_name_for_toast
+                                            &[format!("{}", anchor_name_for_toast)],
                                         ),
                                     );
                                     if let Some(state) = page.room_states.get_mut(&room_id) {
-                                        state.last_error = Some("未写入任何数据".to_string());
+                                        state.last_error =
+                                            Some(crate::i18n::tr("未写入任何数据").to_string());
                                         if let Some(ref mut task) = state.current_task {
                                             task.status =
                                                 magekit_shared::types::RecordingTaskStatus::Failed(
-                                                    "未写入任何数据".to_string(),
+                                                    crate::i18n::tr("未写入任何数据").to_string(),
                                                 );
                                         }
                                     }
@@ -1442,9 +1472,9 @@ impl RecordingPage {
                                 if page.transcode_target_path(&input_path).is_some() {
                                     page.push_toast(
                                         ToastLevel::Info,
-                                        format!(
+                                        crate::i18n::format(
                                             "录制已停止，后台转码中：{}",
-                                            anchor_name_for_toast
+                                            &[format!("{}", anchor_name_for_toast)],
                                         ),
                                     );
                                     page.start_transcode_in_background(room_id, input_path, cx);
@@ -1456,7 +1486,10 @@ impl RecordingPage {
                                     }
                                     page.push_toast(
                                         ToastLevel::Success,
-                                        format!("录制已停止：{}", anchor_name_for_toast),
+                                        crate::i18n::format(
+                                            "录制已停止：{}",
+                                            &[format!("{}", anchor_name_for_toast)],
+                                        ),
                                     );
                                 }
                             }
@@ -1480,7 +1513,10 @@ impl RecordingPage {
                             }
                             page.push_toast(
                                 ToastLevel::Error,
-                                format!("停止录制失败：{}（{}）", anchor_name_for_toast, err),
+                                crate::i18n::format(
+                                    "停止录制失败：{}（{}）",
+                                    &[format!("{}", anchor_name_for_toast), format!("{}", err)],
+                                ),
                             );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 state.last_error = Some(err.clone());
@@ -1508,7 +1544,10 @@ impl RecordingPage {
                             }
                             page.push_toast(
                                 ToastLevel::Error,
-                                format!("停止录制任务失败：{}（{}）", anchor_name_for_toast, err),
+                                crate::i18n::format(
+                                    "停止录制任务失败：{}（{}）",
+                                    &[format!("{}", anchor_name_for_toast), format!("{}", err)],
+                                ),
                             );
                             if let Some(state) = page.room_states.get_mut(&room_id) {
                                 state.last_error = Some(err.clone());
@@ -1526,7 +1565,10 @@ impl RecordingPage {
         }
 
         window.push_notification(
-            Notification::info(&format!("正在停止录制：{}", anchor_name)),
+            Notification::info(&crate::i18n::format(
+                "正在停止录制：{}",
+                &[format!("{}", anchor_name)],
+            )),
             cx,
         );
         cx.notify();
@@ -1559,7 +1601,7 @@ impl RecordingPage {
                     .unwrap_or(true)
             })
         {
-            error = Some("录制结束但未写入媒体数据".to_string());
+            error = Some(crate::i18n::tr("录制结束但未写入媒体数据").to_string());
         }
 
         if let Some(state) = self.room_states.get_mut(&room_id) {
@@ -1581,12 +1623,15 @@ impl RecordingPage {
 
         if let Some(message) = error {
             tracing::error!("❌ 录制失败: room_id={} error={}", room_id, message);
-            self.push_toast(ToastLevel::Error, format!("录制失败：{}", message));
+            self.push_toast(
+                ToastLevel::Error,
+                crate::i18n::format("录制失败：{}", &[format!("{}", message)]),
+            );
         } else if completed
             && let Some(input_path) = input_path
             && self.transcode_target_path(&input_path).is_some()
         {
-            self.push_toast(ToastLevel::Info, "录制已完成，后台转码中");
+            self.push_toast(ToastLevel::Info, crate::i18n::tr("录制已完成，后台转码中"));
             self.start_transcode_in_background(room_id, input_path, cx);
         }
 
@@ -1702,7 +1747,10 @@ impl RecordingPage {
                             }
                             if first_media {
                                 tracing::info!("✅ 录制收到首个媒体数据: room_id={}", room_id);
-                                this.push_toast(ToastLevel::Success, "直播流已连接，开始写入数据");
+                                this.push_toast(
+                                    ToastLevel::Success,
+                                    crate::i18n::tr("直播流已连接，开始写入数据"),
+                                );
                             }
                             cx.notify();
                         });
@@ -1710,7 +1758,9 @@ impl RecordingPage {
                     Ok((None, status, completion_error)) => {
                         let error = completion_error.or_else(|| match &status {
                             RecordStatus::Error(message) => Some(message.clone()),
-                            _ => Some("Streamlink worker 未返回最终状态".to_string()),
+                            _ => Some(
+                                crate::i18n::tr("Streamlink worker 未返回最终状态").to_string(),
+                            ),
                         });
                         tracing::error!(
                             "❌ 录制进度通道关闭: room_id={} error={:?}",
@@ -1731,7 +1781,8 @@ impl RecordingPage {
                         break;
                     }
                     Err(e) => {
-                        let error = format!("获取录制进度失败：{}", e);
+                        let error =
+                            crate::i18n::format("获取录制进度失败：{}", &[format!("{}", e)]);
                         tracing::error!("❌ {}", error);
                         let _ = this.update(cx, |this, cx| {
                             if this.room_states.get(&room_id).is_some_and(|state| {
@@ -1874,7 +1925,7 @@ impl RecordingPage {
                     });
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("自动录制失败: {}", e);
+                    let error_msg = crate::i18n::format("自动录制失败: {}", &[format!("{}", e)]);
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
@@ -1895,7 +1946,7 @@ impl RecordingPage {
                     });
                 }
                 Err(e) => {
-                    let error_msg = format!("任务执行失败: {}", e);
+                    let error_msg = crate::i18n::format("任务执行失败: {}", &[format!("{}", e)]);
                     tracing::error!("❌ {}", error_msg);
 
                     let _ = this.update(cx, |this, cx| {
@@ -1924,7 +1975,10 @@ impl RecordingPage {
         // 检查是否正在录制
         if let Some(state) = self.room_states.get(&room_id) {
             if state.is_recording {
-                window.push_notification(Notification::warning("请先停止录制再删除"), cx);
+                window.push_notification(
+                    Notification::warning(crate::i18n::tr("请先停止录制再删除")),
+                    cx,
+                );
                 return;
             }
         }
@@ -1934,7 +1988,7 @@ impl RecordingPage {
             self.room_states.remove(&room_id);
             self.save_config();
 
-            window.push_notification(Notification::info("直播间已移除"), cx);
+            window.push_notification(Notification::info(crate::i18n::tr("直播间已移除")), cx);
             cx.notify();
         }
     }
@@ -2103,7 +2157,7 @@ impl RecordingPage {
                     });
                 }
                 Err(e) => {
-                    let error = format!("任务执行失败: {}", e);
+                    let error = crate::i18n::format("任务执行失败: {}", &[format!("{}", e)]);
                     tracing::error!("❌ 刷新房间 {} 任务失败: {}", room_id, error);
                     let _ = this.update(cx, |this, cx| {
                         if let Some(state) = this.room_states.get_mut(&room_id) {
@@ -2156,14 +2210,12 @@ impl RecordingPage {
                 .default_value(config.check_interval.to_string())
         });
         let segment_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("留空关闭")
-                .default_value(
-                    config
-                        .segment_duration
-                        .map(|d| d.to_string())
-                        .unwrap_or_default(),
-                )
+            crate::i18n::input("留空关闭", window, cx).default_value(
+                config
+                    .segment_duration
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+            )
         });
         let retry_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -2202,7 +2254,7 @@ impl RecordingPage {
             let muted_fg = theme.muted_foreground;
 
             dialog
-                .title("录制设置")
+                .title(crate::i18n::tr("录制设置"))
                 .overlay(true)
                 .h(px(580.0))
                 .w(px(500.0))
@@ -2245,8 +2297,8 @@ impl RecordingPage {
                                                         .items_center()
                                                         .gap_2()
                                                         .child(
-                                                            gpui_component::Icon::new(
-                                                                gpui_component::IconName::Folder,
+                                                            gpui_kit::component::Icon::new(
+                                                                gpui_kit::component::IconName::Folder,
                                                             )
                                                             .size(px(16.0))
                                                             .text_color(theme.foreground),
@@ -2255,7 +2307,7 @@ impl RecordingPage {
                                                             div()
                                                                 .text_base()
                                                                 .font_weight(FontWeight::SEMIBOLD)
-                                                                .child("输出设置"),
+                                                                .child(crate::i18n::tr("输出设置")),
                                                         )
                                                 )
                                         )
@@ -2269,7 +2321,7 @@ impl RecordingPage {
                                                     div()
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
-                                                        .child("录制格式")
+                                                        .child(crate::i18n::tr("录制格式"))
                                                 )
                                                 .child({
                                                     let selected_format = selected_format.clone();
@@ -2288,7 +2340,7 @@ impl RecordingPage {
                                                     div()
                                                         .text_xs()
                                                         .text_color(muted_fg)
-                                                        .child("TS 最稳定，MP4 兼容性最好")
+                                                        .child(crate::i18n::tr("TS 最稳定，MP4 兼容性最好"))
                                                 )
                                         )
                                         // 视频质量
@@ -2301,13 +2353,13 @@ impl RecordingPage {
                                                     div()
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
-                                                        .child("视频质量")
+                                                        .child(crate::i18n::tr("视频质量"))
                                                 )
                                                 .child({
                                                     let selected_quality = selected_quality.clone();
                                                     let current_idx = *selected_quality.read();
                                                     RadioGroup::horizontal("quality-radio")
-                                                        .children(["原画", "蓝光", "超清", "高清", "标清"])
+                                                        .children([crate::i18n::tr("原画"), crate::i18n::tr("蓝光"), crate::i18n::tr("超清"), crate::i18n::tr("高清"), crate::i18n::tr("标清")])
                                                         .selected_index(Some(current_idx))
                                                         .on_click({
                                                             let selected_quality = selected_quality.clone();
@@ -2333,13 +2385,13 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .font_weight(FontWeight::MEDIUM)
-                                                                .child("录制后自动转码")
+                                                                .child(crate::i18n::tr("录制后自动转码"))
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_xs()
                                                                 .text_color(muted_fg)
-                                                                .child("录制完成后自动转为 MP4 格式")
+                                                                .child(crate::i18n::tr("录制完成后自动转为 MP4 格式"))
                                                         )
                                                 )
                                                 .child({
@@ -2381,8 +2433,8 @@ impl RecordingPage {
                                                         .items_center()
                                                         .gap_2()
                                                         .child(
-                                                            gpui_component::Icon::new(
-                                                                gpui_component::IconName::Search,
+                                                            gpui_kit::component::Icon::new(
+                                                                gpui_kit::component::IconName::Search,
                                                             )
                                                             .size(px(16.0))
                                                             .text_color(theme.foreground),
@@ -2391,7 +2443,7 @@ impl RecordingPage {
                                                             div()
                                                                 .text_base()
                                                                 .font_weight(FontWeight::SEMIBOLD)
-                                                                .child("监控设置"),
+                                                                .child(crate::i18n::tr("监控设置")),
                                                         )
                                                 )
                                         )
@@ -2410,13 +2462,13 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .font_weight(FontWeight::MEDIUM)
-                                                                .child("检测间隔")
+                                                                .child(crate::i18n::tr("检测间隔"))
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_xs()
                                                                 .text_color(muted_fg)
-                                                                .child("检查直播间状态的时间间隔（最小 10 秒）")
+                                                                .child(crate::i18n::tr("检查直播间状态的时间间隔（最小 10 秒）"))
                                                         )
                                                 )
                                                 .child(
@@ -2433,7 +2485,7 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .text_color(muted_fg)
-                                                                .child("秒")
+                                                                .child(crate::i18n::tr("秒"))
                                                         )
                                                 )
                                         )
@@ -2452,13 +2504,13 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .font_weight(FontWeight::MEDIUM)
-                                                                .child("自动录制"),
+                                                                .child(crate::i18n::tr("自动录制")),
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_xs()
                                                                 .text_color(muted_fg)
-                                                                .child("检测到开播时自动开始录制（与监控分离）"),
+                                                                .child(crate::i18n::tr("检测到开播时自动开始录制（与监控分离）")),
                                                         ),
                                                 )
                                                 .child({
@@ -2484,7 +2536,7 @@ impl RecordingPage {
                                                     div()
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
-                                                        .child("重试/超时设置")
+                                                        .child(crate::i18n::tr("重试/超时设置"))
                                                 )
                                                 .child(
                                                     div()
@@ -2505,7 +2557,7 @@ impl RecordingPage {
                                                                     div()
                                                                         .text_sm()
                                                                         .text_color(muted_fg)
-                                                                        .child("次")
+                                                                        .child(crate::i18n::tr("次"))
                                                                 )
                                                         )
                                                         .child(
@@ -2517,7 +2569,7 @@ impl RecordingPage {
                                                                     div()
                                                                         .text_sm()
                                                                         .text_color(muted_fg)
-                                                                        .child("超时")
+                                                                        .child(crate::i18n::tr("超时"))
                                                                 )
                                                                 .child(
                                                                     div()
@@ -2528,7 +2580,7 @@ impl RecordingPage {
                                                                     div()
                                                                         .text_sm()
                                                                         .text_color(muted_fg)
-                                                                        .child("秒")
+                                                                        .child(crate::i18n::tr("秒"))
                                                                 )
                                                         )
                                                 )
@@ -2559,8 +2611,8 @@ impl RecordingPage {
                                                         .items_center()
                                                         .gap_2()
                                                         .child(
-                                                            gpui_component::Icon::new(
-                                                                gpui_component::IconName::Settings2,
+                                                            gpui_kit::component::Icon::new(
+                                                                gpui_kit::component::IconName::Settings2,
                                                             )
                                                             .size(px(16.0))
                                                             .text_color(theme.foreground),
@@ -2569,7 +2621,7 @@ impl RecordingPage {
                                                             div()
                                                                 .text_base()
                                                                 .font_weight(FontWeight::SEMIBOLD)
-                                                                .child("高级设置"),
+                                                                .child(crate::i18n::tr("高级设置")),
                                                         )
                                                 )
                                         )
@@ -2588,13 +2640,13 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .font_weight(FontWeight::MEDIUM)
-                                                                .child("分段录制")
+                                                                .child(crate::i18n::tr("分段录制"))
                                                         )
                                                         .child(
                                                             div()
                                                                 .text_xs()
                                                                 .text_color(muted_fg)
-                                                                .child("按固定时长分割文件（留空关闭）")
+                                                                .child(crate::i18n::tr("按固定时长分割文件（留空关闭）"))
                                                         )
                                                 )
                                                 .child(
@@ -2611,7 +2663,7 @@ impl RecordingPage {
                                                             div()
                                                                 .text_sm()
                                                                 .text_color(muted_fg)
-                                                                .child("秒")
+                                                                .child(crate::i18n::tr("秒"))
                                                         )
                                                 )
                                         )
@@ -2625,14 +2677,14 @@ impl RecordingPage {
                                                     div()
                                                         .text_sm()
                                                         .font_weight(FontWeight::MEDIUM)
-                                                        .child("保存路径")
+                                                        .child(crate::i18n::tr("保存路径"))
                                                 )
                                                 .child(Input::new(&path_input).small())
                                                 .child(
                                                     div()
                                                         .text_xs()
                                                         .text_color(muted_fg)
-                                                        .child("相对于下载路径的保存目录")
+                                                        .child(crate::i18n::tr("相对于下载路径的保存目录"))
                                                 )
                                         )
                                 )
@@ -2650,81 +2702,68 @@ impl RecordingPage {
                     let auto_record = auto_record_clone.clone();
                     let this = this.clone();
 
-                    move |_, _, _, _| {
-                        let interval_input = interval_input.clone();
-                        let segment_input = segment_input.clone();
-                        let retry_input = retry_input.clone();
-                        let reconnect_input = reconnect_input.clone();
-                        let path_input = path_input.clone();
-                        let selected_format = selected_format.clone();
-                        let selected_quality = selected_quality.clone();
-                        let auto_transcode = auto_transcode.clone();
-                        let auto_record = auto_record.clone();
-                        let this = this.clone();
-
-                        vec![
-                            Button::new("save-settings")
-                                .primary()
-                                .label("保存")
-                                .on_click(move |_event, window, cx| {
-                                    // 从 RadioGroup 获取选择
-                                    let format_options = ["ts", "mkv", "flv", "mp4"];
-                                    let quality_options = [
-                                        LiveRecordQuality::Original,
-                                        LiveRecordQuality::Blue,
-                                        LiveRecordQuality::Ultra,
-                                        LiveRecordQuality::High,
-                                        LiveRecordQuality::Standard,
-                                    ];
-                                    let format_idx = *selected_format.read();
-                                    let quality_idx = *selected_quality.read();
-                                    let transcode = *auto_transcode.read();
-                                    let global_auto_record = *auto_record.read();
-                                    let format = format_options[format_idx].to_string();
-                                    let quality = quality_options[quality_idx].clone();
-                                    // 从输入框读取值
-                                    let interval = interval_input.read(cx).text().to_string()
-                                        .trim().parse::<u64>().unwrap_or(60).max(10);
-                                    let segment_str = segment_input.read(cx).text().to_string();
-                                    let segment = segment_str.trim().parse::<u64>().ok();
-                                    let retry = retry_input.read(cx).text().to_string()
-                                        .trim().parse::<u32>().unwrap_or(3).max(1);
-                                    let reconnect = reconnect_input.read(cx).text().to_string()
-                                        .trim().parse::<u64>().unwrap_or(10).clamp(1, 60);
-                                    let path = path_input.read(cx).text().to_string().trim().to_string();
-                                    // 更新配置
-                                    let _ = this.update(cx, |page, cx| {
-                                        page.record_config.record_format = format;
-                                        page.record_config.quality = quality;
-                                        page.record_config.auto_transcode = transcode;
-                                        page.record_config.auto_record = global_auto_record;
-                                        page.record_config.check_interval = interval;
-                                        page.record_config.segment_duration = segment;
-                                        page.record_config.retry_count = retry;
-                                        page.record_config.reconnect_delay = reconnect;
-                                        page.record_config.output_base_path = PathBuf::from(
-                                            if path.is_empty() {
-                                                "record".to_string()
-                                            } else {
-                                                path
-                                            }
-                                        );
-                                        page.save_record_config();
-                                        cx.notify();
-                                    });
-                                    window.push_notification(
-                                        Notification::success("设置已保存"),
-                                        cx,
+                    DialogFooter::new().children([
+                        Button::new("save-settings")
+                            .primary()
+                            .label(crate::i18n::tr("保存"))
+                            .on_click(move |_event, window, cx| {
+                                // 从 RadioGroup 获取选择
+                                let format_options = ["ts", "mkv", "flv", "mp4"];
+                                let quality_options = [
+                                    LiveRecordQuality::Original,
+                                    LiveRecordQuality::Blue,
+                                    LiveRecordQuality::Ultra,
+                                    LiveRecordQuality::High,
+                                    LiveRecordQuality::Standard,
+                                ];
+                                let format_idx = *selected_format.read();
+                                let quality_idx = *selected_quality.read();
+                                let transcode = *auto_transcode.read();
+                                let global_auto_record = *auto_record.read();
+                                let format = format_options[format_idx].to_string();
+                                let quality = quality_options[quality_idx].clone();
+                                // 从输入框读取值
+                                let interval = interval_input.read(cx).text().to_string()
+                                    .trim().parse::<u64>().unwrap_or(60).max(10);
+                                let segment_str = segment_input.read(cx).text().to_string();
+                                let segment = segment_str.trim().parse::<u64>().ok();
+                                let retry = retry_input.read(cx).text().to_string()
+                                    .trim().parse::<u32>().unwrap_or(3).max(1);
+                                let reconnect = reconnect_input.read(cx).text().to_string()
+                                    .trim().parse::<u64>().unwrap_or(10).clamp(1, 60);
+                                let path = path_input.read(cx).text().to_string().trim().to_string();
+                                // 更新配置
+                                let _ = this.update(cx, |page, cx| {
+                                    page.record_config.record_format = format;
+                                    page.record_config.quality = quality;
+                                    page.record_config.auto_transcode = transcode;
+                                    page.record_config.auto_record = global_auto_record;
+                                    page.record_config.check_interval = interval;
+                                    page.record_config.segment_duration = segment;
+                                    page.record_config.retry_count = retry;
+                                    page.record_config.reconnect_delay = reconnect;
+                                    page.record_config.output_base_path = PathBuf::from(
+                                        if path.is_empty() {
+                                            "record".to_string()
+                                        } else {
+                                            path
+                                        }
                                     );
-                                    window.close_dialog(cx);
-                                }),
-                            Button::new("close-settings")
-                                .label("取消")
-                                .on_click(|_event, window, cx| {
-                                    window.close_dialog(cx);
-                                }),
-                        ]
-                    }
+                                    page.save_record_config();
+                                    cx.notify();
+                                });
+                                window.push_notification(
+                                    Notification::success(crate::i18n::tr("设置已保存")),
+                                    cx,
+                                );
+                                window.close_dialog(cx);
+                            }),
+                        Button::new("close-settings")
+                            .label(crate::i18n::tr("取消"))
+                            .on_click(|_event, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    ])
                 })
         });
     }
@@ -2769,8 +2808,15 @@ impl RecordingPage {
             .unwrap_or_else(|| "00:00".to_string());
         // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
         let title = state.title.as_ref().map(|t| truncate_string(t, 50));
-        let anchor_name = truncate_string(&room.anchor_name, 30);
-        let last_error = state.last_error.as_ref().map(|e| truncate_string(e, 60));
+        let anchor_name = if is_placeholder_anchor_name(&room.anchor_name) {
+            truncate_string(&crate::i18n::text(&room.anchor_name), 30)
+        } else {
+            truncate_string(&room.anchor_name, 30)
+        };
+        let last_error = state
+            .last_error
+            .as_ref()
+            .map(|e| truncate_string(&crate::i18n::text(e), 60));
 
         // 根据状态获取颜色
         let status_color = match &state.status {
@@ -2795,11 +2841,11 @@ impl RecordingPage {
 
         // 平台显示名称
         let platform_display = match room.platform.as_str() {
-            "douyin" | "抖音直播" => "抖音",
-            "bilibili" | "B站直播" => "B站",
-            "huya" | "虎牙直播" => "虎牙",
-            "douyu" | "斗鱼直播" => "斗鱼",
-            "kuaishou" | "快手直播" => "快手",
+            "douyin" | "抖音直播" => crate::i18n::tr("抖音"),
+            "bilibili" | "B站直播" => crate::i18n::tr("B站"),
+            "huya" | "虎牙直播" => crate::i18n::tr("虎牙"),
+            "douyu" | "斗鱼直播" => crate::i18n::tr("斗鱼"),
+            "kuaishou" | "快手直播" => crate::i18n::tr("快手"),
             "soop" | "SOOP" => "SOOP",
             _ => &room.platform,
         };
@@ -2867,16 +2913,19 @@ impl RecordingPage {
                                 .text_xs()
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(gpui::white())
-                                .child("LIVE"),
+                                .child(crate::i18n::tr("LIVE")),
                         )
                     })
                     // 录制中指示器
                     .when(is_recording, |el| {
                         let recording_duration_label = recording_duration_label.clone();
                         let status_label = if recording_has_data {
-                            format!("REC {recording_duration_label}")
+                            crate::i18n::format(
+                                "REC {recording_duration_label}",
+                                &[recording_duration_label.clone()],
+                            )
                         } else {
-                            "连接中".to_string()
+                            crate::i18n::tr("连接中").to_string()
                         };
                         let indicator_color = if recording_has_data {
                             gpui::rgb(0xef4444)
@@ -2955,7 +3004,7 @@ impl RecordingPage {
                                         .text_color(gpui::white())
                                         .rounded(px(4.0))
                                         .flex_shrink_0()
-                                        .child("已暂停"),
+                                        .child(crate::i18n::tr("已暂停")),
                                 )
                             }),
                     )
@@ -2988,7 +3037,7 @@ impl RecordingPage {
                                         div()
                                             .text_xs()
                                             .text_color(desc_color)
-                                            .child(state.status.display_name()),
+                                            .child(crate::i18n::text(state.status.display_name())),
                                     ),
                             )
                             // 房间号
@@ -3021,7 +3070,7 @@ impl RecordingPage {
                     .when(is_live && !is_recording, |el| {
                         el.child(
                             Button::new(SharedString::from(format!("start-{}", room_id)))
-                                .label("录制")
+                                .label(crate::i18n::tr("录制"))
                                 .xsmall()
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     this.start_recording(room_id, window, cx);
@@ -3031,8 +3080,8 @@ impl RecordingPage {
                     .when(is_recording, |el| {
                         el.child(
                             Button::new(SharedString::from(format!("stop-{}", room_id)))
-                                .icon(gpui_component::IconName::CircleX)
-                                .label("停止")
+                                .icon(gpui_kit::component::IconName::CircleX)
+                                .label(crate::i18n::tr("停止"))
                                 .xsmall()
                                 .danger()
                                 .on_click(cx.listener(move |this, _event, window, cx| {
@@ -3044,8 +3093,8 @@ impl RecordingPage {
                     .child({
                         let room_url = room.url.clone();
                         Button::new(SharedString::from(format!("open-{}", room_id)))
-                            .icon(gpui_component::IconName::ExternalLink)
-                            .label("打开")
+                            .icon(gpui_kit::component::IconName::ExternalLink)
+                            .label(crate::i18n::tr("打开"))
                             .xsmall()
                             .ghost()
                             .on_click(move |_event, _window, _cx| {
@@ -3058,11 +3107,15 @@ impl RecordingPage {
                     .child(
                         Button::new(SharedString::from(format!("monitor-{}", room_id)))
                             .icon(if is_monitoring {
-                                gpui_component::IconName::Minus
+                                gpui_kit::component::IconName::Minus
                             } else {
-                                gpui_component::IconName::ArrowRight
+                                gpui_kit::component::IconName::ArrowRight
                             })
-                            .label(if is_monitoring { "暂停" } else { "监控" })
+                            .label(if is_monitoring {
+                                crate::i18n::tr("暂停")
+                            } else {
+                                crate::i18n::tr("监控")
+                            })
                             .xsmall()
                             .ghost()
                             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -3074,12 +3127,12 @@ impl RecordingPage {
                         Button::new(SharedString::from(format!("auto-record-{}", room_id)))
                             .label(if is_global_auto_record {
                                 if is_room_auto_record {
-                                    "自动录制:开"
+                                    crate::i18n::tr("自动录制:开")
                                 } else {
-                                    "自动录制:关"
+                                    crate::i18n::tr("自动录制:关")
                                 }
                             } else {
-                                "自动录制:全局关"
+                                crate::i18n::tr("自动录制:全局关")
                             })
                             .xsmall()
                             .ghost()
@@ -3090,8 +3143,8 @@ impl RecordingPage {
                     // 刷新按钮
                     .child(
                         Button::new(SharedString::from(format!("refresh-{}", room_id)))
-                            .icon(gpui_component::IconName::Replace)
-                            .label("刷新")
+                            .icon(gpui_kit::component::IconName::Replace)
+                            .label(crate::i18n::tr("刷新"))
                             .ghost()
                             .xsmall()
                             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -3101,8 +3154,8 @@ impl RecordingPage {
                     // 删除按钮
                     .child(
                         Button::new(SharedString::from(format!("remove-{}", room_id)))
-                            .icon(gpui_component::IconName::Delete)
-                            .label("删除")
+                            .icon(gpui_kit::component::IconName::Delete)
+                            .label(crate::i18n::tr("删除"))
                             .ghost()
                             .xsmall()
                             .on_click(cx.listener(move |this, _event, window, cx| {
@@ -3123,7 +3176,13 @@ impl Render for RecordingPage {
 
         // 检查是否有错误需要显示
         if let Some(error) = self.last_add_error.take() {
-            window.push_notification(Notification::error(&format!("添加失败: {}", error)), cx);
+            window.push_notification(
+                Notification::error(&crate::i18n::format(
+                    "添加失败: {}",
+                    &[format!("{}", error)],
+                )),
+                cx,
+            );
         }
 
         while let Some((level, message)) = self.pending_toasts.pop() {
@@ -3171,20 +3230,24 @@ impl Render for RecordingPage {
                                             .text_2xl()
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(title_color)
-                                            .child("🎥 直播录制"),
+                                            .child(crate::i18n::tr("🎥 直播录制")),
                                     )
-                                    .child(div().text_sm().text_color(desc_color).child(format!(
-                                        "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
-                                        rooms.len(),
-                                        live_count,
-                                        recording_count
-                                    )))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(desc_color)
-                                            .child(format!("录制引擎：{engine_label}")),
-                                    ),
+                                    .child(div().text_sm().text_color(desc_color).child(
+                                        crate::i18n::format(
+                                            "监控 {} 个房间 · {} 个直播中 · {} 个录制中",
+                                            &[
+                                                format!("{}", rooms.len()),
+                                                format!("{}", live_count),
+                                                format!("{}", recording_count),
+                                            ],
+                                        ),
+                                    ))
+                                    .child(div().text_xs().text_color(desc_color).child(
+                                        crate::i18n::format(
+                                            "录制引擎：{engine_label}",
+                                            &[format!("{}", engine_label)],
+                                        ),
+                                    )),
                             )
                             .child(
                                 div()
@@ -3192,16 +3255,16 @@ impl Render for RecordingPage {
                                     .gap_3()
                                     .child(
                                         Button::new("add-room")
-                                            .icon(gpui_component::IconName::Plus)
-                                            .label("添加直播间")
+                                            .icon(gpui_kit::component::IconName::Plus)
+                                            .label(crate::i18n::tr("添加直播间"))
                                             .on_click(cx.listener(|this, _event, window, cx| {
                                                 this.show_add_room_dialog(window, cx);
                                             })),
                                     )
                                     .child(
                                         Button::new("config")
-                                            .icon(gpui_component::IconName::Settings2)
-                                            .label("设置")
+                                            .icon(gpui_kit::component::IconName::Settings2)
+                                            .label(crate::i18n::tr("设置"))
                                             .ghost()
                                             .on_click(cx.listener(|this, _event, window, cx| {
                                                 this.show_settings_dialog(window, cx);
@@ -3212,12 +3275,12 @@ impl Render for RecordingPage {
                     // 加载指示器
                     .when(self.is_loading, |el| {
                         el.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .p_4()
-                                .child(div().text_sm().text_color(desc_color).child("正在加载...")),
+                            div().flex().items_center().justify_center().p_4().child(
+                                div()
+                                    .text_sm()
+                                    .text_color(desc_color)
+                                    .child(crate::i18n::tr("正在加载...")),
+                            ),
                         )
                     })
                     // 直播间列表
@@ -3234,19 +3297,21 @@ impl Render for RecordingPage {
                                 div()
                                     .text_lg()
                                     .text_color(desc_color)
-                                    .child("暂无监控的直播间"),
+                                    .child(crate::i18n::tr("暂无监控的直播间")),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(desc_color)
-                                    .child("点击上方「添加直播间」按钮开始监控"),
+                                    .child(crate::i18n::tr("点击上方「添加直播间」按钮开始监控")),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(desc_color)
-                                    .child("抖音使用原生录制；其他平台由 Streamlink 插件解析"),
+                                    .child(crate::i18n::tr(
+                                        "抖音使用原生录制；其他平台由 Streamlink 插件解析",
+                                    )),
                             )
                             .into_any_element()
                     } else {

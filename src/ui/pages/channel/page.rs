@@ -3,14 +3,14 @@
 use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::WindowExt;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
-use gpui_component::notification::Notification;
-use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::spinner::Spinner;
-use gpui_component::{
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis};
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, VirtualListScrollHandle, v_virtual_list,
 };
 use gpui_router::use_navigate;
@@ -42,7 +42,7 @@ fn format_duration(seconds: Option<u64>) -> String {
                 format!("{}:{:02}", minutes, seconds)
             }
         }
-        None => "未知".to_string(),
+        None => crate::i18n::tr("未知").to_string(),
     }
 }
 
@@ -155,9 +155,12 @@ fn youtube_tab_url(base_url: &str, tab: &str) -> String {
 impl ChannelPage {
     pub fn new(app_state: Arc<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("粘贴 YouTube 频道、播放列表或 Bilibili UP主空间链接...")
-                .clean_on_escape()
+            crate::i18n::input(
+                "粘贴 YouTube 频道、播放列表或 Bilibili UP主空间链接...",
+                window,
+                cx,
+            )
+            .clean_on_escape()
         });
 
         Self {
@@ -542,7 +545,7 @@ impl ChannelPage {
     fn on_parse(&mut self, cx: &mut Context<Self>) {
         let url = self.get_url(cx);
         if url.trim().is_empty() {
-            self.state = ChannelState::Error("请输入频道链接".to_string());
+            self.state = ChannelState::Error(crate::i18n::tr("请输入频道链接").to_string());
             cx.notify();
             return;
         }
@@ -769,7 +772,10 @@ impl ChannelPage {
             };
 
         if selected_entries.is_empty() {
-            window.push_notification(Notification::error("请至少选择一个视频"), cx);
+            window.push_notification(
+                Notification::error(crate::i18n::tr("请至少选择一个视频")),
+                cx,
+            );
             return;
         }
 
@@ -813,7 +819,10 @@ impl ChannelPage {
         }
 
         window.push_notification(
-            Notification::success(format!("已添加 {} 个下载任务", count)),
+            Notification::success(crate::i18n::format(
+                "已添加 {} 个下载任务",
+                &[format!("{}", count)],
+            )),
             cx,
         );
     }
@@ -836,7 +845,7 @@ impl ChannelPage {
                 div()
                     .text_lg()
                     .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.5))
-                    .child("输入频道链接开始解析"),
+                    .child(crate::i18n::tr("输入频道链接开始解析")),
             )
             .child(
                 div()
@@ -844,7 +853,9 @@ impl ChannelPage {
                     .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.4))
                     .max_w(px(400.0))
                     .text_center()
-                    .child("支持 YouTube 频道 (@username)、播放列表、Bilibili UP主空间等"),
+                    .child(crate::i18n::tr(
+                        "支持 YouTube 频道 (@username)、播放列表、Bilibili UP主空间等",
+                    )),
             )
     }
 
@@ -860,12 +871,12 @@ impl ChannelPage {
             .py_12()
             .gap_4()
             .child(Spinner::new().large().color(theme.primary))
-            .child(div().text_lg().child("正在解析频道..."))
+            .child(div().text_lg().child(crate::i18n::tr("正在解析频道...")))
             .child(
                 div()
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("这可能需要一些时间，取决于视频数量"),
+                    .child(crate::i18n::tr("这可能需要一些时间，取决于视频数量")),
             )
     }
 
@@ -887,7 +898,7 @@ impl ChannelPage {
                 div()
                     .text_lg()
                     .text_color(gpui::hsla(0.0, 0.7, 0.5, 1.0))
-                    .child("解析失败"),
+                    .child(crate::i18n::tr("解析失败")),
             )
             .child(
                 div()
@@ -988,7 +999,7 @@ impl ChannelPage {
                                 .text_color(btn_foreground)
                                 .hover(|s| s.bg(btn_secondary.opacity(0.8)))
                         })
-                        .child("全部")
+                        .child(crate::i18n::tr("全部"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.switch_tab(None, cx);
                         })),
@@ -997,7 +1008,11 @@ impl ChannelPage {
 
             // 各个 Tab 按钮
             for (idx, tab) in tabs_clone.iter().enumerate() {
-                let tab_name = tab.tab_type.display_name().to_string();
+                let tab_name = match &tab.tab_type {
+                    magekit_shared::ChannelTabType::Other(name) => name.clone(),
+                    kind => crate::i18n::text(kind.display_name()),
+                }
+                .to_string();
                 let is_selected = current_tab_index == Some(idx);
                 let btn_primary = primary;
                 let btn_secondary = secondary;
@@ -1239,10 +1254,15 @@ impl ChannelPage {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(channel_title),
                             )
-                            .child(div().text_sm().text_color(muted_foreground).child(format!(
-                                "已选择 {} | 当前显示 {}",
-                                selected_count, current_tab_total
-                            ))),
+                            .child(div().text_sm().text_color(muted_foreground).child(
+                                crate::i18n::format(
+                                    "已选择 {} | 当前显示 {}",
+                                    &[
+                                        format!("{}", selected_count),
+                                        format!("{}", current_tab_total),
+                                    ],
+                                ),
+                            )),
                     )
                     .child(
                         div()
@@ -1254,9 +1274,9 @@ impl ChannelPage {
                                 Checkbox::new("select-all")
                                     .checked(all_selected)
                                     .label(if all_selected {
-                                        "取消全选"
+                                        crate::i18n::tr("取消全选")
                                     } else {
-                                        "全选"
+                                        crate::i18n::tr("全选")
                                     })
                                     .on_click(select_all_listener),
                             )
@@ -1265,7 +1285,10 @@ impl ChannelPage {
                                 Button::new("download-selected")
                                     .primary()
                                     .icon(IconName::ArrowDown)
-                                    .label(format!("下载选中 ({})", selected_count))
+                                    .label(crate::i18n::format(
+                                        "下载选中 ({})",
+                                        &[format!("{}", selected_count)],
+                                    ))
                                     .disabled(selected_count == 0)
                                     .on_click(download_listener),
                             ),
@@ -1333,7 +1356,7 @@ impl ChannelPage {
                                     Button::new("prev-page-bottom")
                                         .outline()
                                         .small()
-                                        .label("上一页")
+                                        .label(crate::i18n::tr("上一页"))
                                         .disabled(loading_more || current_page == 0)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             if this.current_page > 0 {
@@ -1348,10 +1371,12 @@ impl ChannelPage {
                                         .py_1()
                                         .text_sm()
                                         .text_color(muted_foreground)
-                                        .child(format!(
+                                        .child(crate::i18n::format(
                                             "第 {} / {} 页",
-                                            current_page + 1,
-                                            total_pages
+                                            &[
+                                                format!("{}", current_page + 1),
+                                                format!("{}", total_pages),
+                                            ],
                                         )),
                                 )
                                 // 下一页按钮
@@ -1359,7 +1384,7 @@ impl ChannelPage {
                                     Button::new("next-page-bottom")
                                         .outline()
                                         .small()
-                                        .label("下一页")
+                                        .label(crate::i18n::tr("下一页"))
                                         .disabled(loading_more || current_page >= total_pages - 1)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.go_next_page(cx);
@@ -1367,13 +1392,22 @@ impl ChannelPage {
                                 ),
                         )
                         // 右侧：显示统计
-                        .child(div().text_sm().text_color(muted_foreground).child(format!(
-                                "显示 {} - {} 条，共 {} 条",
-                                current_page * ITEMS_PER_PAGE + 1,
-                                (current_page * ITEMS_PER_PAGE + page_entry_count)
-                                    .min(current_tab_total),
-                                current_tab_total
-                            ))),
+                        .child(
+                            div().text_sm().text_color(muted_foreground).child(
+                                crate::i18n::format(
+                                    "显示 {} - {} 条，共 {} 条",
+                                    &[
+                                        format!("{}", current_page * ITEMS_PER_PAGE + 1),
+                                        format!(
+                                            "{}",
+                                            (current_page * ITEMS_PER_PAGE + page_entry_count)
+                                                .min(current_tab_total)
+                                        ),
+                                        format!("{}", current_tab_total),
+                                    ],
+                                ),
+                            ),
+                        ),
                 )
             })
     }
@@ -1407,7 +1441,7 @@ impl Render for ChannelPage {
                             .text_xl()
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme.foreground)
-                            .child("频道/作者"),
+                            .child(crate::i18n::tr("频道/作者")),
                     ),
             )
             // URL 输入区域
@@ -1425,12 +1459,9 @@ impl Render for ChannelPage {
                             .flex_col()
                             .gap_3()
                             // 说明文字
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
-                            )
+                            .child(div().text_sm().text_color(theme.muted_foreground).child(
+                                crate::i18n::tr("支持 YouTube 频道、播放列表、Bilibili UP主空间等"),
+                            ))
                             // 输入框和按钮
                             .child(
                                 div()
@@ -1445,9 +1476,9 @@ impl Render for ChannelPage {
                                         Button::new("parse-channel")
                                             .primary()
                                             .label(if matches!(self.state, ChannelState::Parsing) {
-                                                "解析中..."
+                                                crate::i18n::tr("解析中...")
                                             } else {
-                                                "解析"
+                                                crate::i18n::tr("解析")
                                             })
                                             .icon(if matches!(self.state, ChannelState::Parsing) {
                                                 IconName::LoaderCircle

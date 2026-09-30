@@ -1,15 +1,15 @@
 //! 录制设置对话框（自绘遮罩层）
 
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Sizable;
-use gpui_component::WindowExt;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
-use gpui_component::notification::Notification;
-use gpui_component::radio::RadioGroup;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::switch::Switch;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Sizable;
+use gpui_kit::component::WindowExt;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::radio::RadioGroup;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::switch::Switch;
 use magekit_shared::types::{LiveRecordConfig, LiveRecordQuality};
 use parking_lot::RwLock;
 use std::path::PathBuf;
@@ -63,8 +63,7 @@ impl RecordSettingsDialog {
                 .default_value(base.check_interval.to_string())
         });
         let segment_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("留空表示不分段")
+            crate::i18n::input("留空表示不分段", window, cx)
                 .default_value(
                     base.segment_duration
                         .map(|v| v.to_string())
@@ -82,8 +81,7 @@ impl RecordSettingsDialog {
                 .default_value(base.reconnect_delay.to_string())
         });
         let output_path_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("默认：record")
+            crate::i18n::input("默认：record", window, cx)
                 .default_value(base.output_base_path.to_string_lossy().to_string())
         });
 
@@ -209,7 +207,7 @@ impl RecordSettingsDialog {
         if let Some(ref cb) = self.on_save {
             cb(cfg, window, cx);
         } else {
-            window.push_notification(Notification::success("设置已保存"), cx);
+            window.push_notification(Notification::success(crate::i18n::tr("设置已保存")), cx);
         }
     }
 }
@@ -254,10 +252,10 @@ impl Render for RecordSettingsDialog {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(div().text_lg().font_weight(FontWeight::BOLD).text_color(fg).child("录制设置"))
+                            .child(div().text_lg().font_weight(FontWeight::BOLD).text_color(fg).child(crate::i18n::tr("录制设置")))
                             .child(
                                 Button::new("record-settings-close")
-                                    .label("关闭")
+                                    .label(crate::i18n::tr("关闭"))
                                     .xsmall()
                                     .ghost()
                                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -275,7 +273,7 @@ impl Render for RecordSettingsDialog {
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("录制格式"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("录制格式")))
                                     .child({
                                         let current_idx = *selected_format.read();
                                         RadioGroup::horizontal("record-format-radio")
@@ -288,18 +286,18 @@ impl Render for RecordSettingsDialog {
                                                 }
                                             })
                                     })
-                                    .child(div().text_xs().text_color(muted).child("TS 最稳定，MP4 兼容性最好")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("TS 最稳定，MP4 兼容性最好"))),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("视频质量"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("视频质量")))
                                     .child({
                                         let current_idx = *selected_quality.read();
                                         RadioGroup::horizontal("record-quality-radio")
-                                            .children(["原画", "蓝光", "超清", "高清", "标清"])
+                                            .children([crate::i18n::tr("原画"), crate::i18n::tr("蓝光"), crate::i18n::tr("超清"), crate::i18n::tr("高清"), crate::i18n::tr("标清")])
                                             .selected_index(Some(current_idx))
                                             .on_click({
                                                 let selected_quality = selected_quality.clone();
@@ -319,8 +317,8 @@ impl Render for RecordSettingsDialog {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("录制后自动转码"))
-                                            .child(div().text_xs().text_color(muted).child("录制完成后自动转为 MP4 格式")),
+                                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("录制后自动转码")))
+                                            .child(div().text_xs().text_color(muted).child(crate::i18n::tr("录制完成后自动转为 MP4 格式"))),
                                     )
                                     .child({
                                         let checked = *auto_transcode.read();
@@ -344,8 +342,8 @@ impl Render for RecordSettingsDialog {
                                             .flex()
                                             .flex_col()
                                             .gap_1()
-                                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("全局自动录制"))
-                                            .child(div().text_xs().text_color(muted).child("仅影响“检测到开播后自动开始录制”")),
+                                            .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("全局自动录制")))
+                                            .child(div().text_xs().text_color(muted).child(crate::i18n::tr("仅影响“检测到开播后自动开始录制”"))),
                                     )
                                     .child({
                                         let checked = *global_auto_record.read();
@@ -364,45 +362,45 @@ impl Render for RecordSettingsDialog {
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("检测间隔（秒）"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("检测间隔（秒）")))
                                     .child(Input::new(&self.check_interval_input))
-                                    .child(div().text_xs().text_color(muted).child("建议 ≥ 10 秒")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("建议 ≥ 10 秒"))),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("分段时长（秒，可选）"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("分段时长（秒，可选）")))
                                     .child(Input::new(&self.segment_input))
-                                    .child(div().text_xs().text_color(muted).child("当前录制后端暂未实现分段保存")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("当前录制后端暂未实现分段保存"))),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("重试次数"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("重试次数")))
                                     .child(Input::new(&self.retry_input))
-                                    .child(div().text_xs().text_color(muted).child("断流/失败后重试次数")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("断流/失败后重试次数"))),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("重连延迟（秒）"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("重连延迟（秒）")))
                                     .child(Input::new(&self.reconnect_input))
-                                    .child(div().text_xs().text_color(muted).child("断流后等待多久重试")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("断流后等待多久重试"))),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap_2()
-                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child("录制输出子目录"))
+                                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(crate::i18n::tr("录制输出子目录")))
                                     .child(Input::new(&self.output_path_input))
-                                    .child(div().text_xs().text_color(muted).child("相对于下载目录；最终路径：{下载目录}/{子目录}/{平台}/{主播}/...")),
+                                    .child(div().text_xs().text_color(muted).child(crate::i18n::tr("相对于下载目录；最终路径：{下载目录}/{子目录}/{平台}/{主播}/..."))),
                             ),
                     )
                     .child(
@@ -416,7 +414,7 @@ impl Render for RecordSettingsDialog {
                             .border_color(border)
                             .child(
                                 Button::new("record-settings-cancel")
-                                    .label("取消")
+                                    .label(crate::i18n::tr("取消"))
                                     .ghost()
                                     .on_click(cx.listener(|this, _event, window, cx| {
                                         this.cancel(window, cx);
@@ -425,7 +423,7 @@ impl Render for RecordSettingsDialog {
                             .child(
                                 Button::new("record-settings-save")
                                     .primary()
-                                    .label("保存")
+                                    .label(crate::i18n::tr("保存"))
                                     .on_click(cx.listener(|this, _event, window, cx| {
                                         this.save(window, cx);
                                     })),

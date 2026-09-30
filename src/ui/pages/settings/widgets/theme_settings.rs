@@ -2,9 +2,9 @@
 
 use crate::ui::widgets::Section;
 use gpui::*;
-use gpui_component::button::Button;
-use gpui_component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_component::{ActiveTheme, Icon, IconName, ThemeRegistry};
+use gpui_kit::component::button::Button;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, ThemeRegistry};
 use std::sync::Arc;
 
 /// 主题设置卡片
@@ -59,7 +59,7 @@ impl RenderOnce for ThemeSettingsCard {
             .position(|(n, _)| n == &current_theme_name)
             .unwrap_or(0);
 
-        Section::new_with_icon("外观", IconName::Palette).child(
+        Section::new_with_icon(crate::i18n::tr("外观"), IconName::Palette).child(
             div()
                 .p(px(20.0))
                 .rounded(px(12.0))
@@ -93,11 +93,14 @@ impl RenderOnce for ThemeSettingsCard {
                                                         .text_sm()
                                                         .font_weight(FontWeight::SEMIBOLD)
                                                         .text_color(text_color)
-                                                        .child("主题"),
+                                                        .child(crate::i18n::tr("主题")),
                                                 )
                                                 .child(
                                                     div().text_xs().text_color(muted_color).child(
-                                                        format!("{} 个主题可用", themes.len()),
+                                                        crate::i18n::format(
+                                                            "{} 个主题可用",
+                                                            &[format!("{}", themes.len())],
+                                                        ),
                                                     ),
                                                 ),
                                         ),
@@ -107,7 +110,7 @@ impl RenderOnce for ThemeSettingsCard {
                                     Button::new("theme-selector")
                                         .outline()
                                         .icon(IconName::ChevronDown)
-                                        .label(current_theme_name.clone())
+                                        .label(crate::i18n::text(&current_theme_name))
                                         .w(px(200.0))
                                         .dropdown_menu(move |menu, _window, _cx| {
                                             let mut m = menu;
@@ -124,14 +127,16 @@ impl RenderOnce for ThemeSettingsCard {
                                                     IconName::Sun
                                                 };
 
-                                                let item = PopupMenuItem::new(theme_name)
-                                                    .icon(icon)
-                                                    .checked(is_current)
-                                                    .on_click(move |_, window, cx| {
-                                                        if let Some(h) = &handler {
-                                                            h(&click_name, window, cx);
-                                                        }
-                                                    });
+                                                let item = PopupMenuItem::new(crate::i18n::text(
+                                                    &theme_name,
+                                                ))
+                                                .icon(icon)
+                                                .checked(is_current)
+                                                .on_click(move |_, window, cx| {
+                                                    if let Some(h) = &handler {
+                                                        h(&click_name, window, cx);
+                                                    }
+                                                });
                                                 m = m.item(item);
                                             }
                                             m

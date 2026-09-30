@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use gpui::*;
-use gpui_component::{Root, TitleBar};
+use gpui_kit::component::{Root, TitleBar};
 use gpui_router::init as router_init;
 use std::{path::PathBuf, sync::Arc};
 use tracing_subscriber::{
@@ -18,6 +18,7 @@ use tracing_subscriber::{
 
 mod app;
 mod diagnostic_log;
+mod i18n;
 #[cfg(windows)]
 mod process_job;
 mod theme;
@@ -63,11 +64,11 @@ fn main() -> Result<()> {
     };
 
     // 注册图标资源
-    let app = Application::new().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
     app.run(move |cx| {
         // 必须在GPUI组件使用前调用
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
 
         // 设置 HTTP 客户端，用于加载远程图片
         let http_client =
@@ -76,11 +77,11 @@ fn main() -> Result<()> {
 
         // 加载主题文件
         let themes_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes");
-        if let Err(err) = gpui_component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
+        if let Err(err) = gpui_kit::component::ThemeRegistry::watch_dir(themes_dir, cx, |cx| {
             // 主题加载完成后，尝试应用上次保存的主题
             tracing::debug!(
                 "🎨 主题加载完成，共 {} 个主题可用",
-                gpui_component::ThemeRegistry::global(cx)
+                gpui_kit::component::ThemeRegistry::global(cx)
                     .sorted_themes()
                     .len()
             );
@@ -99,6 +100,9 @@ fn main() -> Result<()> {
                 return;
             }
         };
+
+        // 在构建任何页面前应用已保存的语言选择。
+        i18n::initialize(&app_state.config().ui.language);
 
         // 设置 Global AppState，供路由页面访问
         cx.set_global(GlobalAppState(app_state.clone()));
@@ -126,6 +130,7 @@ fn main() -> Result<()> {
                 is_resizable: true,
                 window_min_size: Some(size(px(800.0), px(600.0))),
                 tabbing_identifier: None,
+                ..TitleBar::window_options()
             },
             |window, cx| {
                 // 创建主窗口组件

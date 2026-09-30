@@ -1,7 +1,7 @@
 //! 直播间卡片组件
 
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 use std::time::Duration;
 
 use super::{LiveRoomStatus, LiveStatus, RecordingStatus};
@@ -148,9 +148,9 @@ impl Render for LiveRoomCard {
                                     .child(format!(
                                         "{}",
                                         match self.room.status {
-                                            LiveStatus::Live => "🔴 直播中",
-                                            LiveStatus::Offline => "⚫ 未开播",
-                                            LiveStatus::Playback => "🟡 轮播中",
+                                            LiveStatus::Live => crate::i18n::tr("🔴 直播中"),
+                                            LiveStatus::Offline => crate::i18n::tr("⚫ 未开播"),
+                                            LiveStatus::Playback => crate::i18n::tr("🟡 轮播中"),
                                         }
                                     )),
                             )
@@ -176,7 +176,7 @@ impl Render for LiveRoomCard {
                                             .bg(gpui::green())
                                             .text_color(gpui::white())
                                             .rounded_md()
-                                            .child("自动录制"),
+                                            .child(crate::i18n::tr("自动录制")),
                                     )
                                 } else {
                                     None
@@ -201,7 +201,7 @@ impl Render for LiveRoomCard {
                                         div()
                                             .text_sm()
                                             .text_color(gpui::red())
-                                            .child("录制中"),
+                                            .child(crate::i18n::tr("录制中")),
                                     ),
                             )
                         } else {
@@ -225,7 +225,7 @@ impl Render for LiveRoomCard {
                                     div()
                                         .text_xs()
                                         .text_color(muted_color)
-                                        .child("录制进度"),
+                                        .child(crate::i18n::tr("录制进度")),
                                 )
                                 .child(
                                     div()

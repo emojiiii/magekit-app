@@ -6,12 +6,12 @@ use crate::app::GlobalAppState;
 use crate::ui::pages::{HomePage, RecordingPage, SettingsPage, ToolsPage};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::TitleBar;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
-use gpui_component::*;
-use gpui_router::{IntoLayout, NavLink, Outlet, use_location, use_navigate};
+use gpui_kit::component::TitleBar;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::sidebar::{Sidebar, SidebarItem, SidebarMenu, SidebarMenuItem};
+use gpui_kit::component::*;
+use gpui_router::{NavLink, Outlet, use_location, use_navigate};
 use magekit_shared::types::{Theme as AppTheme, ThemeConfig, ThemeMode};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -86,8 +86,8 @@ pub fn stateful_recording_page() -> impl IntoElement {
     RecordingPageWrapper
 }
 
-/// 应用布局结构体 - 必须实现 IntoLayout trait
-#[derive(IntoElement, IntoLayout)]
+/// 应用布局结构体 - 必须实现 Layout trait
+#[derive(IntoElement)]
 pub struct AppLayout {
     /// Outlet 用于渲染子路由内容
     outlet: Outlet,
@@ -98,6 +98,16 @@ impl AppLayout {
         Self {
             outlet: Outlet::new(),
         }
+    }
+}
+
+impl gpui_router::Layout for AppLayout {
+    fn outlet(&mut self, element: AnyElement) {
+        self.outlet = element.into();
+    }
+
+    fn render_layout(self: Box<Self>, window: &mut Window, cx: &mut App) -> AnyElement {
+        RenderOnce::render(*self, window, cx).into_any_element()
     }
 }
 
@@ -138,29 +148,42 @@ impl RenderOnce for AppLayout {
                 IconName::Moon
             };
 
-            Sidebar::new(Side::Left)
+            Sidebar::new("main-sidebar")
+                .side(Side::Left)
                 .collapsed(collapsed)
                 .collapsible(true)
                 .w(px(200.0))
                 .child(
                     SidebarMenu::new()
-                        .child(item("/", "首页", IconName::LayoutDashboard))
-                        .child(item("/record", "录制", IconName::Frame))
-                        .child(item("/capture", "嗅探", IconName::Globe))
-                        .child(item("/channel", "频道", IconName::User))
-                        .child(item("/tasks", "任务", IconName::Inbox))
-                        .child(item("/tools", "工具", IconName::SquareTerminal)),
+                        .child(item(
+                            "/",
+                            crate::i18n::tr("首页"),
+                            IconName::LayoutDashboard,
+                        ))
+                        .child(item("/record", crate::i18n::tr("录制"), IconName::Frame))
+                        .child(item("/capture", crate::i18n::tr("嗅探"), IconName::Globe))
+                        .child(item("/channel", crate::i18n::tr("频道"), IconName::User))
+                        .child(item("/tasks", crate::i18n::tr("任务"), IconName::Inbox))
+                        .child(item(
+                            "/tools",
+                            crate::i18n::tr("工具"),
+                            IconName::SquareTerminal,
+                        )),
                 )
-                .footer(
-                    SidebarMenu::new()
+                .footer({
+                    let footer = SidebarMenu::new()
                         .collapsed(collapsed)
                         .w_full()
-                        .child(item("/settings", "设置", IconName::Settings))
+                        .child(item(
+                            "/settings",
+                            crate::i18n::tr("设置"),
+                            IconName::Settings,
+                        ))
                         .child(
                             SidebarMenuItem::new(if cx.theme().mode.is_dark() {
-                                "浅色模式"
+                                crate::i18n::tr("浅色模式")
                             } else {
-                                "深色模式"
+                                crate::i18n::tr("深色模式")
                             })
                             .icon(theme_toggle_icon)
                             .on_click({
@@ -179,7 +202,9 @@ impl RenderOnce for AppLayout {
                                         .get(&target_name)
                                         .cloned()
                                     {
-                                        Theme::global_mut(cx).apply_config(&theme_config);
+                                        Theme::update(cx, |theme| {
+                                            theme.apply_config(&theme_config)
+                                        });
                                         cx.refresh_windows();
                                     }
 
@@ -206,26 +231,31 @@ impl RenderOnce for AppLayout {
                                     window.refresh();
                                 }
                             }),
+                        );
+                    let footer = if !is_mobile {
+                        footer.child(
+                            SidebarMenuItem::new(if collapsed {
+                                ""
+                            } else {
+                                crate::i18n::tr("收起侧栏")
+                            })
+                            .icon(if collapsed {
+                                IconName::PanelLeftOpen
+                            } else {
+                                IconName::PanelLeftClose
+                            })
+                            .on_click(|_, window, cx| {
+                                let current = SIDEBAR_MANUALLY_COLLAPSED.load(Ordering::Relaxed);
+                                SIDEBAR_MANUALLY_COLLAPSED.store(!current, Ordering::Relaxed);
+                                window.refresh();
+                                cx.refresh_windows();
+                            }),
                         )
-                        .when(!is_mobile, |this| {
-                            this.child(
-                                SidebarMenuItem::new(if collapsed { "" } else { "收起侧栏" })
-                                    .icon(if collapsed {
-                                        IconName::PanelLeftOpen
-                                    } else {
-                                        IconName::PanelLeftClose
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        let current =
-                                            SIDEBAR_MANUALLY_COLLAPSED.load(Ordering::Relaxed);
-                                        SIDEBAR_MANUALLY_COLLAPSED
-                                            .store(!current, Ordering::Relaxed);
-                                        window.refresh();
-                                        cx.refresh_windows();
-                                    }),
-                            )
-                        }),
-                )
+                    } else {
+                        footer
+                    };
+                    SidebarItem::render(footer, "main-sidebar-footer", window, cx)
+                })
         };
 
         div()
@@ -298,13 +328,13 @@ pub fn home_page() -> impl IntoElement {
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(0xfafafa))
-                            .child("视频下载"),
+                            .child(crate::i18n::tr("视频下载")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(rgb(0xa1a1aa))
-                            .child("粘贴视频链接，一键下载"),
+                            .child(crate::i18n::tr("粘贴视频链接，一键下载")),
                     ),
             ),
         )
@@ -324,7 +354,9 @@ pub fn home_page() -> impl IntoElement {
                     div()
                         .text_sm()
                         .text_color(rgb(0xfef08a))
-                        .child("演示模式：输入框和按钮暂不可用，完整功能需要集成后端服务"),
+                        .child(crate::i18n::tr(
+                            "演示模式：输入框和按钮暂不可用，完整功能需要集成后端服务",
+                        )),
                 ),
         )
         .child(
@@ -343,7 +375,7 @@ pub fn home_page() -> impl IntoElement {
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(0xfafafa))
-                        .child("视频链接"),
+                        .child(crate::i18n::tr("视频链接")),
                 )
                 .child(
                     div()
@@ -363,10 +395,14 @@ pub fn home_page() -> impl IntoElement {
                                 .rounded(px(8.0))
                                 .text_sm()
                                 .text_color(rgb(0x71717a))
-                                .child("粘贴 YouTube、Bilibili 等视频链接..."),
+                                .child(crate::i18n::tr("粘贴 YouTube、Bilibili 等视频链接...")),
                         )
-                        .child(Button::new("paste-btn").label("粘贴"))
-                        .child(Button::new("download-btn").primary().label("下载")),
+                        .child(Button::new("paste-btn").label(crate::i18n::tr("粘贴")))
+                        .child(
+                            Button::new("download-btn")
+                                .primary()
+                                .label(crate::i18n::tr("下载")),
+                        ),
                 ),
         )
         .child(
@@ -391,14 +427,14 @@ pub fn home_page() -> impl IntoElement {
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(rgb(0xfafafa))
-                                .child("🎬 视频质量"),
+                                .child(crate::i18n::tr("🎬 视频质量")),
                         )
                         .child(
                             div()
                                 .flex()
                                 .flex_wrap()
                                 .gap(px(8.0))
-                                .child(render_quality_option("最佳", true))
+                                .child(render_quality_option(crate::i18n::tr("最佳"), true))
                                 .child(render_quality_option("1080p", false))
                                 .child(render_quality_option("720p", false))
                                 .child(render_quality_option("480p", false)),
@@ -421,7 +457,7 @@ pub fn home_page() -> impl IntoElement {
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(rgb(0xfafafa))
-                                .child("📁 保存位置"),
+                                .child(crate::i18n::tr("📁 保存位置")),
                         )
                         .child(
                             div()
@@ -443,7 +479,9 @@ pub fn home_page() -> impl IntoElement {
                                         .overflow_hidden()
                                         .child("~/Downloads"),
                                 )
-                                .child(Button::new("browse").small().label("浏览")),
+                                .child(
+                                    Button::new("browse").small().label(crate::i18n::tr("浏览")),
+                                ),
                         ),
                 ),
         )
@@ -463,16 +501,16 @@ pub fn home_page() -> impl IntoElement {
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(0xfafafa))
-                        .child("⚙️ 下载选项"),
+                        .child(crate::i18n::tr("⚙️ 下载选项")),
                 )
                 .child(
                     div()
                         .flex()
                         .gap(px(24.0))
-                        .child(render_checkbox_option("嵌入元数据", true))
-                        .child(render_checkbox_option("嵌入缩略图", false))
-                        .child(render_checkbox_option("下载字幕", false))
-                        .child(render_checkbox_option("仅提取音频", false)),
+                        .child(render_checkbox_option(crate::i18n::tr("嵌入元数据"), true))
+                        .child(render_checkbox_option(crate::i18n::tr("嵌入缩略图"), false))
+                        .child(render_checkbox_option(crate::i18n::tr("下载字幕"), false))
+                        .child(render_checkbox_option(crate::i18n::tr("仅提取音频"), false)),
                 ),
         )
 }
@@ -567,21 +605,31 @@ pub fn tasks_page() -> impl IntoElement {
                                 .text_2xl()
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(rgb(0xfafafa))
-                                .child("下载任务"),
+                                .child(crate::i18n::tr("下载任务")),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(rgb(0xa1a1aa))
-                                .child("管理所有下载任务"),
+                                .child(crate::i18n::tr("管理所有下载任务")),
                         ),
                 )
                 .child(
                     div()
                         .flex()
                         .gap(px(8.0))
-                        .child(Button::new("refresh").ghost().small().label("刷新"))
-                        .child(Button::new("clear").ghost().small().label("清除已完成")),
+                        .child(
+                            Button::new("refresh")
+                                .ghost()
+                                .small()
+                                .label(crate::i18n::tr("刷新")),
+                        )
+                        .child(
+                            Button::new("clear")
+                                .ghost()
+                                .small()
+                                .label(crate::i18n::tr("清除已完成")),
+                        ),
                 ),
         )
         .child(
@@ -589,10 +637,30 @@ pub fn tasks_page() -> impl IntoElement {
             div()
                 .flex()
                 .gap(px(16.0))
-                .child(render_stat_card("进行中", "0", "🔄", rgb(0x3b82f6).into()))
-                .child(render_stat_card("已完成", "0", "✅", rgb(0x22c55e).into()))
-                .child(render_stat_card("失败", "0", "❌", rgb(0xef4444).into()))
-                .child(render_stat_card("等待中", "0", "⏳", rgb(0xeab308).into())),
+                .child(render_stat_card(
+                    crate::i18n::tr("进行中"),
+                    "0",
+                    "🔄",
+                    rgb(0x3b82f6).into(),
+                ))
+                .child(render_stat_card(
+                    crate::i18n::tr("已完成"),
+                    "0",
+                    "✅",
+                    rgb(0x22c55e).into(),
+                ))
+                .child(render_stat_card(
+                    crate::i18n::tr("失败"),
+                    "0",
+                    "❌",
+                    rgb(0xef4444).into(),
+                ))
+                .child(render_stat_card(
+                    crate::i18n::tr("等待中"),
+                    "0",
+                    "⏳",
+                    rgb(0xeab308).into(),
+                )),
         )
         .child(
             // 空状态
@@ -608,18 +676,20 @@ pub fn tasks_page() -> impl IntoElement {
                     div()
                         .text_lg()
                         .text_color(rgb(0xa1a1aa))
-                        .child("暂无下载任务"),
+                        .child(crate::i18n::tr("暂无下载任务")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(rgb(0x71717a))
-                        .child("在下载页面添加视频链接开始下载"),
+                        .child(crate::i18n::tr("在下载页面添加视频链接开始下载")),
                 )
                 .child(
-                    NavLink::new()
-                        .to("/")
-                        .child(Button::new("go-download").primary().label("去下载")),
+                    NavLink::new().to("/").child(
+                        Button::new("go-download")
+                            .primary()
+                            .label(crate::i18n::tr("去下载")),
+                    ),
                 ),
         )
 }
@@ -693,16 +763,16 @@ pub fn tools_page() -> impl IntoElement {
                                             .text_2xl()
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(rgb(0xfafafa))
-                                            .child("工具管理"),
+                                            .child(crate::i18n::tr("工具管理")),
                                     )
                                     .child(
                                         div()
                                             .text_sm()
                                             .text_color(rgb(0xa1a1aa))
-                                            .child("管理 yt-dlp 和 ffmpeg 工具"),
+                                            .child(crate::i18n::tr("管理 yt-dlp 和 ffmpeg 工具")),
                                     ),
                             )
-                            .child(Button::new("check-all").label("检查更新")),
+                            .child(Button::new("check-all").label(crate::i18n::tr("检查更新"))),
                     )
                     .child(
                         // 提示信息
@@ -714,12 +784,11 @@ pub fn tools_page() -> impl IntoElement {
                             .bg(rgb(0x27272a))
                             .rounded(px(8.0))
                             .child(div().text_sm().child("💡"))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(rgb(0xa1a1aa))
-                                    .child("此页面为静态展示，实际工具状态检测需要连接后端服务"),
-                            ),
+                            .child(div().text_sm().text_color(rgb(0xa1a1aa)).child(
+                                crate::i18n::tr(
+                                    "此页面为静态展示，实际工具状态检测需要连接后端服务",
+                                ),
+                            )),
                     )
                     .child(
                         // 工具卡片
@@ -729,14 +798,14 @@ pub fn tools_page() -> impl IntoElement {
                             .gap(px(16.0))
                             .child(render_tool_card(
                                 "yt-dlp",
-                                "视频下载核心工具，支持数千个网站",
+                                crate::i18n::tr("视频下载核心工具，支持数千个网站"),
                                 "📥",
                                 None,
                                 yt_dlp_installed,
                             ))
                             .child(render_tool_card(
                                 "ffmpeg",
-                                "音视频处理工具，用于格式转换和合并",
+                                crate::i18n::tr("音视频处理工具，用于格式转换和合并"),
                                 "🎞️",
                                 None,
                                 ffmpeg_installed,
@@ -760,7 +829,11 @@ fn render_tool_card(
         rgb(0xef4444).into()
     };
     let status_bg: Hsla = status_color.opacity(0.2);
-    let status_text = if installed { "已安装" } else { "未安装" };
+    let status_text = if installed {
+        crate::i18n::tr("已安装")
+    } else {
+        crate::i18n::tr("未安装")
+    };
 
     // 为每个工具创建唯一的按钮ID
     let update_id: SharedString = format!("update-{}", name).into();
@@ -832,7 +905,7 @@ fn render_tool_card(
                                 div()
                                     .text_xs()
                                     .text_color(rgb(0x71717a))
-                                    .child(format!("版本: {}", v)),
+                                    .child(crate::i18n::format("版本: {}", &[format!("{}", v)])),
                             )
                         }),
                 ),
@@ -842,11 +915,26 @@ fn render_tool_card(
                 .flex()
                 .gap(px(8.0))
                 .when(installed, |this| {
-                    this.child(Button::new(update_id).ghost().small().label("更新"))
-                        .child(Button::new(reinstall_id).ghost().small().label("重装"))
+                    this.child(
+                        Button::new(update_id)
+                            .ghost()
+                            .small()
+                            .label(crate::i18n::tr("更新")),
+                    )
+                    .child(
+                        Button::new(reinstall_id)
+                            .ghost()
+                            .small()
+                            .label(crate::i18n::tr("重装")),
+                    )
                 })
                 .when(!installed, |this| {
-                    this.child(Button::new(install_id).primary().small().label("安装"))
+                    this.child(
+                        Button::new(install_id)
+                            .primary()
+                            .small()
+                            .label(crate::i18n::tr("安装")),
+                    )
                 }),
         )
 }
@@ -876,13 +964,13 @@ pub fn settings_page() -> impl IntoElement {
                                     .text_2xl()
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(rgb(0xfafafa))
-                                    .child("设置"),
+                                    .child(crate::i18n::tr("设置")),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(rgb(0xa1a1aa))
-                                    .child("自定义应用程序设置"),
+                                    .child(crate::i18n::tr("自定义应用程序设置")),
                             ),
                     )
                     .child(
@@ -897,54 +985,60 @@ pub fn settings_page() -> impl IntoElement {
                             .border_color(rgb(0x854d0e))
                             .rounded(px(8.0))
                             .child(div().text_sm().child("⚠️"))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(rgb(0xfef08a))
-                                    .child("演示模式：设置项仅供展示，修改功能需要集成配置服务"),
-                            ),
+                            .child(div().text_sm().text_color(rgb(0xfef08a)).child(
+                                crate::i18n::tr(
+                                    "演示模式：设置项仅供展示，修改功能需要集成配置服务",
+                                ),
+                            )),
                     )
                     .child(
                         // 下载设置
                         render_settings_section(
-                            "下载设置",
+                            crate::i18n::tr("下载设置"),
                             "download",
                             "⬇️",
                             vec![
-                                ("默认保存路径", "~/Downloads"),
-                                ("最大并发数", "3"),
-                                ("默认视频质量", "最佳质量"),
+                                (crate::i18n::tr("默认保存路径"), "~/Downloads"),
+                                (crate::i18n::tr("最大并发数"), "3"),
+                                (crate::i18n::tr("默认视频质量"), crate::i18n::tr("最佳质量")),
                             ],
                         ),
                     )
                     .child(
                         // 工具设置
                         render_settings_section(
-                            "工具设置",
+                            crate::i18n::tr("工具设置"),
                             "tool",
                             "🔧",
-                            vec![("自动检查更新", "开启"), ("更新通道", "稳定版")],
+                            vec![
+                                (crate::i18n::tr("自动检查更新"), crate::i18n::tr("开启")),
+                                (crate::i18n::tr("更新通道"), crate::i18n::tr("稳定版")),
+                            ],
                         ),
                     )
                     .child(
                         // 界面设置
                         render_settings_section(
-                            "界面设置",
+                            crate::i18n::tr("界面设置"),
                             "ui",
                             "🎨",
-                            vec![("主题", "深色"), ("语言", "简体中文"), ("显示通知", "开启")],
+                            vec![
+                                (crate::i18n::tr("主题"), crate::i18n::tr("深色")),
+                                (crate::i18n::tr("语言"), crate::i18n::tr("简体中文")),
+                                (crate::i18n::tr("显示通知"), crate::i18n::tr("开启")),
+                            ],
                         ),
                     )
                     .child(
                         // 高级设置
                         render_settings_section(
-                            "高级设置",
+                            crate::i18n::tr("高级设置"),
                             "advanced",
                             "⚙️",
                             vec![
-                                ("日志级别", "Info"),
-                                ("代理设置", "无"),
-                                ("速度限制", "无限制"),
+                                (crate::i18n::tr("日志级别"), "Info"),
+                                (crate::i18n::tr("代理设置"), crate::i18n::tr("无")),
+                                (crate::i18n::tr("速度限制"), crate::i18n::tr("无限制")),
                             ],
                         ),
                     ),
@@ -1045,17 +1139,19 @@ pub fn not_found_page() -> impl IntoElement {
                 .text_2xl()
                 .font_weight(FontWeight::BOLD)
                 .text_color(rgb(0xfafafa))
-                .child("页面未找到"),
+                .child(crate::i18n::tr("页面未找到")),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(rgb(0xa1a1aa))
-                .child("请检查URL是否正确"),
+                .child(crate::i18n::tr("请检查URL是否正确")),
         )
         .child(
-            NavLink::new()
-                .to("/")
-                .child(Button::new("go-home").primary().label("返回首页")),
+            NavLink::new().to("/").child(
+                Button::new("go-home")
+                    .primary()
+                    .label(crate::i18n::tr("返回首页")),
+            ),
         )
 }

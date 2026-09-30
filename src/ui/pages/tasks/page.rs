@@ -8,8 +8,8 @@
 use crate::app::AppState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use magekit_shared::{TaskId, TaskState, TaskStatus};
 use std::sync::Arc;
 
@@ -27,10 +27,10 @@ pub enum TaskFilter {
 impl TaskFilter {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::All => "全部",
-            Self::Downloading => "下载中",
-            Self::Completed => "已完成",
-            Self::Failed => "失败",
+            Self::All => crate::i18n::tr("全部"),
+            Self::Downloading => crate::i18n::tr("下载中"),
+            Self::Completed => crate::i18n::tr("已完成"),
+            Self::Failed => crate::i18n::tr("失败"),
         }
     }
 }
@@ -67,7 +67,7 @@ impl TasksPage {
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
-                    _ = Timer::after(std::time::Duration::from_secs(1)) => {}
+                    _ = smol::Timer::after(std::time::Duration::from_secs(1)) => {}
                 }
 
                 // 从 AppState 缓存读取最新任务
@@ -257,13 +257,16 @@ impl TasksPage {
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
                             .text_color(title_color)
-                            .child("📥 任务列表"),
+                            .child(crate::i18n::tr("📥 任务列表")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(desc_color)
-                            .child(format!("共 {} 个任务", self.tasks.len())),
+                            .child(crate::i18n::format(
+                                "共 {} 个任务",
+                                &[format!("{}", self.tasks.len())],
+                            )),
                     ),
             )
             .child(
@@ -280,7 +283,7 @@ impl TasksPage {
                             .xsmall()
                             .outline()
                             .disabled(!has_completed)
-                            .label("清空已完成")
+                            .label(crate::i18n::tr("清空已完成"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear_completed(cx);
                             }))
@@ -289,7 +292,7 @@ impl TasksPage {
                         Button::new("refresh")
                             .xsmall()
                             .outline()
-                            .label("刷新")
+                            .label(crate::i18n::tr("刷新"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.refresh_tasks(cx);
                             })),
@@ -348,17 +351,17 @@ impl TasksPage {
                     .text_lg()
                     .text_color(text_color)
                     .child(match self.filter {
-                        TaskFilter::All => "暂无下载任务",
-                        TaskFilter::Downloading => "没有正在下载的任务",
-                        TaskFilter::Completed => "没有已完成的任务",
-                        TaskFilter::Failed => "没有失败的任务",
+                        TaskFilter::All => crate::i18n::tr("暂无下载任务"),
+                        TaskFilter::Downloading => crate::i18n::tr("没有正在下载的任务"),
+                        TaskFilter::Completed => crate::i18n::tr("没有已完成的任务"),
+                        TaskFilter::Failed => crate::i18n::tr("没有失败的任务"),
                     }),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(muted_color)
-                    .child("在首页粘贴视频链接开始下载"),
+                    .child(crate::i18n::tr("在首页粘贴视频链接开始下载")),
             )
     }
 

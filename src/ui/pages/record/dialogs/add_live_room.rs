@@ -1,9 +1,9 @@
 //! 添加直播间对话框
 
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::input::InputState;
-use gpui_component::modal::Modal;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::modal::Modal;
 use std::sync::Arc;
 
 use crate::ui::pages::record::widgets::LiveRoomStatus;
@@ -24,11 +24,11 @@ pub struct AddLiveRoomDialog {
 impl AddLiveRoomDialog {
     pub fn new() -> Self {
         Self {
-            url_input: Entity::new(|_| InputState::new().placeholder("请输入直播间链接")),
-            name_input: Entity::new(|_| InputState::new().placeholder("主播名称（可选）")),
-            title_input: Entity::new(|_| InputState::new().placeholder("直播间标题（可选）")),
-            platform_input: Entity::new(|_| InputState::new().value("抖音")),
-            quality_input: Entity::new(|_| InputState::new().value("原画")),
+            url_input: Entity::new(|_| InputState::new().placeholder(crate::i18n::tr("请输入直播间链接"))),
+            name_input: Entity::new(|_| InputState::new().placeholder(crate::i18n::tr("主播名称（可选）"))),
+            title_input: Entity::new(|_| InputState::new().placeholder(crate::i18n::tr("直播间标题（可选）"))),
+            platform_input: Entity::new(|_| InputState::new().value(crate::i18n::tr("抖音"))),
+            quality_input: Entity::new(|_| InputState::new().value(crate::i18n::tr("原画"))),
             auto_record: false,
             is_open: true,
             on_confirm: None,
@@ -61,7 +61,7 @@ impl AddLiveRoomDialog {
         let url = self.url_input.read(cx).value().trim();
         if url.is_empty() {
             window.push_notification(
-                gpui_component::notification::Notification::error("请输入直播间链接"),
+                gpui_kit::component::notification::Notification::error(crate::i18n::tr("请输入直播间链接")),
                 cx,
             );
             return;
@@ -105,13 +105,13 @@ impl AddLiveRoomDialog {
     fn extract_anchor_name(&self, url: &str) -> String {
         // 简单的名称提取逻辑
         if url.contains("douyin.com") {
-            "抖音主播".to_string()
+            crate::i18n::tr("抖音主播").to_string()
         } else if url.contains("live.bilibili.com") {
-            "B站主播".to_string()
+            crate::i18n::tr("B站主播").to_string()
         } else if url.contains("live.douyu.com") {
-            "斗鱼主播".to_string()
+            crate::i18n::tr("斗鱼主播").to_string()
         } else {
-            "未知主播".to_string()
+            crate::i18n::tr("未知主播").to_string()
         }
     }
 }
@@ -128,8 +128,8 @@ impl Render for AddLiveRoomDialog {
         let desc_color = cx.theme().muted_foreground;
 
         Modal::new("add-live-room-modal")
-            .title("添加直播间")
-            .size(gpui_component::modal::ModalSize::Md)
+            .title(crate::i18n::tr("添加直播间"))
+            .size(gpui_kit::component::modal::ModalSize::Md)
             .show_close_button(true)
             .on_close(cx.listener(|this, _event, window, cx| {
                 this.cancel(window, cx);
@@ -141,19 +141,19 @@ impl Render for AddLiveRoomDialog {
                     .justify_end()
                     .gap_2()
                     .child(
-                        gpui_component::button::Button::new("cancel")
-                            .label("取消")
-                            .style(gpui_component::button::ButtonStyle::Ghost)
-                            .size(gpui_component::button::ButtonSize::Sm)
+                        gpui_kit::component::button::Button::new("cancel")
+                            .label(crate::i18n::tr("取消"))
+                            .style(gpui_kit::component::button::ButtonStyle::Ghost)
+                            .size(gpui_kit::component::button::ButtonSize::Sm)
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.cancel(window, cx);
                             })),
                     )
                     .child(
-                        gpui_component::button::Button::new("confirm")
-                            .label("添加")
-                            .style(gpui_component::button::ButtonStyle::Primary)
-                            .size(gpui_component::button::ButtonSize::Sm)
+                        gpui_kit::component::button::Button::new("confirm")
+                            .label(crate::i18n::tr("添加"))
+                            .style(gpui_kit::component::button::ButtonStyle::Primary)
+                            .size(gpui_kit::component::button::ButtonSize::Sm)
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.confirm(window, cx);
                             })),
@@ -175,19 +175,19 @@ impl Render for AddLiveRoomDialog {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("直播间链接 *"),
+                                    .child(crate::i18n::tr("直播间链接 *")),
                             )
                             .child(
-                                gpui_component::input::Input::new("room-url")
+                                gpui_kit::component::input::Input::new("room-url")
                                     .state(&self.url_input)
                                     .placeholder("https://live.douyin.com/123456")
-                                    .size(gpui_component::input::InputSize::Md),
+                                    .size(gpui_kit::component::input::InputSize::Md),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(desc_color)
-                                    .child("支持抖音、B站、斗鱼等主流直播平台"),
+                                    .child(crate::i18n::tr("支持抖音、B站、斗鱼等主流直播平台")),
                             ),
                     )
                     // 主播名称（可选）
@@ -201,13 +201,13 @@ impl Render for AddLiveRoomDialog {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("主播名称"),
+                                    .child(crate::i18n::tr("主播名称")),
                             )
                             .child(
-                                gpui_component::input::Input::new("anchor-name")
+                                gpui_kit::component::input::Input::new("anchor-name")
                                     .state(&self.name_input)
-                                    .placeholder("主播名称（可选，会自动获取）")
-                                    .size(gpui_component::input::InputSize::Md),
+                                    .placeholder(crate::i18n::tr("主播名称（可选，会自动获取）"))
+                                    .size(gpui_kit::component::input::InputSize::Md),
                             ),
                     )
                     // 直播间标题（可选）
@@ -221,13 +221,13 @@ impl Render for AddLiveRoomDialog {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("直播间标题"),
+                                    .child(crate::i18n::tr("直播间标题")),
                             )
                             .child(
-                                gpui_component::input::Input::new("room-title")
+                                gpui_kit::component::input::Input::new("room-title")
                                     .state(&self.title_input)
-                                    .placeholder("直播间标题（可选，会自动获取）")
-                                    .size(gpui_component::input::InputSize::Md),
+                                    .placeholder(crate::i18n::tr("直播间标题（可选，会自动获取）"))
+                                    .size(gpui_kit::component::input::InputSize::Md),
                             ),
                     )
                     // 高级选项
@@ -241,7 +241,7 @@ impl Render for AddLiveRoomDialog {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("高级选项"),
+                                    .child(crate::i18n::tr("高级选项")),
                             )
                             .child(
                                 div()
@@ -259,13 +259,13 @@ impl Render for AddLiveRoomDialog {
                                                     .text_xs()
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(title_color)
-                                                    .child("平台"),
+                                                    .child(crate::i18n::tr("平台")),
                                             )
                                             .child(
-                                                gpui_component::input::Input::new("platform")
+                                                gpui_kit::component::input::Input::new("platform")
                                                     .state(&self.platform_input)
-                                                    .placeholder("抖音")
-                                                    .size(gpui_component::input::InputSize::Sm),
+                                                    .placeholder(crate::i18n::tr("抖音"))
+                                                    .size(gpui_kit::component::input::InputSize::Sm),
                                             ),
                                     )
                                     // 录制质量
@@ -279,13 +279,13 @@ impl Render for AddLiveRoomDialog {
                                                     .text_xs()
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(title_color)
-                                                    .child("录制质量"),
+                                                    .child(crate::i18n::tr("录制质量")),
                                             )
                                             .child(
-                                                gpui_component::input::Input::new("quality")
+                                                gpui_kit::component::input::Input::new("quality")
                                                     .state(&self.quality_input)
-                                                    .placeholder("原画")
-                                                    .size(gpui_component::input::InputSize::Sm),
+                                                    .placeholder(crate::i18n::tr("原画"))
+                                                    .size(gpui_kit::component::input::InputSize::Sm),
                                             ),
                                     ),
                             )
@@ -305,17 +305,17 @@ impl Render for AddLiveRoomDialog {
                                                     .text_xs()
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(title_color)
-                                                    .child("自动录制"),
+                                                    .child(crate::i18n::tr("自动录制")),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(desc_color)
-                                                    .child("检测到开播时自动开始录制"),
+                                                    .child(crate::i18n::tr("检测到开播时自动开始录制")),
                                             ),
                                     )
                                     .child(
-                                        gpui_component::switch::Switch::new("auto-record")
+                                        gpui_kit::component::switch::Switch::new("auto-record")
                                             .checked(self.auto_record)
                                             .on_change(cx.listener(|this, checked, _window, cx| {
                                                 this.auto_record = checked;

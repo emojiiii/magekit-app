@@ -4,7 +4,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
+use gpui_kit::component::ActiveTheme;
 
 /// 卡片组件 - 带有统一样式的容器
 #[derive(IntoElement)]

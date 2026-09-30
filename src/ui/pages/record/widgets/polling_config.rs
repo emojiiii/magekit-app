@@ -1,8 +1,8 @@
 //! 轮询配置组件
 
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::input::InputState;
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::input::InputState;
 use std::sync::Arc;
 
 use super::PollingConfig;
@@ -95,13 +95,13 @@ impl Render for PollingConfigPanel {
                             .text_lg()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(title_color)
-                            .child("⚙️ 轮询配置"),
+                            .child(crate::i18n::tr("⚙️ 轮询配置")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(desc_color)
-                            .child("设置直播间状态检查和自动录制选项"),
+                            .child(crate::i18n::tr("设置直播间状态检查和自动录制选项")),
                     ),
             )
             // 配置选项
@@ -121,7 +121,7 @@ impl Render for PollingConfigPanel {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("轮询间隔"),
+                                    .child(crate::i18n::tr("轮询间隔")),
                             )
                             .child(
                                 div()
@@ -129,10 +129,10 @@ impl Render for PollingConfigPanel {
                                     .items_center()
                                     .gap_2()
                                     .child(
-                                        gpui_component::input::Input::new("interval")
+                                        gpui_kit::component::input::Input::new("interval")
                                             .state(&self.interval_input)
                                             .placeholder("60")
-                                            .size(gpui_component::input::InputSize::Sm)
+                                            .size(gpui_kit::component::input::InputSize::Sm)
                                             .on_change(cx.listener(|this, _event, window, cx| {
                                                 this.update_config(window, cx);
                                             })),
@@ -141,14 +141,14 @@ impl Render for PollingConfigPanel {
                                         div()
                                             .text_sm()
                                             .text_color(desc_color)
-                                            .child("秒"),
+                                            .child(crate::i18n::tr("秒")),
                                     ),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(desc_color)
-                                    .child("检查直播间状态的时间间隔"),
+                                    .child(crate::i18n::tr("检查直播间状态的时间间隔")),
                             ),
                     )
                     // 最大并发录制数
@@ -162,7 +162,7 @@ impl Render for PollingConfigPanel {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(title_color)
-                                    .child("最大并发录制"),
+                                    .child(crate::i18n::tr("最大并发录制")),
                             )
                             .child(
                                 div()
@@ -170,10 +170,10 @@ impl Render for PollingConfigPanel {
                                     .items_center()
                                     .gap_2()
                                     .child(
-                                        gpui_component::input::Input::new("max-concurrent")
+                                        gpui_kit::component::input::Input::new("max-concurrent")
                                             .state(&self.max_concurrent_input)
                                             .placeholder("3")
-                                            .size(gpui_component::input::InputSize::Sm)
+                                            .size(gpui_kit::component::input::InputSize::Sm)
                                             .on_change(cx.listener(|this, _event, window, cx| {
                                                 this.update_config(window, cx);
                                             })),
@@ -182,14 +182,14 @@ impl Render for PollingConfigPanel {
                                         div()
                                             .text_sm()
                                             .text_color(desc_color)
-                                            .child("个"),
+                                            .child(crate::i18n::tr("个")),
                                     ),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(desc_color)
-                                    .child("同时录制的最大直播间数量"),
+                                    .child(crate::i18n::tr("同时录制的最大直播间数量")),
                             ),
                     ),
             )
@@ -214,17 +214,17 @@ impl Render for PollingConfigPanel {
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(title_color)
-                                            .child("自动录制"),
+                                            .child(crate::i18n::tr("自动录制")),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(desc_color)
-                                            .child("检测到开播时自动开始录制"),
+                                            .child(crate::i18n::tr("检测到开播时自动开始录制")),
                                     ),
                             )
                             .child(
-                                gpui_component::switch::Switch::new("auto-record")
+                                gpui_kit::component::switch::Switch::new("auto-record")
                                     .checked(self.config.auto_record)
                                     .on_change(cx.listener(|this, checked, window, cx| {
                                         this.config.auto_record = checked;
@@ -247,17 +247,17 @@ impl Render for PollingConfigPanel {
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(title_color)
-                                            .child("开播通知"),
+                                            .child(crate::i18n::tr("开播通知")),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(desc_color)
-                                            .child("直播间开播时发送通知"),
+                                            .child(crate::i18n::tr("直播间开播时发送通知")),
                                     ),
                             )
                             .child(
-                                gpui_component::switch::Switch::new("notify-on-live")
+                                gpui_kit::component::switch::Switch::new("notify-on-live")
                                     .checked(self.config.notify_on_live)
                                     .on_change(cx.listener(|this, checked, window, cx| {
                                         this.config.notify_on_live = checked;
@@ -280,17 +280,17 @@ impl Render for PollingConfigPanel {
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(title_color)
-                                            .child("下播通知"),
+                                            .child(crate::i18n::tr("下播通知")),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(desc_color)
-                                            .child("直播结束时发送通知"),
+                                            .child(crate::i18n::tr("直播结束时发送通知")),
                                     ),
                             )
                             .child(
-                                gpui_component::switch::Switch::new("notify-on-offline")
+                                gpui_kit::component::switch::Switch::new("notify-on-offline")
                                     .checked(self.config.notify_on_offline)
                                     .on_change(cx.listener(|this, checked, window, cx| {
                                         this.config.notify_on_offline = checked;

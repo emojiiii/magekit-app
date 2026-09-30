@@ -2,9 +2,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::checkbox::Checkbox;
-use gpui_component::{Disableable, IconName};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::{Disableable, IconName};
 use magekit_shared::ChannelVideoEntry;
 
 use super::video_item::VideoItem;
@@ -92,9 +92,12 @@ impl IntoElement for VideoList {
                                 div()
                                     .text_sm()
                                     .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.6))
-                                    .child(format!(
+                                    .child(crate::i18n::format(
                                         "共 {} 个视频，已选择 {}",
-                                        total_count, selected_count
+                                        &[
+                                            format!("{}", total_count),
+                                            format!("{}", selected_count),
+                                        ],
                                     )),
                             ),
                     )
@@ -108,9 +111,9 @@ impl IntoElement for VideoList {
                                 Checkbox::new("select-all")
                                     .checked(all_selected)
                                     .label(if all_selected {
-                                        "取消全选"
+                                        crate::i18n::tr("取消全选")
                                     } else {
-                                        "全选"
+                                        crate::i18n::tr("全选")
                                     })
                                     .on_click({
                                         let on_select_all = on_select_all;
@@ -126,7 +129,10 @@ impl IntoElement for VideoList {
                                 Button::new("download-selected")
                                     .primary()
                                     .icon(IconName::ArrowDown)
-                                    .label(format!("下载选中 ({})", selected_count))
+                                    .label(crate::i18n::format(
+                                        "下载选中 ({})",
+                                        &[format!("{}", selected_count)],
+                                    ))
                                     .disabled(selected_count == 0)
                                     .when_some(on_download, |btn, callback| {
                                         btn.on_click(move |_, window, cx| {

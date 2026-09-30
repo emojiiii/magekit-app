@@ -51,8 +51,12 @@ impl AppState {
     /// 创建新的应用状态 (同步版本)
     pub fn new_sync() -> Result<Self> {
         // 创建 Tokio 运行时
-        let runtime =
-            Runtime::new().map_err(|e| anyhow::anyhow!("创建 Tokio 运行时失败: {}", e))?;
+        let runtime = Runtime::new().map_err(|e| {
+            anyhow::anyhow!(crate::i18n::format(
+                "创建 Tokio 运行时失败: {}",
+                &[format!("{}", e)]
+            ))
+        })?;
         let runtime = Arc::new(runtime);
 
         // 创建应用事件通道
@@ -309,10 +313,9 @@ impl AppState {
 
     /// 发送应用事件
     pub async fn send_event(&self, event: AppEvent) -> Result<()> {
-        self.event_tx
-            .send(event)
-            .await
-            .map_err(|e| anyhow::anyhow!("发送事件失败: {}", e))?;
+        self.event_tx.send(event).await.map_err(|e| {
+            anyhow::anyhow!(crate::i18n::format("发送事件失败: {}", &[format!("{}", e)]))
+        })?;
         Ok(())
     }
 
@@ -343,7 +346,9 @@ impl AppState {
             .tool_manager
             .quick_enqueue_download(url, options, cookies_vec.as_deref())
             .await
-            .map_err(|e| anyhow::anyhow!("快速入队失败: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("快速入队失败: {}", &[format!("{}", e)]))
+            })?;
 
         tracing::info!("✅ 下载任务已创建: {}", task_id);
         Ok(task_id)
@@ -354,7 +359,9 @@ impl AppState {
         self.tool_manager
             .pause_download(task_id)
             .await
-            .map_err(|e| anyhow::anyhow!("暂停任务失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("暂停任务失败: {}", &[format!("{}", e)]))
+            })
     }
 
     /// 恢复下载任务
@@ -362,7 +369,9 @@ impl AppState {
         self.tool_manager
             .resume_download(task_id)
             .await
-            .map_err(|e| anyhow::anyhow!("恢复任务失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("恢复任务失败: {}", &[format!("{}", e)]))
+            })
     }
 
     /// 取消下载任务
@@ -370,7 +379,9 @@ impl AppState {
         self.tool_manager
             .cancel_download(task_id)
             .await
-            .map_err(|e| anyhow::anyhow!("取消任务失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("取消任务失败: {}", &[format!("{}", e)]))
+            })
     }
 
     /// 删除任务（从持久化存储中删除）
@@ -382,7 +393,9 @@ impl AppState {
         self.tool_manager
             .delete_task_status(task_id)
             .await
-            .map_err(|e| anyhow::anyhow!("删除任务失败: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("删除任务失败: {}", &[format!("{}", e)]))
+            })?;
 
         // 从本地缓存删除
         {
@@ -407,7 +420,12 @@ impl AppState {
         self.tool_manager
             .get_video_info(url, cookies_vec.as_deref())
             .await
-            .map_err(|e| anyhow::anyhow!("获取视频信息失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format(
+                    "获取视频信息失败: {}",
+                    &[format!("{}", e)]
+                ))
+            })
     }
 
     /// 获取频道/播放列表信息
@@ -424,7 +442,12 @@ impl AppState {
         self.tool_manager
             .get_channel_videos(url, cookies_vec.as_deref())
             .await
-            .map_err(|e| anyhow::anyhow!("获取频道信息失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format(
+                    "获取频道信息失败: {}",
+                    &[format!("{}", e)]
+                ))
+            })
     }
 
     // ==================== 任务查询 API ====================
@@ -447,7 +470,12 @@ impl AppState {
         self.tool_manager
             .clear_completed_tasks()
             .await
-            .map_err(|e| anyhow::anyhow!("清理已完成任务失败: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format(
+                    "清理已完成任务失败: {}",
+                    &[format!("{}", e)]
+                ))
+            })?;
 
         // 从本地缓存清理
         {

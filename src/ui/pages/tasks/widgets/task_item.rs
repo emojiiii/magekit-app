@@ -2,8 +2,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::*;
 use magekit_shared::{TaskState, TaskStatus, truncate_string};
 use std::sync::Arc;
 
@@ -86,13 +86,13 @@ impl RenderOnce for TaskItem {
 
         // 状态图标和颜色
         let (status_icon, status_color, status_text) = match &task.state {
-            TaskState::Queued => ("⏳", rgb(0xfbbf24), "等待中".to_string()),
-            TaskState::Downloading => ("⬇️", rgb(0x3b82f6), "下载中".to_string()),
-            TaskState::Merging => ("🔄", rgb(0x8b5cf6), "合并中".to_string()),
-            TaskState::Paused => ("⏸️", rgb(0xf59e0b), "已暂停".to_string()),
-            TaskState::Completed => ("✅", rgb(0x22c55e), "已完成".to_string()),
-            TaskState::Failed(_) => ("❌", rgb(0xef4444), "失败".to_string()),
-            TaskState::Cancelled => ("🚫", rgb(0x6b7280), "已取消".to_string()),
+            TaskState::Queued => ("⏳", rgb(0xfbbf24), crate::i18n::tr("等待中").to_string()),
+            TaskState::Downloading => ("⬇️", rgb(0x3b82f6), crate::i18n::tr("下载中").to_string()),
+            TaskState::Merging => ("🔄", rgb(0x8b5cf6), crate::i18n::tr("合并中").to_string()),
+            TaskState::Paused => ("⏸️", rgb(0xf59e0b), crate::i18n::tr("已暂停").to_string()),
+            TaskState::Completed => ("✅", rgb(0x22c55e), crate::i18n::tr("已完成").to_string()),
+            TaskState::Failed(_) => ("❌", rgb(0xef4444), crate::i18n::tr("失败").to_string()),
+            TaskState::Cancelled => ("🚫", rgb(0x6b7280), crate::i18n::tr("已取消").to_string()),
         };
 
         // 获取失败原因
@@ -119,16 +119,19 @@ impl RenderOnce for TaskItem {
         } else if task.downloaded_bytes > 0 {
             format_bytes(task.downloaded_bytes)
         } else {
-            "计算中...".to_string()
+            crate::i18n::tr("计算中...").to_string()
         };
 
         // 标题（使用 URL 的最后部分作为备用）
         // 手动截断标题，避免 GPUI DirectWrite 在 Windows 上的 UTF-8 边界 bug
         // 使用较短的截断长度，因为 GPUI 可能会因为宽度限制再次截断
-        let title = task
-            .title
-            .clone()
-            .unwrap_or_else(|| task.url.split('/').last().unwrap_or("未知").to_string());
+        let title = task.title.clone().unwrap_or_else(|| {
+            task.url
+                .split('/')
+                .last()
+                .unwrap_or(crate::i18n::tr("未知"))
+                .to_string()
+        });
         let title = truncate_string(&title, 50);
 
         let on_pause = self.on_pause;
@@ -196,7 +199,7 @@ impl RenderOnce for TaskItem {
                         .p(px(8.0))
                         .bg(rgba(0xef444420))
                         .rounded(px(4.0))
-                        .child(format!("原因: {}", msg)),
+                        .child(crate::i18n::format("原因: {}", &[format!("{}", msg)])),
                 )
             })
             // 进度条
@@ -248,7 +251,7 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .xsmall()
                                 .outline()
-                                .label("暂停")
+                                .label(crate::i18n::tr("暂停"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
                                 }),
@@ -262,7 +265,7 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .xsmall()
                                 .primary()
-                                .label("继续")
+                                .label(crate::i18n::tr("继续"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
                                 }),
@@ -276,7 +279,7 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .xsmall()
                                 .danger()
-                                .label("取消")
+                                .label(crate::i18n::tr("取消"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
                                 }),
@@ -290,7 +293,7 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .xsmall()
                                 .outline()
-                                .label("打开文件夹")
+                                .label(crate::i18n::tr("打开文件夹"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
                                 }),
@@ -304,7 +307,7 @@ impl RenderOnce for TaskItem {
                             Button::new(btn_id)
                                 .xsmall()
                                 .danger()
-                                .label("删除")
+                                .label(crate::i18n::tr("删除"))
                                 .when_some(handler, |btn, h| {
                                     btn.on_click(move |e, w, cx| h(e, w, cx))
                                 }),

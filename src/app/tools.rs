@@ -31,10 +31,12 @@ impl AppState {
     ) -> Result<magekit_tool_manager::UpdateInfo> {
         let tool_manager = self.tool_manager.clone();
         self.runtime.block_on(async move {
-            tool_manager
-                .check_for_updates(channel)
-                .await
-                .map_err(|e| anyhow::anyhow!("检查工具更新失败: {}", e))
+            tool_manager.check_for_updates(channel).await.map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format(
+                    "检查工具更新失败: {}",
+                    &[format!("{}", e)]
+                ))
+            })
         })
     }
 
@@ -142,16 +144,23 @@ impl AppState {
                         updater
                             .ensure_yt_dlp(magekit_shared::UpdateChannel::Stable)
                             .await
-                            .map_err(|e| anyhow::anyhow!("安装 yt-dlp 失败: {}", e))?;
+                            .map_err(|e| {
+                                anyhow::anyhow!(crate::i18n::format(
+                                    "安装 yt-dlp 失败: {}",
+                                    &[format!("{}", e)]
+                                ))
+                            })?;
                     }
                     magekit_shared::ToolType::Ffmpeg => {
                         let updater = magekit_tool_manager::updater::ToolUpdater::new(
                             tool_manager.storage.clone(),
                         );
-                        updater
-                            .ensure_ffmpeg()
-                            .await
-                            .map_err(|e| anyhow::anyhow!("安装 ffmpeg 失败: {}", e))?;
+                        updater.ensure_ffmpeg().await.map_err(|e| {
+                            anyhow::anyhow!(crate::i18n::format(
+                                "安装 ffmpeg 失败: {}",
+                                &[format!("{}", e)]
+                            ))
+                        })?;
                     }
                 }
                 Ok(())
@@ -181,16 +190,23 @@ impl AppState {
                                 Some(progress_callback),
                             )
                             .await
-                            .map_err(|e| anyhow::anyhow!("安装 yt-dlp 失败: {}", e))?;
+                            .map_err(|e| {
+                                anyhow::anyhow!(crate::i18n::format(
+                                    "安装 yt-dlp 失败: {}",
+                                    &[format!("{}", e)]
+                                ))
+                            })?;
                     }
                     magekit_shared::ToolType::Ffmpeg => {
                         let updater = magekit_tool_manager::updater::ToolUpdater::new(
                             tool_manager.storage.clone(),
                         );
-                        updater
-                            .ensure_ffmpeg()
-                            .await
-                            .map_err(|e| anyhow::anyhow!("安装 ffmpeg 失败: {}", e))?;
+                        updater.ensure_ffmpeg().await.map_err(|e| {
+                            anyhow::anyhow!(crate::i18n::format(
+                                "安装 ffmpeg 失败: {}",
+                                &[format!("{}", e)]
+                            ))
+                        })?;
                     }
                 }
                 Ok(())
@@ -203,7 +219,9 @@ impl AppState {
         self.tool_manager
             .storage
             .delete_tool_sync(tool_type)
-            .map_err(|e| anyhow::anyhow!("删除工具失败: {}", e))
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("删除工具失败: {}", &[format!("{}", e)]))
+            })
     }
 
     /// 安装工具 (阻塞版本)
@@ -219,13 +237,20 @@ impl AppState {
                     updater
                         .ensure_yt_dlp(UpdateChannel::Stable)
                         .await
-                        .map_err(|e| anyhow::anyhow!("安装 yt-dlp 失败: {}", e))?;
+                        .map_err(|e| {
+                            anyhow::anyhow!(crate::i18n::format(
+                                "安装 yt-dlp 失败: {}",
+                                &[format!("{}", e)]
+                            ))
+                        })?;
                 }
                 magekit_shared::ToolType::Ffmpeg => {
-                    updater
-                        .ensure_ffmpeg()
-                        .await
-                        .map_err(|e| anyhow::anyhow!("安装 ffmpeg 失败: {}", e))?;
+                    updater.ensure_ffmpeg().await.map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "安装 ffmpeg 失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })?;
                 }
             }
             Ok(())
@@ -241,13 +266,23 @@ impl AppState {
                 self.tool_manager
                     .ensure_tools(UpdateChannel::Stable)
                     .await
-                    .map_err(|e| anyhow::anyhow!("安装 yt-dlp 失败: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "安装 yt-dlp 失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })?;
             }
             magekit_shared::ToolType::Ffmpeg => {
                 self.tool_manager
                     .ensure_tools(UpdateChannel::Stable)
                     .await
-                    .map_err(|e| anyhow::anyhow!("安装 ffmpeg 失败: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "安装 ffmpeg 失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })?;
             }
         }
         Ok(())
@@ -260,7 +295,9 @@ impl AppState {
             self.tool_manager
                 .ensure_tools(UpdateChannel::Stable)
                 .await
-                .map_err(|e| anyhow::anyhow!("安装工具失败: {}", e))
+                .map_err(|e| {
+                    anyhow::anyhow!(crate::i18n::format("安装工具失败: {}", &[format!("{}", e)]))
+                })
         })
     }
 
@@ -274,7 +311,12 @@ impl AppState {
                 tool_manager
                     .ensure_tools(magekit_shared::UpdateChannel::Stable)
                     .await
-                    .map_err(|e| anyhow::anyhow!("安装工具失败: {}", e))
+                    .map_err(|e| {
+                        anyhow::anyhow!(crate::i18n::format(
+                            "安装工具失败: {}",
+                            &[format!("{}", e)]
+                        ))
+                    })
             })
         })
     }
@@ -285,7 +327,9 @@ impl AppState {
         self.tool_manager
             .ensure_tools(UpdateChannel::Stable)
             .await
-            .map_err(|e| anyhow::anyhow!("安装工具失败: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(crate::i18n::format("安装工具失败: {}", &[format!("{}", e)]))
+            })?;
         Ok(())
     }
 }

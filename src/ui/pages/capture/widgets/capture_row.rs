@@ -105,14 +105,14 @@ pub fn capture_row(
                             _ => theme.text,
                         })
                         .child(match item.resource_type {
-                            CaptureResourceType::Video => "视频",
-                            CaptureResourceType::Audio => "音频",
-                            CaptureResourceType::Image => "图片",
-                            CaptureResourceType::Document => "文档",
-                            CaptureResourceType::Font => "字体",
-                            CaptureResourceType::Stylesheet => "样式",
-                            CaptureResourceType::Script => "脚本",
-                            CaptureResourceType::Other => "其他",
+                            CaptureResourceType::Video => crate::i18n::tr("视频"),
+                            CaptureResourceType::Audio => crate::i18n::tr("音频"),
+                            CaptureResourceType::Image => crate::i18n::tr("图片"),
+                            CaptureResourceType::Document => crate::i18n::tr("文档"),
+                            CaptureResourceType::Font => crate::i18n::tr("字体"),
+                            CaptureResourceType::Stylesheet => crate::i18n::tr("样式"),
+                            CaptureResourceType::Script => crate::i18n::tr("脚本"),
+                            CaptureResourceType::Other => crate::i18n::tr("其他"),
                         }),
                 )
                 .child(
@@ -157,7 +157,7 @@ pub fn capture_row(
                             .rounded(px(6.0))
                             .bg(theme.border.opacity(0.1))
                             .text_color(theme.text)
-                            .child(s),
+                            .child(crate::i18n::text(&s)),
                     )
                 }),
         )

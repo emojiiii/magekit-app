@@ -2,7 +2,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::checkbox::Checkbox;
+use gpui_kit::component::checkbox::Checkbox;
 use magekit_shared::ChannelVideoEntry;
 
 /// 格式化时长
@@ -19,7 +19,7 @@ fn format_duration(seconds: Option<u64>) -> String {
                 format!("{}:{:02}", minutes, seconds)
             }
         }
-        None => "未知".to_string(),
+        None => crate::i18n::tr("未知").to_string(),
     }
 }
 
@@ -102,7 +102,7 @@ impl IntoElement for VideoItem {
                             .justify_center()
                             .text_xs()
                             .text_color(gpui::hsla(0.0, 0.0, 0.5, 0.4))
-                            .child("缩略图"),
+                            .child(crate::i18n::tr("缩略图")),
                     )
                     // 视频信息
                     .child(

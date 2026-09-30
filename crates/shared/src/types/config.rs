@@ -123,7 +123,8 @@ pub enum UpdateChannel {
 pub struct UiConfig {
     /// 主题。
     pub theme: Theme,
-    /// 语言（如 `en`/`zh`）。
+    /// 界面语言选择：system（跟随系统）、en 或 zh。
+    #[serde(default = "default_ui_language")]
     pub language: String,
     /// 窗口状态。
     pub window_state: Option<WindowState>,
@@ -133,12 +134,16 @@ pub struct UiConfig {
     pub minimize_to_tray: bool,
 }
 
+fn default_ui_language() -> String {
+    "system".to_string()
+}
+
 impl Default for UiConfig {
     /// 构造默认 UI 配置。
     fn default() -> Self {
         Self {
             theme: Theme::System,
-            language: "en".to_string(),
+            language: default_ui_language(),
             window_state: None,
             show_notifications: true,
             minimize_to_tray: false,
@@ -288,4 +293,34 @@ pub struct ProxyConfig {
     pub username: Option<String>,
     /// 密码。
     pub password: Option<String>,
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn new_ui_config_follows_system() {
+        assert_eq!(UiConfig::default().language, "system");
+    }
+
+    #[test]
+    fn missing_language_uses_system_and_explicit_choice_roundtrips() {
+        let config = UiConfig::default();
+        let value = serde_json::to_value(&config).unwrap();
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("language");
+        assert_eq!(
+            serde_json::from_value::<UiConfig>(missing)
+                .unwrap()
+                .language,
+            "system"
+        );
+        for language in ["system", "en", "zh"] {
+            let mut explicit = value.clone();
+            explicit["language"] = serde_json::Value::String(language.to_owned());
+            let restored: UiConfig = serde_json::from_value(explicit).unwrap();
+            assert_eq!(restored.language, language);
+        }
+    }
 }

@@ -4,9 +4,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Disableable;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Disableable;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use magekit_shared::truncate_string;
 use std::sync::Arc;
 
@@ -14,7 +14,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoFormatInfo {
     pub format_id: String,
-    pub label: String,         // 如 "1080p", "720p", "音频"
+    pub label: String, // 如 "1080p", "720p", "音频"
+    /// 仅应用生成的回退标签设置翻译键；来源提供的画质和编码文本保持原样。
+    pub label_key: Option<&'static str>,
     pub ext: String,           // 如 "mp4", "webm"
     pub filesize: Option<u64>, // 文件大小
     pub has_video: bool,
@@ -54,6 +56,14 @@ impl FormatSelection {
 }
 
 impl VideoFormatInfo {
+    /// 在渲染时读取当前语言，不改写已解析的格式信息或格式 ID。
+    pub fn display_label(&self) -> String {
+        self.label_key
+            .map(crate::i18n::tr)
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.label.clone())
+    }
+
     /// 格式化文件大小
     pub fn format_filesize(&self) -> Option<String> {
         self.filesize.map(|bytes| {
@@ -167,13 +177,15 @@ impl RenderOnce for VideoPreviewIdle {
                             .text_base()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(text_color)
-                            .child("输入视频链接开始下载"),
+                            .child(crate::i18n::tr("输入视频链接开始下载")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(sub_text_color)
-                            .child("支持 YouTube、Bilibili、Twitter 等主流平台"),
+                            .child(crate::i18n::tr(
+                                "支持 YouTube、Bilibili、Twitter 等主流平台",
+                            )),
                     ),
             )
     }
@@ -247,13 +259,13 @@ impl RenderOnce for VideoPreviewLoading {
                             .text_base()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(text_color)
-                            .child("正在获取视频信息..."),
+                            .child(crate::i18n::tr("正在获取视频信息...")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(sub_text_color)
-                            .child("请稍候，正在解析视频数据"),
+                            .child(crate::i18n::tr("请稍候，正在解析视频数据")),
                     ),
             )
     }
@@ -506,18 +518,18 @@ impl RenderOnce for VideoPreviewReady {
                 .unwrap_or(false);
 
             if video_includes_audio {
-                "✅ 已选择音视频合并格式，可直接下载".to_string()
+                crate::i18n::tr("✅ 已选择音视频合并格式，可直接下载").to_string()
             } else if is_separated_source && has_video {
                 // B站等分离格式网站，选择视频时自动带音频
-                "✅ 已选择视频质量，下载时自动包含音频".to_string()
+                crate::i18n::tr("✅ 已选择视频质量，下载时自动包含音频").to_string()
             } else if has_video && has_audio {
-                "🔀 已选择视频+音频，下载后将自动合并".to_string()
+                crate::i18n::tr("🔀 已选择视频+音频，下载后将自动合并").to_string()
             } else if has_video {
-                "📹 仅下载视频（无声音）".to_string()
+                crate::i18n::tr("📹 仅下载视频（无声音）").to_string()
             } else if has_audio {
-                "🎵 仅下载音频".to_string()
+                crate::i18n::tr("🎵 仅下载音频").to_string()
             } else {
-                "请选择下载格式".to_string()
+                crate::i18n::tr("请选择下载格式").to_string()
             }
         };
 
@@ -586,7 +598,7 @@ impl RenderOnce for VideoPreviewReady {
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(rgb(0xffffff))
-                                    .child(self.info.duration.clone()),
+                                    .child(crate::i18n::text(&self.info.duration)),
                             )
                             // 封面下载按钮
                             .when(has_thumbnail, |el| {
@@ -653,7 +665,7 @@ impl RenderOnce for VideoPreviewReady {
                                         .text_sm()
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(section_title_color)
-                                        .child("选择画质"),
+                                        .child(crate::i18n::tr("选择画质")),
                                 )
                                 .child(
                                     div()
@@ -664,7 +676,7 @@ impl RenderOnce for VideoPreviewReady {
                                         .text_color(badge_green_text)
                                         .rounded(px(6.0))
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child("含音频"),
+                                        .child(crate::i18n::tr("含音频")),
                                 ),
                         )
                         .child(
@@ -746,7 +758,7 @@ impl RenderOnce for VideoPreviewReady {
                                                             } else {
                                                                 format_text
                                                             })
-                                                            .child(fmt.label.clone()),
+                                                            .child(fmt.display_label()),
                                                     )
                                                     .when_some(
                                                         fmt.format_filesize(),
@@ -774,14 +786,14 @@ impl RenderOnce for VideoPreviewReady {
                 let selected = selected_video.clone();
                 let on_select = on_select_video.clone();
                 let section_title = if is_separated_source {
-                    "选择画质"
+                    crate::i18n::tr("选择画质")
                 } else {
-                    "仅视频"
+                    crate::i18n::tr("仅视频")
                 };
                 let section_hint = if is_separated_source {
-                    Some("下载时自动合并音频")
+                    Some(crate::i18n::tr("下载时自动合并音频"))
                 } else {
-                    Some("无声音，可搭配音频")
+                    Some(crate::i18n::tr("无声音，可搭配音频"))
                 };
                 el.child(
                     div()
@@ -883,7 +895,7 @@ impl RenderOnce for VideoPreviewReady {
                                                             } else {
                                                                 format_text
                                                             })
-                                                            .child(fmt.label.clone()),
+                                                            .child(fmt.display_label()),
                                                     )
                                                     .when_some(
                                                         fmt.format_filesize(),
@@ -911,9 +923,9 @@ impl RenderOnce for VideoPreviewReady {
                 let selected = selected_audio.clone();
                 let on_select = on_select_audio.clone();
                 let hint = if is_separated_source {
-                    "可单独下载音频"
+                    crate::i18n::tr("可单独下载音频")
                 } else {
-                    "可单独下载"
+                    crate::i18n::tr("可单独下载")
                 };
                 el.child(
                     div()
@@ -930,7 +942,7 @@ impl RenderOnce for VideoPreviewReady {
                                         .text_sm()
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(section_title_color)
-                                        .child("仅音频"),
+                                        .child(crate::i18n::tr("仅音频")),
                                 )
                                 .child(div().text_xs().text_color(hint_color).child(hint)),
                         )
@@ -1013,7 +1025,7 @@ impl RenderOnce for VideoPreviewReady {
                                                             } else {
                                                                 format_text
                                                             })
-                                                            .child(fmt.label.clone()),
+                                                            .child(fmt.display_label()),
                                                     )
                                                     .when_some(
                                                         fmt.format_filesize(),
@@ -1060,7 +1072,9 @@ impl RenderOnce for VideoPreviewReady {
                             .flex()
                             .gap(px(12.0))
                             .child({
-                                let mut btn = Button::new("cancel-btn").ghost().label("取消");
+                                let mut btn = Button::new("cancel-btn")
+                                    .ghost()
+                                    .label(crate::i18n::tr("取消"));
                                 if let Some(handler) = self.on_cancel {
                                     btn =
                                         btn.on_click(move |ev, window, cx| handler(ev, window, cx));
@@ -1072,7 +1086,7 @@ impl RenderOnce for VideoPreviewReady {
                                     selected_video.is_some() || selected_audio.is_some();
                                 let mut btn = Button::new("start-download-btn")
                                     .primary()
-                                    .label("开始下载")
+                                    .label(crate::i18n::tr("开始下载"))
                                     .disabled(!has_selection);
                                 if let Some(handler) = on_download {
                                     btn =
@@ -1157,7 +1171,7 @@ impl RenderOnce for VideoPreviewDownloading {
                                     .text_base()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(title_color)
-                                    .child("正在下载..."),
+                                    .child(crate::i18n::tr("正在下载...")),
                             ),
                     )
                     .child(
@@ -1165,7 +1179,7 @@ impl RenderOnce for VideoPreviewDownloading {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(meta_color)
-                            .child(self.speed),
+                            .child(crate::i18n::text(&self.speed)),
                     ),
             )
             .child(
@@ -1284,7 +1298,7 @@ impl RenderOnce for VideoPreviewCompleted {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
-                            .child("下载完成!"),
+                            .child(crate::i18n::tr("下载完成!")),
                     )
                     .child(
                         div()
@@ -1297,7 +1311,9 @@ impl RenderOnce for VideoPreviewCompleted {
                     ),
             )
             .child({
-                let mut btn = Button::new("new-download-btn").primary().label("新下载");
+                let mut btn = Button::new("new-download-btn")
+                    .primary()
+                    .label(crate::i18n::tr("新下载"));
                 if let Some(handler) = self.on_new_download {
                     btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
                 }
@@ -1390,7 +1406,7 @@ impl RenderOnce for VideoPreviewError {
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(title_color)
-                            .child("出错了"),
+                            .child(crate::i18n::tr("出错了")),
                     )
                     .child(
                         div()
@@ -1398,15 +1414,51 @@ impl RenderOnce for VideoPreviewError {
                             .text_color(msg_color)
                             .max_w(px(400.0))
                             .text_center()
-                            .child(self.message),
+                            .child(crate::i18n::text(&self.message)),
                     ),
             )
             .child({
-                let mut btn = Button::new("retry-btn").primary().label("重试");
+                let mut btn = Button::new("retry-btn")
+                    .primary()
+                    .label(crate::i18n::tr("重试"));
                 if let Some(handler) = self.on_retry {
                     btn = btn.on_click(move |ev, window, cx| handler(ev, window, cx));
                 }
                 btn
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VideoFormatInfo;
+
+    fn format(label: &str, label_key: Option<&'static str>) -> VideoFormatInfo {
+        VideoFormatInfo {
+            format_id: "external-format-id".into(),
+            label: label.into(),
+            label_key,
+            ext: "webm".into(),
+            filesize: None,
+            has_video: true,
+            has_audio: true,
+        }
+    }
+
+    #[test]
+    fn generated_format_labels_resolve_at_display_time() {
+        let format = format("previously translated label", Some("最佳音质"));
+        assert_eq!(format.display_label(), crate::i18n::tr("最佳音质"));
+        assert_eq!(format.label, "previously translated label");
+        assert_eq!(format.format_id, "external-format-id");
+    }
+
+    #[test]
+    fn external_format_labels_are_never_translated() {
+        for label in ["视频", "Video", "1080p60 · HDR", "high [avc1.640028]"] {
+            let format = format(label, None);
+            assert_eq!(format.display_label(), label);
+            assert_eq!(format.label, label);
+        }
     }
 }

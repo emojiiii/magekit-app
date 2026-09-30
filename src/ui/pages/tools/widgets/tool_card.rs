@@ -2,9 +2,9 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::ActiveTheme;
-use gpui_component::Disableable;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Disableable;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use magekit_shared::ToolType;
 
 /// 下载进度信息
@@ -99,7 +99,7 @@ impl ToolInfo {
     pub fn yt_dlp() -> Self {
         Self {
             name: "yt-dlp",
-            description: "强大的视频下载工具，支持 YouTube、Bilibili 等众多平台",
+            description: crate::i18n::tr("强大的视频下载工具，支持 YouTube、Bilibili 等众多平台"),
             tool_type: ToolType::YtDlp,
             state: ToolInstallState::Unknown,
             icon: "📥",
@@ -109,7 +109,7 @@ impl ToolInfo {
     pub fn ffmpeg() -> Self {
         Self {
             name: "FFmpeg",
-            description: "音视频处理工具，用于格式转换和视频合并",
+            description: crate::i18n::tr("音视频处理工具，用于格式转换和视频合并"),
             tool_type: ToolType::Ffmpeg,
             state: ToolInstallState::Unknown,
             icon: "🎞️",
@@ -158,7 +158,7 @@ where
             ToolInstallState::Installing | ToolInstallState::Downloading(_)
         );
         let tool_name: SharedString = tool.name.into();
-        let tool_desc: SharedString = tool.description.into();
+        let tool_desc: SharedString = crate::i18n::text(tool.description).into();
         let tool_icon = tool.icon;
 
         // 使用主题颜色
@@ -172,31 +172,39 @@ where
         let primary_color = cx.theme().primary;
 
         let (status_text, status_color): (SharedString, Hsla) = match &tool.state {
-            ToolInstallState::Unknown => ("检查中...".into(), muted_color),
-            ToolInstallState::NotInstalled => ("未安装".into(), danger_color),
+            ToolInstallState::Unknown => (crate::i18n::tr("检查中...").into(), muted_color),
+            ToolInstallState::NotInstalled => (crate::i18n::tr("未安装").into(), danger_color),
             ToolInstallState::Installed { version, is_system } => {
                 let text: SharedString = match (version, is_system) {
-                    (Some(v), true) => format!("v{} (系统)", v).into(),
+                    (Some(v), true) => {
+                        crate::i18n::format("v{} (系统)", &[format!("{}", v)]).into()
+                    }
                     (Some(v), false) => format!("v{}", v).into(),
-                    (None, true) => "已安装 (系统)".into(),
-                    (None, false) => "已安装".into(),
+                    (None, true) => crate::i18n::tr("已安装 (系统)").into(),
+                    (None, false) => crate::i18n::tr("已安装").into(),
                 };
                 (text, success_color)
             }
             ToolInstallState::Downloading(progress) => {
-                let text: SharedString = format!("下载中 {:.1}%", progress.percent()).into();
+                let text: SharedString =
+                    crate::i18n::format("下载中 {:.1}%", &[format!("{:.1}", progress.percent())])
+                        .into();
                 (text, primary_color)
             }
-            ToolInstallState::Installing => ("安装中...".into(), primary_color),
-            ToolInstallState::Failed(_) => ("安装失败".into(), danger_color),
+            ToolInstallState::Installing => (crate::i18n::tr("安装中...").into(), primary_color),
+            ToolInstallState::Failed(_) => (crate::i18n::tr("安装失败").into(), danger_color),
         };
 
         let status_bg: Hsla = status_color.opacity(0.15);
 
         let (btn_label, btn_disabled) = match &tool.state {
-            ToolInstallState::NotInstalled | ToolInstallState::Failed(_) => ("安装", false),
-            ToolInstallState::Installed { .. } => ("检查更新", false),
-            ToolInstallState::Installing | ToolInstallState::Downloading(_) => ("下载中...", true),
+            ToolInstallState::NotInstalled | ToolInstallState::Failed(_) => {
+                (crate::i18n::tr("安装"), false)
+            }
+            ToolInstallState::Installed { .. } => (crate::i18n::tr("检查更新"), false),
+            ToolInstallState::Installing | ToolInstallState::Downloading(_) => {
+                (crate::i18n::tr("下载中..."), true)
+            }
             ToolInstallState::Unknown => ("...", true),
         };
 
@@ -304,13 +312,15 @@ impl RenderOnce for ToolHintCard {
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(title_color)
-                        .child("💡 关于工具"),
+                        .child(crate::i18n::tr("💡 关于工具")),
                 )
                 .child(
                     div()
                         .text_sm()
                         .text_color(muted_color)
-                        .child("这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。"),
+                        .child(crate::i18n::tr(
+                            "这些工具是视频下载功能所必需的。首次使用时会自动从官方源下载。",
+                        )),
                 ),
         )
     }
